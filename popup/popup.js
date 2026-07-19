@@ -930,10 +930,16 @@ function openBundleEditorSheet(bundleId) {
 
     function renderList() {
       let html = '';
-      // Items
-      const filtered = activeFilter === 'all' || activeFilter === 'note'
-        ? allCandidates
-        : allCandidates.filter(it => it.type === activeFilter);
+      // v3.10.3 (Issue 3): FIX bug filter "Catatan" — selaras dengan saveBundleSheet.
+      // Saat filter = 'note', JANGAN tampilkan item apapun, hanya notes.
+      let filtered;
+      if (activeFilter === 'all') {
+        filtered = allCandidates;
+      } else if (activeFilter === 'note') {
+        filtered = []; // hanya notes yang tampil di bawah
+      } else {
+        filtered = allCandidates.filter(it => it.type === activeFilter);
+      }
       for (const it of filtered) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedSet.has(it.id) ? ' checked' : '';
@@ -1608,10 +1614,20 @@ function saveBundleSheet() {
 
     function renderList() {
       let html = '';
-      // Items (filter sesuai activeFilter, "all" = tampilkan semua)
-      const filteredItems = activeFilter === 'all' || activeFilter === 'note'
-        ? itemCandidates
-        : itemCandidates.filter(it => it.type === activeFilter);
+      // v3.10.3 (Issue 3): FIX bug filter "Catatan" — sebelumnya, saat user klik chip
+      // "Catatan", kondisi `activeFilter === 'note'` masih menampilkan SEMUA item.
+      // User feedback: "ketika filter per type diklik catatan, itu tidak terfilter,
+      // semuanya muncul harusnya catatan doang."
+      // Sekarang: saat filter = 'note', JANGAN tampilkan item apapun (hanya notes).
+      // Filter 'all' = tampilkan semua item + notes. Filter tipe lain = hanya item tipe itu.
+      let filteredItems;
+      if (activeFilter === 'all') {
+        filteredItems = itemCandidates;
+      } else if (activeFilter === 'note') {
+        filteredItems = []; // hanya notes yang tampil di bawah
+      } else {
+        filteredItems = itemCandidates.filter(it => it.type === activeFilter);
+      }
       for (const it of filteredItems) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedItems.has(it.id) ? ' checked' : '';
@@ -3644,18 +3660,11 @@ async function renderKontrolSitusPage(B) {
 
       // Home view
       + '<div class="ks-view' + (activeTab === 'home' ? ' active' : '') + '" id="ksViewHome">'
-      // v3.7.2 (Issue 6): Kartu Mode Anak — 1 klik untuk amankan laptop saat dipinjam anak.
-      // Mengaktifkan: contentGuardYoutubeKidsOnly + contentGuardBlockShorts.
-      +   '<div class="card" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;margin-bottom:12px">'
-      +     '<div style="display:flex;align-items:center;gap:12px">'
-      +       '<div style="font-size:32px">👶</div>'
-      +       '<div style="flex:1">'
-      +         '<div style="font-size:14px;font-weight:700">Mode Anak</div>'
-      +         '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">Arahkan semua YouTube ke YouTube Kids & blokir YouTube Shorts. Aktifkan saat laptop dipinjam anak — 1 klik.</div>'
-      +       '</div>'
-      +       '<button class="ks-toggle' + (s.contentGuardYoutubeKidsOnly === true ? ' on' : '') + '" id="ksKidModeToggle" aria-label="Toggle Mode Anak" style="flex:none"><i></i></button>'
-      +     '</div>'
-      +   '</div>'
+      // v3.10.3 (Issue 1): Kartu "Mode Anak" lama (redirect youtubekids) DIHAPUS.
+      // User feedback: "hilangkan saja ya, karena ribet. diganti dengan konten islami anak
+      // atau positif lainnya yang paling terkenal di youtube. yang lainnya block sementara."
+      // Sekarang Mode Anak sepenuhnya pakai filter (contentGuardKidModeFilter) — toggle
+      // ada di tab "Pengaturan" dengan deskripsi yang jelas. Tidak ada redirect lagi.
       +   '<div class="ks-intro">'
       +     '<div><h2>Hapus elemen yang mengganggu</h2><p>Tutup komentar, iklan, rekomendasi, dan elemen UI yang tidak perlu di situs mana pun.</p></div>'
       +     '<button class="ks-primary" id="ksAddRule">+ Aturan baru</button>'
@@ -3761,8 +3770,11 @@ async function renderKontrolSitusPage(B) {
       +     '</div>'
       // v3.7.2 (Issue 6): Toggle individu — Mode Anak (filter, no redirect)
       // v3.10.0 (Issue 2): Ubah dari redirect youtubekids.com → filter di youtube.com biasa
+      // v3.10.3 (Issue 1): Perkuat whitelist — tambah channel islami anak + positif Indonesia.
+      // User feedback: "diganti dengan konten islami anak anak aja, atau yang positif lainnya
+      // yang paling terkenal di youtube. nah sedangkan yang lainnya block sementara jika di on kan."
       +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, tapi sembunyikan video non-ramah-anak. Hanya video edukasi/kartun/lagu anak yang tampil. Shorts juga di-hide.</div></div>'
+      +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, hanya tampilkan video ramah anak: kartun, edukasi, lagu anak, + konten islami anak (Nussa, Ruqot, Diva TV, kisah nabi). Semua video lain di-hide sementara. Shorts juga di-hide.</div></div>'
       +       '<button class="ks-toggle' + (s.contentGuardKidModeFilter === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle Mode Anak"><i></i></button>'
       +     '</div>'
       +   '</div>'
@@ -3790,19 +3802,19 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🛡 Kontrol Situs diaktifkan' : 'Kontrol Situs dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Mode Anak — 1 klik toggle (YouTube Kids + Block Shorts sekaligus)
+    // v3.7.2 (Issue 6) → v3.10.3 (Issue 1): Kartu "Mode Anak" (redirect youtubekids) dihapus.
+    // Tombol ksKidModeToggle tidak ada lagi di DOM. Handler ini di-skip otomatis kalau
+    // elemen tidak ditemukan (defensive — tidak error). Sengaja tidak dihapus total agar
+    // tidak break jika user masih punya cache HTML lama.
     const kidModeBtn = $('#ksKidModeToggle');
     if (kidModeBtn) kidModeBtn.addEventListener('click', async () => {
-      const newOn = !(s.contentGuardYoutubeKidsOnly === true);
-      // Pastikan contentGuardEnabled tetap on agar redirect jalan
-      await saveSettings({
-        contentGuardEnabled: true,
-        contentGuardYoutubeKidsOnly: newOn,
-        contentGuardBlockShorts: newOn
-      });
+      // v3.10.3: Alihkan ke filter mode (tidak redirect) supaya behavior konsisten.
+      const newOn = !(s.contentGuardKidModeFilter === true);
+      const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
+      const finalOn = r?.enabled ?? newOn;
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast(newOn ? '👶 Mode Anak AKTIF — YouTube → Kids, Shorts diblokir' : 'Mode Anak dimatikan');
+      toast(finalOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak + islami' : 'Mode Anak dimatikan');
     });
 
     // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja
@@ -4244,10 +4256,16 @@ async function init() {
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
 
   // Width responsive for sidebar
+  // v3.10.3 (Issue 2): Tambah class w-xs untuk sidebar sangat sempit (<320px).
+  // Banyak sidebar Firefox bisa dikecilkan sampai 200-280px, dan di lebar itu
+  // strip-bar bertumpuk + tile label kepotong. w-xs = compact mode paling agresif.
   if (document.body.classList.contains('rf-sidebar-body')) {
     const setW = () => {
-      const w = window.innerWidth;
-      $('#popup').classList.toggle('w-sm', w <= 310);
+      const w = window.innerWidth || document.documentElement.clientWidth || 800;
+      const popup = $('#popup');
+      if (!popup) return;
+      popup.classList.toggle('w-sm', w <= 310);
+      popup.classList.toggle('w-xs', w <= 280);
     };
     setW();
     window.addEventListener('resize', setW);

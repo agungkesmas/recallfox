@@ -547,32 +547,59 @@
     return m ? m[0] : '';
   }
 
-  // v3.10.0 (Issue 2): Mode Anak — hide SEMUA video kecuali yang ramah anak.
+  // v3.10.0 (Issue 2) + v3.10.3 (Issue 1): Mode Anak — hide SEMUA video kecuali yang ramah anak.
   // Definisi "ramah anak":
-  //   - Channel ada di whitelist KID_FRIENDLY_CHANNELS (channel edukasi/kartun/anak terkenal)
-  //   - ATAU judul mengandung kata kunci anak/kids/edukasi/cartoon/dongeng/dll.
+  //   - Channel ada di whitelist KID_FRIENDLY_CHANNELS (channel edukasi/kartun/anak/islami terkenal)
+  //   - ATAU judul mengandung kata kunci anak/kids/edukasi/cartoon/dongeng/islami/dll.
   //   - Video lain di-hide (display:none) — feed jadi hanya konten ramah anak.
+  // v3.10.3: User minta "diganti dengan konten islami anak anak aja, atau yang positif
+  // lainnya yang paling terkenal di youtube. nah sedangkan yang lainnya block sementara
+  // jika di on kan."
+  // → Tambah: channel islami anak (Nussa, Ruqot, Diva TV, kisah nabi, cerita sahabat,
+  //   SCOPESI, Vidio Anak Muslim), channel positif Indonesia (Si Unyil, Jalan Sesame,
+  //   Keluarga Cemara), dan kata kunci islami (nabi, rasul, sahabat, hijaiyah, quran kids).
   // Catatan: ini bukan redirect ke youtubekids.com. User tetap di youtube.com biasa,
   // tapi feed difilter supaya hanya konten ramah anak yang tampil.
   function hideNonKidContent() {
-    // Whitelist channel ramah anak (lowercase, match substring)
+    // Whitelist channel ramah anak (lowercase, match substring).
+    // Diurutkan: islami anak dulu, lalu kartun/edukasi internasional, lalu positif Indonesia.
     const KID_FRIENDLY_CHANNELS = [
+      // ===== Islami anak (v3.10.3 — prioritas tertinggi sesuai request user) =====
+      'nussa official', 'nussa', 'nussa official channel', 'ruqot', 'ruqot official',
+      'diva tv', 'diva tv kids', 'kisah nabi', 'kisah 25 nabi', 'cerita nabi',
+      'cerita islami', 'anak muslim', 'anak sholeh', 'vidio anak muslim',
+      'scopesi', 'doadzikir kids', 'hijaiyah kids', 'iqra kids', 'belajar hijaiyah',
+      'doa harian anak', 'cerita sahabat nabi', 'kisah rasul', 'kisah ulama',
+      'muhammadiyah tv', 'nu kids', 'islam kids tv', 'mutiara islam kids',
+      'safa tv', 'safa kids', 'rahmatan tv kids', 'inspirasi tv kids',
+      // ===== Kartun internasional (ramah anak global) =====
       'cocomelon', 'super simple songs', 'pinkfong', 'little baby bum',
-      'chuchu tv', 'kids tv', 'cvn 78 kids', 'edukids', 'boboiboy',
-      'upin & ipin', 'upin ipin', 'didiketikdotcom', 'kastari animation',
-      'nussa official', 'nussa', 'ruqot', 'drummy kids', 'natgeo kids',
+      'chuchu tv', 'kids tv', 'cvn 78 kids', 'edukids', 'natgeo kids',
       'national geographic kids', 'sesame street', 'pbs kids', 'tayo the little bus',
       'robocar poli', 'pororo', 'tobot', 'hello carbot', 'bumi cartoon',
+      'drummy kids', 'minecraft for kids', 'roblox for kids', 'lego', 'peppa pig',
+      'bluey', 'daniel tiger', 'wordgirl', 'sid the science kid', 'dinosaur train',
+      'curious george', 'cat in the hat', 'arthur', 'wild kratts', 'odd squad',
+      // ===== Kartun/anak Indonesia =====
+      'boboiboy', 'upin & ipin', 'upin ipin', 'didiketikdotcom', 'kastari animation',
       'keluarga cemara', 'si unyil', 'jalan sesame', 'monster school',
-      'minecraft for kids', 'roblox for kids', 'lego'
+      'adit & sopi', 'adit sopi', 'sopo jarwo', 'bima s', 'bima-s',
+      'tahilalats kids', 'kiko', 'jumbo', 'wakfu'
     ];
-    // Kata kunci ramah anak di judul (lowercase, match substring)
+    // Kata kunci ramah anak di judul (lowercase, match substring).
     const KID_TITLE_KEYWORDS = [
       'anak', 'kids', 'kid', 'cartoon', 'kartun', 'dongeng', 'cerita anak',
       'lagu anak', 'nursery rhymes', 'belajar', 'edukasi', 'balita',
       'anak-anak', 'prasekolah', 'tk ', 'paud', 'animasi', 'petualangan',
       'tayo', 'pororo', 'robocar', 'bumi', 'boboiboy', 'upin ipin',
-      'nussa', 'ruqot', 'cocomelon', 'pinkfong'
+      'nussa', 'ruqot', 'cocomelon', 'pinkfong', 'peppa', 'bluey',
+      // v3.10.3: kata kunci islami anak
+      'nabi', 'rasul', 'sahabat nabi', 'kisah nabi', 'kisah rasul', 'kisah sahabat',
+      'hijaiyah', 'iqra', 'doa anak', 'doa harian', 'doa islami', 'doa dzikir',
+      'anak muslim', 'anak sholeh', 'anak shalih', 'cerita islami', 'islam kids',
+      'belajar sholat', 'belajar wudhu', 'belajar doa', 'belajar al-quran', 'belajar quran',
+      'hafalan quran', 'hafalan juz', 'tajwid kids', 'tajwid anak',
+      'lagu islami anak', 'nasyid anak', 'anak saleh'
     ];
 
     let hiddenCount = 0;

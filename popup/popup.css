@@ -85,7 +85,10 @@ body.rf-sidebar-body .popup{
 
 /* Status strip */
 .strip{margin:0 12px 10px;flex:none}
-.strip-bar{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 10px;font-size:11px;color:var(--text-2);cursor:pointer;transition:.15s;user-select:none}
+/* v3.10.3 (Issue 2): strip-bar sekarang allow wrap supaya tidak bertumpuk saat sidebar sempit.
+   Sebelumnya: display:flex; gap:6px (no wrap) → saat <400px, cell waktu shalat + ngaji + puasa
+   timpa satu sama lain. Sekarang: flex-wrap + gap lebih kecil + min-width cell supaya wrap mulus. */
+.strip-bar{display:flex;align-items:center;flex-wrap:wrap;gap:5px 6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 10px;font-size:11px;color:var(--text-2);cursor:pointer;transition:.15s;user-select:none}
 .strip-bar:hover{border-color:var(--border-strong);background:var(--surface-2)}
 .strip-cell{display:flex;align-items:center;gap:5px;white-space:nowrap;min-width:0}
 .strip-cell b{color:var(--text);font-weight:600}
@@ -129,7 +132,11 @@ body.rf-sidebar-body .popup{
 
 /* Hero task bar — 6 trigger spesifik */
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 12px 10px;flex:none}
-.tile{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);font-size:11px;font-weight:650;color:var(--text-2);transition:.15s;white-space:nowrap}
+/* v3.10.3 (Issue 2): tile sekarang allow text wrap + min-width:0 supaya label
+   "Prompt/Konteks/Bundle/Snapshot" tidak kepotong saat sidebar dikecilkan.
+   Sebelumnya: white-space:nowrap → label kepotong atau overflow.
+   Sekarang: text bisa wrap ke 2 baris, tinggi row auto-adjust. */
+.tile{display:flex;align-items:center;justify-content:center;gap:4px;padding:9px 2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);font-size:11px;font-weight:650;color:var(--text-2);transition:.15s;min-width:0;text-align:center;line-height:1.2;word-break:keep-all;hyphens:auto}
 .tile svg{width:14px;height:14px;color:var(--primary);flex:none}
 .tile:hover{background:var(--primary-soft);border-color:transparent;color:var(--primary);transform:translateY(-1px);box-shadow:var(--sh-sm)}
 .tile:active{transform:translateY(0) scale(.96)}
@@ -368,6 +375,26 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
 .popup.w-sm .strip-cell.fast,.popup.w-sm .strip-sep.fastsep{display:none}
 .popup.w-sm .tile{font-size:10.5px}
 .popup.w-sm .brand-t{font-size:12.5px}
+
+/* v3.10.3 (Issue 2): Extra-small mode — sidebar dikecilkan sampai ≤280px.
+   Tujuan: hilangkan tumpukan di strip-bar + pastikan tile label tetap terbaca.
+   - strip-bar: hide separator + chevron (cuma tampilkan 3 cell, wrap mulus)
+   - strip-cell: font lebih kecil
+   - tile: icon-only kalau lebet sangat sempit (label tetap via title attr)
+   - habit-row: stack vertikal supaya tombol ngaji/olahraga tidak timpa */
+.popup.w-xs .strip-bar{padding:6px 8px;gap:4px 5px}
+.popup.w-xs .strip-sep{display:none}
+.popup.w-xs .strip-chev{display:none}
+.popup.w-xs .strip-cell{font-size:10px;gap:3px}
+.popup.w-xs .strip-cell b{font-size:10px}
+.popup.w-xs .tile{font-size:9.5px;padding:7px 1px;gap:2px}
+.popup.w-xs .tile svg{width:12px;height:12px}
+.popup.w-xs .habit-row{flex-direction:column;gap:5px}
+.popup.w-xs .habit{font-size:10px;padding:6px 7px}
+.popup.w-xs .brand-t{font-size:11.5px}
+.popup.w-xs .brand-s{font-size:9.5px}
+.popup.w-xs .cmd input{font-size:11px}
+.popup.w-xs .cmd .hint{display:none}
 
 /* ============ Modal overlay (untuk prayer setup, vars, attach) ============ */
 .modal-overlay{position:fixed;inset:0;background:rgba(15,12,10,.55);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}

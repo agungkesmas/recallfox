@@ -1,7 +1,14 @@
-# RecallFox v3.10.2
+# RecallFox v3.10.3
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
+
+> **v3.10.3 — 3 Fixes dari Log Troubleshooting Sesi 2**
+> - 👶 **Issue #1 (Mode Anak)**: User feedback "mode anak memaksa masuk ke youtube kids ya, hilangkan saja ya karena ribet, diganti dengan konten islami anak anak atau positif lainnya yang paling terkenal di youtube, yang lainnya block sementara jika di on kan." → **Hapus redirect youtubekids.com** (kartu gradient ungu di halaman Kontrol Situs). Mode Anak sekarang 100% pakai filter di youtube.com biasa: hanya video ramah anak + islami yang tampil, lainnya di-hide. Whitelist diperkuat dengan channel islami anak (Nussa, Ruqot, Diva TV, kisah nabi, SCOPESI, Vidio Anak Muslim, dst) + kata kunci islami (nabi, rasul, sahabat, hijaiyah, doa anak, belajar sholat, quran kids).
+> - 📐 **Issue #2 (Sidebar Layout Sempit)**: User feedback "waktu sholat, checkin ngaji dan puasa senin kamis masih bertumpuk, meskipun ribbon sudah oke. Prompt Konteks Bundle Snapshot ini juga kepotong, tidak bisa nge wrap sendiri." → `.strip-bar` sekarang `flex-wrap` (saat sempit cell turun ke baris baru, bukan timpa). Tile label "Prompt/Konteks/Bundle/Snapshot" tidak lagi `nowrap` — bisa wrap ke 2 baris + `min-width:0` supaya tidak overflow. Tambah class `w-xs` untuk sidebar ≤280px: hide separator + chevron, kecilkan font, stack habit-row vertikal.
+> - 📦 **Issue #3 (Filter Bundle "Catatan")**: User feedback "di menu buat bundle ketika filter per type diklik catatan, itu tidak terfilter, semuanya muncul harusnya catatan doang, ternyata di edit bundle juga sama." → Fix bug di `saveBundleSheet()` + `openBundleEditorSheet()`: saat `activeFilter === 'note'`, list item sekarang kosong (sebelumnya masih menampilkan semua item). Hanya notes yang tampil.
+>
+> Lihat [Changelog](#changelog) di bawah.
 
 > **v3.10.2 — 5 Fixes dari Log Troubleshooting Sesi 1**
 > - 🔧 **Issue #1**: Tombol "Full Backup ke GDrive" tidak bekerja — root cause: `buildBackupPayload()` di `lib/autobackup.js` tidak di-export, sehingga dynamic import di `background.js` return `undefined`. Fix: tambahkan keyword `export`.
