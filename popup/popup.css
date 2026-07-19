@@ -78,10 +78,6 @@ body.rf-sidebar-body .popup{
 .cmd input{flex:1;min-width:0;border:none;outline:none;background:none;color:var(--text);font-size:13px;height:100%}
 .cmd input::placeholder{color:var(--muted)}
 .cmd .hint{display:flex;gap:3px;flex:none}
-/* v3.11.0 (Issue 4): X clear button di search box */
-.search-clear{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;flex:none;padding:0;transition:.12s}
-.search-clear:hover{background:var(--surface-2);color:var(--text)}
-.search-clear svg{width:13px;height:13px}
 
 /* Status strip */
 .strip{margin:0 12px 10px;flex:none}
@@ -145,13 +141,31 @@ body.rf-sidebar-body .popup{
 .addbtn{margin-left:auto;display:flex;align-items:center;gap:4px;font-size:11px;font-weight:650;color:var(--primary);padding:4px 10px;border-radius:var(--r-full);background:var(--primary-soft);transition:.15s}
 .addbtn:hover{background:var(--primary-soft-2)}
 .addbtn svg{width:11px;height:11px}
-.chips{display:flex;gap:6px;padding:0 13px 9px;overflow-x:auto;scrollbar-width:none;flex:none}
+/* v3.9.0 (Issue 6): Chips jadi ribbon (wrap, no horizontal scroll) + warna per kategori */
+.chips{display:flex;gap:6px;padding:0 13px 9px;flex-wrap:wrap;flex:none}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:var(--r-full);background:var(--surface);border:1px solid var(--border);color:var(--text-2);transition:.15s;display:flex;gap:5px;align-items:center}
 .chip .n{font-size:10px;color:var(--muted)}
 .chip:hover{border-color:var(--border-strong)}
 .chip.on{background:var(--text);border-color:var(--text);color:var(--bg)}
 .chip.on .n{color:var(--muted)}
+/* Per-category color tags */
+.chip[data-cat="prompt"]{border-left:3px solid var(--primary)}
+.chip[data-cat="prompt"].on{background:var(--primary);border-color:var(--primary);color:#fff}
+.chip[data-cat="context"]{border-left:3px solid var(--violet)}
+.chip[data-cat="context"].on{background:var(--violet);border-color:var(--violet);color:#fff}
+.chip[data-cat="snapshot"]{border-left:3px solid var(--amber)}
+.chip[data-cat="snapshot"].on{background:var(--amber);border-color:var(--amber);color:#fff}
+.chip[data-cat="screenshot"]{border-left:3px solid var(--green)}
+.chip[data-cat="screenshot"].on{background:var(--green);border-color:var(--green);color:#fff}
+.chip[data-cat="link"]{border-left:3px solid #0891b2}
+.chip[data-cat="link"].on{background:#0891b2;border-color:#0891b2;color:#fff}
+.chip[data-cat="bundle"]{border-left:3px solid #db2777}
+.chip[data-cat="bundle"].on{background:#db2777;border-color:#db2777;color:#fff}
+.chip[data-cat="archive"]{border-left:3px solid var(--muted)}
+.chip[data-cat="archive"].on{background:var(--muted);border-color:var(--muted);color:#fff}
+.chip[data-cat="all"]{border-left:3px solid var(--text)}
+.chip[data-cat="all"].on{background:var(--text);border-color:var(--text);color:var(--bg)}
 .list{flex:1;overflow-y:auto;padding:2px 10px 12px}
 .list::-webkit-scrollbar,.cmdres::-webkit-scrollbar,.page-body::-webkit-scrollbar,.tools::-webkit-scrollbar,.notes-list::-webkit-scrollbar{width:8px}
 .list::-webkit-scrollbar-thumb,.cmdres::-webkit-scrollbar-thumb,.page-body::-webkit-scrollbar-thumb,.tools::-webkit-scrollbar-thumb,.notes-list::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;border:2px solid var(--bg)}
@@ -165,9 +179,6 @@ body.rf-sidebar-body .popup{
 .item-ic.t-context{background:var(--violet-soft);color:var(--violet)}
 .item-ic.t-snapshot{background:var(--green-soft);color:var(--green)}
 .item-ic.t-screenshot{background:var(--amber-soft);color:var(--amber)}
-.item-ic.t-link{background:#dbeafe;color:#1e40af}
-.item-ic.t-bundle{background:#f3e8ff;color:#7c3aed}
-.item-ic.t-note{background:#fef3c7;color:#92400e}
 .item-main{flex:1;min-width:0}
 .item-title{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
 .item-title .fav{color:var(--amber);font-size:11px}
@@ -204,9 +215,14 @@ body.rf-sidebar-body .popup{
 .notes-bar .t{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .notes-hintbar{font-size:10px;color:var(--muted)}
 .notes-list{flex:1;overflow-y:auto;padding:2px 12px 12px;display:flex;flex-direction:column;gap:8px}
-.note-card{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--nc,var(--border-strong));border-radius:10px;padding:9px 11px;cursor:pointer;transition:.15s}
+.note-card{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--nc,var(--border-strong));border-radius:10px;padding:9px 11px;cursor:pointer;transition:.15s;display:flex;align-items:stretch;gap:6px}
 .note-card:hover{transform:translateY(-1px);box-shadow:var(--sh-sm);border-color:var(--border-strong);border-left-color:var(--nc)}
 .note-card:active{transform:scale(.99)}
+.note-card-main{flex:1;min-width:0}
+.note-card-actions{opacity:0;transition:.15s;align-self:flex-start}
+.note-card:hover .note-card-actions{opacity:1}
+.note-act{border-radius:6px;transition:.12s}
+.note-act:hover{background:var(--surface-2)}
 /* v3.7.2 (Issue 5): note title (opsional) */
 .note-title{font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:3px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .note-body-txt{font-size:12px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word}
@@ -330,26 +346,8 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
 .pickrow{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)}
 .pickrow:last-child{border-bottom:none}
 .pickrow:hover{background:var(--surface-2)}
-.pickrow.on{background:var(--primary-soft)}
 .pickrow input{accent-color:var(--primary);width:15px;height:15px;flex:none}
-.pickrow-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pickrow .pt-type{font-size:10px;color:var(--muted);margin-left:auto;flex:none;padding:2px 7px;border-radius:6px;font-weight:600;background:var(--surface-2)}
-/* v3.8.0 (Issue 5): Type badge pakai warna — sebelumnya teks abu-abu saja. */
-.pickrow .pt-type.t-prompt{background:var(--primary-soft);color:var(--primary)}
-.pickrow .pt-type.t-context{background:var(--violet-soft);color:var(--violet)}
-.pickrow .pt-type.t-snapshot{background:var(--green-soft);color:var(--green)}
-.pickrow .pt-type.t-screenshot{background:var(--amber-soft);color:var(--amber)}
-.pickrow .pt-type.t-link{background:#dbeafe;color:#1e40af}
-.pickrow .pt-type.t-note{background:#fef3c7;color:#92400e}
-/* Bundle filter chips */
-.bf-chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 8px}
-.bf-chip{font-size:10.5px;padding:4px 9px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;transition:.12s;font-weight:600}
-.bf-chip:hover{border-color:var(--border-strong);color:var(--text-2)}
-.bf-chip.on{background:var(--primary);color:#fff;border-color:var(--primary)}
-/* Functional sheet members list */
-.fs-member{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border)}
-.fs-member:last-child{border-bottom:none}
-.fs-member-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px}
+.pickrow .pt-type{font-size:10px;color:var(--muted);margin-left:auto;flex:none}
 .snap-preview{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--text-2);line-height:1.5;max-height:96px;overflow:hidden;position:relative}
 .snap-preview::after{content:"";position:absolute;left:0;right:0;bottom:0;height:28px;background:linear-gradient(transparent,var(--surface-2))}
 
@@ -570,10 +568,13 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
 .ks-sitebar span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .ks-sitebar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
 .ks-sitebar .right small{font-size:11px;color:var(--muted)}
-.ks-toggle{height:27px;width:46px;border-radius:16px;background:var(--border-strong);padding:4px;cursor:pointer;transition:.2s;flex:none;border:none}
-.ks-toggle i{display:block;height:19px;width:19px;border-radius:50%;background:#fff;transition:.2s}
-.ks-toggle.on{background:var(--primary)}
+/* v3.10.0 (Issue 3): Toggle button — indikator status ON/OFF yang jelas */
+.ks-toggle{height:27px;width:60px;border-radius:16px;background:var(--border-strong);padding:4px;cursor:pointer;transition:.2s;flex:none;border:none;position:relative;display:flex;align-items:center}
+.ks-toggle i{display:block;height:19px;width:19px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.ks-toggle::before{content:'OFF';position:absolute;left:8px;font-size:9px;font-weight:700;color:#fff;letter-spacing:.05em;opacity:.7}
+.ks-toggle.on{background:var(--green)}
 .ks-toggle.on i{margin-left:auto}
+.ks-toggle.on::before{content:'ON';left:auto;right:8px;color:#fff;opacity:1}
 
 .ks-tabs{display:flex;gap:7px;margin:0 0 18px;border-bottom:1px solid var(--border)}
 .ks-tab{border:none;color:var(--muted);background:transparent;border-radius:9px 9px 0 0;padding:9px 12px;font:inherit;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;transition:.15s}

@@ -168,21 +168,5 @@
   "contentGuardName": { "message": "Filter Konten Positif" },
   "contentGuardDesc": {
     "message": "Blokir berita negatif Indonesia & arahkan paksa ke konten positif Tiongkok di YouTube / X."
-  },
-
-  "appsScriptSyncName": { "message": "Apps Script Sync (Google Spreadsheet)" },
-  "appsScriptSyncDesc": {
-    "message": "Backup vault ke Google Spreadsheet via Apps Script Web App. Setiap item disimpan sebagai baris — bisa dibaca / difilter langsung di Google Sheets."
-  },
-  "appsScriptUrl": { "message": "URL Apps Script Web App" },
-  "appsScriptToken": { "message": "Token (bearer)" },
-  "appsScriptTestConnection": { "message": "Test Koneksi" },
-  "appsScriptSendNow": { "message": "Kirim Sekarang" },
-  "appsScriptAutoSync": { "message": "Auto-sync (debounced 30s)" },
-  "appsScriptLastSent": { "message": "Status terakhir" },
-  "appsScriptIncludeNotes": { "message": "Catatan" },
-  "appsScriptIncludeScreenshots": { "message": "Screenshot (metadata)" },
-  "appsScriptIncludeHabits": { "message": "Habits (ngaji+olahraga)" },
-  "appsScriptIncludeChat": { "message": "Chat AI (sensitif)" },
-  "appsScriptIncludeVolume": { "message": "Volume settings" }
+  }
 }

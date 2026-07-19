@@ -1,59 +1,22 @@
-# Dependencies
-node_modules/
-package-lock.json
-yarn.lock
-
-# Build artifacts
-web-ext-artifacts/
-*.zip
-*.xpi
-!recallfox-v*.xpi  # keep release artifacts if explicitly added
-
-# Dev / test files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
 
-# Test profiles (created by web-ext run)
-/recallfox-test-profile/
-/recallfox-webext-profile*/
+# Test / temp
+test-*.mjs
+*.bak
+*.original
+__pycache__/
+node_modules/
 
-# Backup files (jangan commit backup pribadi)
-*.rfvault
-auto-backup.json
-manual-backup-*.json
-
-# Environment variables (mungkin berisi API keys)
-.env
-.env.local
-.env.*.local
-
-# OS files
-.Trashes
-ehthumbs.db
-Desktop.ini
-
-# Browser profile data yang mungkin ter-copy saat dev
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-*.db
-
-# Lock files yang tidak relevan
-*.lock
-!package-lock.json
-
-# Hidden Mac files
-._*
-.Spotlight-V100
-.fseventsd
+# Build artifacts (keep .xpi out of repo — release via GitHub Releases)
+*.xpi
+recallfox-*.zip
+!recallfox-v*.zip

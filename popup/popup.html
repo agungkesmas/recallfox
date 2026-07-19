@@ -30,10 +30,6 @@
   <div class="cmd" id="cmdWrap">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
     <input id="search" type="text" placeholder="Cari item atau ketik perintah…" autocomplete="off" spellcheck="false">
-    <!-- v3.11.0 (Issue 4): X clear button — tampilkan saat ada teks di search box -->
-    <button id="searchClear" class="search-clear" type="button" title="Hapus teks pencarian" aria-label="Hapus teks pencarian" style="display:none">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
     <span class="hint"><kbd>/</kbd><kbd>⌘K</kbd></span>
   </div>
 
@@ -85,7 +81,15 @@
   <div class="view hide" id="notesView">
     <div class="notes-bar">
       <span class="t">Catatan</span><span class="notes-hintbar">auto-save · lokal saja</span>
+      <button class="addbtn" id="noteBatchBtn" title="Mode batch: pilih multiple note untuk hapus/arsip sekaligus" style="margin-left:auto">☑️ Batch</button>
       <button class="addbtn" id="noteAddBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Catatan Baru</button>
+    </div>
+    <!-- v3.9.0 (Issue 7): Batch action bar (hidden by default, shown when batch mode active) -->
+    <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:8px;font-size:11px">
+      <span id="notesBatchCount">0 dipilih</span>
+      <button class="btn btn-g" id="notesBatchArchive" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-d" id="notesBatchDelete" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="notesBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="notes-list" id="notesList"></div>
   </div>

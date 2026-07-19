@@ -168,21 +168,5 @@
   "contentGuardName": { "message": "Positive Content Filter" },
   "contentGuardDesc": {
     "message": "Block Indonesian negative news & forcefully redirect to positive China content on YouTube / X."
-  },
-
-  "appsScriptSyncName": { "message": "Apps Script Sync (Google Spreadsheet)" },
-  "appsScriptSyncDesc": {
-    "message": "Backup vault to Google Spreadsheet via Apps Script Web App. Each item is stored as a row — readable / filterable directly in Google Sheets."
-  },
-  "appsScriptUrl": { "message": "Apps Script Web App URL" },
-  "appsScriptToken": { "message": "Token (bearer)" },
-  "appsScriptTestConnection": { "message": "Test Connection" },
-  "appsScriptSendNow": { "message": "Send Now" },
-  "appsScriptAutoSync": { "message": "Auto-sync (debounced 30s)" },
-  "appsScriptLastSent": { "message": "Last status" },
-  "appsScriptIncludeNotes": { "message": "Notes" },
-  "appsScriptIncludeScreenshots": { "message": "Screenshots (metadata)" },
-  "appsScriptIncludeHabits": { "message": "Habits (quran+exercise)" },
-  "appsScriptIncludeChat": { "message": "AI chat (sensitive)" },
-  "appsScriptIncludeVolume": { "message": "Volume settings" }
+  }
 }

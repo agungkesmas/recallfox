@@ -328,6 +328,13 @@
       hideAllShorts();
     }
 
+    // v3.10.0 (Issue 2): Mode Anak — filter konten di youtube.com (no redirect).
+    // Hanya tampilkan video dari channel whitelist ramah anak + yang judulnya mengandung
+    // kata kunci anak/kids/edukasi. Semua video lain di-hide.
+    if (settings?.contentGuardKidModeFilter === true) {
+      hideNonKidContent();
+    }
+
     let changed = false;
     const scanDescription = settings?.contentGuardScanDescription !== false;
 
@@ -538,6 +545,67 @@
     const allText = el.textContent || '';
     const m = allText.match(/@([A-Za-z0-9_]{1,15})/);
     return m ? m[0] : '';
+  }
+
+  // v3.10.0 (Issue 2): Mode Anak — hide SEMUA video kecuali yang ramah anak.
+  // Definisi "ramah anak":
+  //   - Channel ada di whitelist KID_FRIENDLY_CHANNELS (channel edukasi/kartun/anak terkenal)
+  //   - ATAU judul mengandung kata kunci anak/kids/edukasi/cartoon/dongeng/dll.
+  //   - Video lain di-hide (display:none) — feed jadi hanya konten ramah anak.
+  // Catatan: ini bukan redirect ke youtubekids.com. User tetap di youtube.com biasa,
+  // tapi feed difilter supaya hanya konten ramah anak yang tampil.
+  function hideNonKidContent() {
+    // Whitelist channel ramah anak (lowercase, match substring)
+    const KID_FRIENDLY_CHANNELS = [
+      'cocomelon', 'super simple songs', 'pinkfong', 'little baby bum',
+      'chuchu tv', 'kids tv', 'cvn 78 kids', 'edukids', 'boboiboy',
+      'upin & ipin', 'upin ipin', 'didiketikdotcom', 'kastari animation',
+      'nussa official', 'nussa', 'ruqot', 'drummy kids', 'natgeo kids',
+      'national geographic kids', 'sesame street', 'pbs kids', 'tayo the little bus',
+      'robocar poli', 'pororo', 'tobot', 'hello carbot', 'bumi cartoon',
+      'keluarga cemara', 'si unyil', 'jalan sesame', 'monster school',
+      'minecraft for kids', 'roblox for kids', 'lego'
+    ];
+    // Kata kunci ramah anak di judul (lowercase, match substring)
+    const KID_TITLE_KEYWORDS = [
+      'anak', 'kids', 'kid', 'cartoon', 'kartun', 'dongeng', 'cerita anak',
+      'lagu anak', 'nursery rhymes', 'belajar', 'edukasi', 'balita',
+      'anak-anak', 'prasekolah', 'tk ', 'paud', 'animasi', 'petualangan',
+      'tayo', 'pororo', 'robocar', 'bumi', 'boboiboy', 'upin ipin',
+      'nussa', 'ruqot', 'cocomelon', 'pinkfong'
+    ];
+
+    let hiddenCount = 0;
+    for (const sel of YT_VIDEO_SELECTORS) {
+      let nodes;
+      try { nodes = document.querySelectorAll(sel); }
+      catch (e) { continue; }
+      nodes.forEach(node => {
+        if (node.dataset.rfCgKidHidden === '1') return;
+        if (node.dataset.rfCgHidden === '1') return; // sudah di-hide oleh filter lain
+        if (node.querySelector('ytd-ad-slot-renderer, [class*="ad-"]')) return;
+
+        const title = (getYouTubeTitle(node) || '').toLowerCase();
+        const channel = (getYouTubeChannel(node) || '').toLowerCase();
+        const combined = title + ' ' + channel;
+
+        // Cek apakah ramah anak
+        const isKidFriendly =
+          KID_FRIENDLY_CHANNELS.some(c => channel.includes(c)) ||
+          KID_TITLE_KEYWORDS.some(k => combined.includes(k));
+
+        if (!isKidFriendly) {
+          node.style.setProperty('display', 'none', 'important');
+          node.dataset.rfCgKidHidden = '1';
+          node.dataset.rfCgReason = 'kid_mode_filter';
+          hiddenCount++;
+        }
+      });
+    }
+    if (hiddenCount > 0 && settings?.contentGuardDebugMode) {
+      console.log('[RecallFox/CG] Kid mode: hidden', hiddenCount, 'non-kid videos');
+    }
+    return hiddenCount;
   }
 
   function hideXNegative() {

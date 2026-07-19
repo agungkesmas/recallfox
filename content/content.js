@@ -544,6 +544,46 @@
         isAIDomain: window.__RecallFoxIsAIDomain__,
         domainId: window.__RecallFoxDomainConfig__?.id
       });
+    } else if (msg.type === 'GET_PAGE_CONTEXT') {
+      // v3.8.1 (Issue #4): Handler untuk "Ambil dari halaman aktif" di popup Konteks.
+      // Sebelumnya handler ini TIDAK ADA — tombol diam-diam gagal & hanya dapat metadata.
+      // Sekarang ekstrak body text halaman utama (max 8000 char).
+      try {
+        const main = document.querySelector('main')
+                  || document.querySelector('[role="main"]')
+                  || document.querySelector('article')
+                  || document.body;
+        let text = (main?.innerText || '').trim();
+        // Bersihkan whitespace berlebih
+        text = text.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+        // Ambil meta description untuk konteks tambahan
+        const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+        const ogDesc = document.querySelector('meta[property="og:description"]')?.content || '';
+        const desc = (metaDesc || ogDesc || '').trim();
+        // Ambil selection text (kalau user blok teks tertentu)
+        const sel = (window.getSelection()?.toString() || '').trim();
+        // Batasi panjang (8000 char ~ 1500 kata)
+        const maxLen = msg.maxLen || 8000;
+        if (text.length > maxLen) text = text.slice(0, maxLen) + '\n\n[... dipotong, total ' + text.length + ' char]';
+        sendResponse({
+          ok: true,
+          text: text,
+          title: document.title || '',
+          url: location.href,
+          description: desc,
+          selection: sel,
+          meta: {
+            wordCount: text ? text.split(/\s+/).length : 0,
+            charCount: text.length,
+            hasMain: !!document.querySelector('main'),
+            hasArticle: !!document.querySelector('article')
+          }
+        });
+      } catch (e) {
+        console.warn('[RecallFox] GET_PAGE_CONTEXT error:', e);
+        sendResponse({ ok: false, error: e.message, text: '', title: document.title || '', url: location.href });
+      }
+      return true; // async-safe
     }
   });
 

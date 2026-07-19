@@ -17,10 +17,7 @@ import {
   updateNote,
   deleteNote,
   toggleNotePin,
-  getNoteGroups,
-  // v3.8.0 (Issue 5): Notes-as-bundle-members helpers
-  getNotesAsBundleCandidates,
-  resolveBundleMembers
+  getNoteGroups
 } from '../lib/storage.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
 import { AI_TOOLS, groupByRegion, matchCurrentTool } from '../lib/ai-tools.js';
@@ -145,9 +142,7 @@ const TYPE = {
   snapshot: { label: 'Snapshot', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/><circle cx="12" cy="11.5" r="1"/><circle cx="16" cy="11.5" r="1"/><circle cx="8" cy="11.5" r="1"/></svg>' },
   screenshot: { label: 'Media', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>' },
   link: { label: 'Link', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
-  bundle: { label: 'Bundle', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>' },
-  // v3.8.0 (Issue 5): Note sebagai tipe bundle member — sebelumnya tidak bisa masuk bundle.
-  note: { label: 'Catatan', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' }
+  bundle: { label: 'Bundle', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>' }
 };
 
 // ============ Toast ============
@@ -387,10 +382,11 @@ function chipCount(c) {
 }
 function renderChips() {
   const items = getVaultItems();
+  // v3.9.0 (Issue 6): tambah data-cat untuk styling ribbon warna per kategori
   $('#chips').innerHTML = CHIPS.map(function (c) {
     const n = chipCount(c[0]);
     if (c[0] !== 'all' && c[0] !== 'archive' && n === 0) return '';
-    return '<button class="chip' + (currentChip === c[0] ? ' on' : '') + '" data-chip="' + c[0] + '">' + c[1] + '<span class="n">' + n + '</span></button>';
+    return '<button class="chip' + (currentChip === c[0] ? ' on' : '') + '" data-chip="' + c[0] + '" data-cat="' + c[0] + '">' + c[1] + '<span class="n">' + n + '</span></button>';
   }).join('');
   $$('#chips .chip').forEach(ch => ch.addEventListener('click', () => { currentChip = ch.dataset.chip; renderVault(); }));
   const visibleItemsForMeta = items.filter(i => !i.archived && !(i._bundle && i._bundle.archived));
@@ -410,41 +406,18 @@ function searchableTextFor(it) {
   if (it.linkUrl) parts.push(it.linkUrl);
   if (it.linkTitle) parts.push(it.linkTitle);
   if (it.category) parts.push(it.category);
-  if (it.contextPurpose) parts.push(it.contextPurpose); // v3.11.0 (Issue 4)
   // v3.7.2 (Issue 4): screenshot metadata
   if (it.source) {
     if (it.source.url) parts.push(it.source.url);
     if (it.source.title) parts.push(it.source.title);
   }
-  // v3.11.0 (Issue 4): Screenshot Drive link juga di-search
-  if (it.driveFileUrl) parts.push(it.driveFileUrl);
-  if (it.driveFileId) parts.push(it.driveFileId);
   // v3.7.2 (Issue 4): bundle — sertakan judul semua item anggota
   if (it._bundle) {
-    // v3.11.0 (Issue 4): FIX bundle member haystack — sebelumnya hanya title anggota,
-    // bukan linkUrl/body anggota. User cari "github" tidak ketemu kalau github link ada
-    // di dalam bundle sebagai anggota. Sekarang include linkUrl + body + tags + source anggota.
-    const members = (it._bundle.injectOrder || it._bundle.itemIds || [])
+    const memberTitles = (it._bundle.injectOrder || it._bundle.itemIds || [])
       .map(iid => currentVault.items.find(i => i.id === iid))
-      .filter(Boolean);
-    // Also include notes (id mulai "n_") yang jadi anggota bundle
-    const memberNoteIds = (it._bundle.injectOrder || it._bundle.itemIds || [])
-      .filter(iid => typeof iid === 'string' && iid.startsWith('n_'));
-    const notesForSearch = (currentNotes || []).filter(n => memberNoteIds.includes(n.id));
-    for (const m of members) {
-      parts.push(m.title || '');
-      parts.push(m.body || '');
-      parts.push(m.linkUrl || '');
-      parts.push(m.linkTitle || '');
-      if (Array.isArray(m.tags)) parts.push(m.tags.join(' '));
-      if (m.source?.url) parts.push(m.source.url);
-      if (m.source?.title) parts.push(m.source.title);
-    }
-    for (const n of notesForSearch) {
-      parts.push(n.title || '');
-      parts.push(n.body || '');
-      if (n.group) parts.push(n.group);
-    }
+      .filter(Boolean)
+      .map(i => i.title || '');
+    parts.push(memberTitles.join(' '));
   }
   return parts.join(' ').toLowerCase();
 }
@@ -487,14 +460,28 @@ function renderList() {
     // v3.7.2 (Issue 1): indikator arsip
     const arch = it.archived ? '<span class="fav" title="Diarsipkan" style="color:var(--muted)">📦</span>' : '';
     const uses = it.useCount || it.uses || 0;
-    // v3.8.0 (Issue 7): Satukan 2-3 tombol inline jadi 1 CTA → buka sheet fungsional.
-    // Sebelumnya: Link = 3 tombol (Salin+Buka+Sisipkan), Bundle = 2 (Salin+Sisipkan),
-    // Screenshot = 2 (Lihat+Download). User anggap mubazir — sekarang 1 CTA "Buka ↵"
-    // yang membuka sheet in-app berisi semua aksi fungsional.
+    // v3.7.1-FIX: Untuk Link: 3 tombol (Salin, Buka, Sisipkan).
+    // Untuk Bundle: 2 tombol (Salin, Sisipkan jika AI).
+    // Untuk Screenshot: 2 tombol (Lihat, Download).
+    // Untuk tipe lain: CTA pill tunggal.
     let ctaHtml = '';
-    const ctaLabel = it.type === 'screenshot' ? 'Lihat ↵' : (it.type === 'bundle' ? 'Buka ↵' : (it.type === 'link' ? 'Buka ↵' : (currentAiDomain ? 'Sisipkan ↵' : 'Salin ↵')));
-    const ctaIcon = it.type === 'screenshot' ? ICONS.image : (it.type === 'bundle' ? ICONS.archive : (it.type === 'link' ? ICONS.spark : (currentAiDomain ? ICONS.zap : ICONS.copy)));
-    ctaHtml = '<span class="cta-pill" data-cta="open">' + ctaIcon + ctaLabel + '</span>';
+    if (it.type === 'link') {
+      ctaHtml =
+        '<span class="cta-pill" data-link-action="copy">' + ICONS.copy + 'Salin ↵</span>'
+        + '<button class="link-mini-btn" data-link-action="open" title="Buka link di tab baru">' + ICONS.spark + '</button>'
+        + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
+    } else if (it.type === 'bundle') {
+      ctaHtml =
+        '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin ↵</span>'
+        + (currentAiDomain ? '<button class="link-mini-btn" data-bundle-action="inject" title="Sisipkan semua item ke chat AI">' + ICONS.zap + '</button>' : '');
+    } else if (it.type === 'screenshot') {
+      ctaHtml =
+        '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat ↵</span>'
+        + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
+    } else {
+      const cta = currentAiDomain ? ICONS.zap + 'Sisipkan ↵' : ICONS.copy + 'Salin ↵';
+      ctaHtml = '<span class="cta-pill">' + cta + '</span>';
+    }
     return '<div class="item" data-id="' + it.id + '" tabindex="0">'
       + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
       + '<div class="item-main">'
@@ -511,273 +498,58 @@ function renderList() {
 function bindItemClicks() {
   $$('#list .item').forEach(el => {
     el.addEventListener('click', e => {
-      // v3.8.0 (Issue 7): CTA "open" membuka sheet fungsional yang berisi semua aksi.
-      const ctaBtn = e.target.closest('[data-cta="open"]');
-      if (ctaBtn) {
+      // v3.6: Cek apakah user klik tombol aksi Link khusus (data-link-action)
+      const linkBtn = e.target.closest('[data-link-action]');
+      if (linkBtn) {
         e.stopPropagation();
-        openFunctionalSheet(el.dataset.id);
+        const action = linkBtn.dataset.linkAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'copy') copyLinkToClipboard(it);
+        else if (action === 'open') openLinkInNewTab(it);
+        else if (action === 'inject') injectLinkToChat(it);
+        return;
+      }
+      // v3.7.1-FIX: Tombol aksi Bundle (data-bundle-action)
+      const bundleBtn = e.target.closest('[data-bundle-action]');
+      if (bundleBtn) {
+        e.stopPropagation();
+        const action = bundleBtn.dataset.bundleAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'copy') { injectBundle(it.id); return; }
+        else if (action === 'inject') {
+          // Sisipkan semua teks item bundle ke chat AI
+          const bundle = currentVault.bundles.find(b => b.id === it.id);
+          if (bundle) {
+            const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
+            const textItems = items.filter(i => i.type !== 'link');
+            if (textItems.length > 0) {
+              const text = textItems.map(i => '## ' + (i.title || i.type) + '\n' + (i.body || '')).join('\n\n---\n\n');
+              doInject(text, it.id);
+            } else { toast('Bundle tidak punya item teks', false); }
+          }
+          return;
+        }
+      }
+      // v3.7.1-FIX: Tombol aksi Screenshot (data-shot-action)
+      const shotBtn = e.target.closest('[data-shot-action]');
+      if (shotBtn) {
+        e.stopPropagation();
+        const action = shotBtn.dataset.shotAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'view') openScreenshotViewer(it.id);
+        else if (action === 'download') downloadScreenshot(it.id);
         return;
       }
       if (e.target.closest('.morebtn')) return;
-      // v3.8.0 (Issue 7): Klik row juga buka functional sheet (bukan primaryAction lama)
-      openFunctionalSheet(el.dataset.id);
+      primaryAction(el.dataset.id);
     });
-    el.addEventListener('keydown', e => { if (e.key === 'Enter') openFunctionalSheet(el.dataset.id); });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') primaryAction(el.dataset.id); });
   });
   $$('#list .morebtn').forEach(b => {
     b.addEventListener('click', e => { e.stopPropagation(); itemSheet(b.dataset.more); });
-  });
-}
-
-// v3.8.0 (Issue 7): Functional sheet — single-pane detail viewer dengan semua aksi.
-// Menggantikan 2-3 tombol inline (yang user anggap mubazir) dengan 1 CTA → sheet fungsional.
-// Untuk screenshot: preview gambar + download + salin + edit + hapus.
-// Untuk bundle: daftar anggota + salin + sisipkan + edit + arsip.
-// Untuk link: salin URL + buka + sisipkan + edit.
-// Untuk prompt/konteks: preview body + sisipkan + salin + edit + lampiran.
-function openFunctionalSheet(id) {
-  const it = findItem(id);
-  if (!it) return;
-  const T = TYPE[it.type] || { label: it.type };
-
-  // ===== Screenshot =====
-  if (it.type === 'screenshot') {
-    openSheet('🖼️ ' + esc(it.title || 'Screenshot'), T.label + (it.screenshotMode ? ' · ' + it.screenshotMode : '') + (it.screenshotWidth ? ' · ' + it.screenshotWidth + '×' + it.screenshotHeight : ''), b => {
-      // v3.11.0 (Issue 2): Tampilkan badge "☁ Drive" + link kalau screenshot sudah di-upload
-      const driveBadge = it.driveFileUrl
-        ? '<div style="background:#ecfdf5;border:1px solid #10b981;color:#065f46;border-radius:8px;padding:6px 10px;font-size:11px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span>☁</span><a href="' + escAttr(it.driveFileUrl) + '" target="_blank" style="color:#065f46;font-weight:600;text-decoration:underline">Buka di Google Drive</a><span style="margin-left:auto;color:#10b981">✓ Tersimpan</span></div>'
-        : '';
-      b.innerHTML =
-        driveBadge
-        + '<div class="fs-preview" id="fsPrev" style="background:var(--surface-2);border-radius:10px;min-height:120px;display:grid;place-items:center;color:var(--muted);font-size:11px;margin-bottom:10px">⏳ Memuat gambar…</div>'
-        + '<div class="fs-meta" style="font-size:10.5px;color:var(--muted);margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap">'
-        + (it.screenshotBytes ? '<span>📦 ' + Math.round(it.screenshotBytes / 1024) + ' KB</span>' : '')
-        + (it.screenshotFormat ? '<span>🎨 ' + it.screenshotFormat + '</span>' : '')
-        + (it.source?.url ? '<span title="' + escAttr(it.source.url) + '">🔗 ' + esc(it.source.url.slice(0, 40)) + (it.source.url.length > 40 ? '…' : '') + '</span>' : '')
-        + '</div>'
-        + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
-        +   '<button class="btn btn-p" data-fa="copy">' + ICONS.copy + ' Salin ke clipboard</button>'
-        +   '<button class="btn btn-g" data-fa="download">' + ICONS.download + ' Download</button>'
-        // v3.11.0 (Issue 2): Tombol Upload ke Drive / Buka di Drive
-        +   (it.driveFileUrl
-            ? '<a class="btn btn-g" href="' + escAttr(it.driveFileUrl) + '" target="_blank" style="text-decoration:none;display:inline-flex;align-items:center;gap:4px">☁ Buka di Drive</a>'
-            : '<button class="btn btn-g" data-fa="upload-drive" title="Upload ke Google Drive (perlu Apps Script Sync aktif)">☁ Upload ke Drive</button>')
-        +   (currentAiDomain ? '<button class="btn btn-g" data-fa="inject" title="Sisipkan referensi gambar ke chat AI">' + ICONS.zap + ' Sisipkan ke AI</button>' : '')
-        + '</div>'
-        + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap">'
-        +   '<button class="btn btn-g" data-fa="edit">' + ICONS.edit + ' Edit</button>'
-        +   '<button class="btn btn-g" data-fa="fav">' + ICONS.star + (it.favorite ? ' Unfavorit' : ' Favoritkan') + '</button>'
-        +   '<button class="btn btn-g" data-fa="archive">' + ICONS.archive + (it.archived ? ' Unarsip' : ' Arsipkan') + '</button>'
-        +   '<button class="btn btn-d" data-fa="del">' + ICONS.trash + ' Hapus</button>'
-        + '</div>';
-
-      // Lazy-load image
-      browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id: it.id }).then(res => {
-        const prev = b.querySelector('#fsPrev');
-        if (res?.ok && res.dataUrl) {
-          prev.innerHTML = '<img src="' + res.dataUrl + '" style="display:block;max-width:100%;max-height:320px;width:auto;height:auto;margin:0 auto;border-radius:8px" alt="' + escAttr(it.title || '') + '" />';
-          prev.style.padding = '8px';
-        } else {
-          prev.innerHTML = '⚠ Gagal memuat gambar';
-        }
-      });
-
-      b.querySelectorAll('[data-fa]').forEach(btn => btn.addEventListener('click', async () => {
-        const a = btn.dataset.fa;
-        if (a === 'copy') {
-          try {
-            const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id: it.id });
-            if (res?.ok && res.dataUrl) {
-              // Convert dataURL to blob → write to clipboard
-              const blob = await (await fetch(res.dataUrl)).blob();
-              await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-              toast('📋 Gambar disalin ke clipboard');
-            }
-          } catch (e) { toast('⚠ Gagal salin: ' + e.message, false); }
-        }
-        else if (a === 'download') { closeSheet(); downloadScreenshot(it.id); }
-        // v3.11.0 (Issue 2): Manual upload ke Drive (kalau auto-upload gagal / dimatikan)
-        else if (a === 'upload-drive') {
-          btn.disabled = true;
-          btn.textContent = '☁ Mengupload...';
-          try {
-            const res = await browser.runtime.sendMessage({ type: 'UPLOAD_SCREENSHOT_TO_DRIVE', id: it.id });
-            if (res?.ok && res.driveFileUrl) {
-              toast('☁ Tersimpan ke Drive ✓');
-              await refreshVault();
-              closeSheet();
-              openFunctionalSheet(it.id); // Re-open untuk show badge + Buka di Drive button
-            } else {
-              toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
-              btn.disabled = false;
-              btn.textContent = '☁ Upload ke Drive';
-            }
-          } catch (e) {
-            toast('⚠ Error: ' + e.message, false);
-            btn.disabled = false;
-            btn.textContent = '☁ Upload ke Drive';
-          }
-        }
-        else if (a === 'inject') {
-          closeSheet();
-          // Sisipkan referensi gambar (URL sumber + judul) — gambar base64 tidak bisa disisipkan ke textarea AI
-          const refText = '[🖼️ Screenshot: ' + (it.title || 'untitled') + ']' + (it.source?.url ? '\nSumber: ' + it.source.url : '') + (it.driveFileUrl ? '\nDrive: ' + it.driveFileUrl : '');
-          doInject(refText, it.id);
-        }
-        else if (a === 'edit') { closeSheet(); openEditorSheet(it.id); }
-        else if (a === 'fav') { await toggleFav(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.favorite ? '★ Unfavorit' : '★ Favoritkan'); }
-        else if (a === 'archive') { await toggleArchive(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.archived ? '📦 Unarsip' : '📦 Arsipkan'); }
-        else if (a === 'del') {
-          b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
-            + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
-          b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
-          b.querySelector('[data-c="1"]').addEventListener('click', async () => {
-            await deleteItem(it.id); closeSheet(); await refreshVault(); toast('Item dihapus');
-          });
-        }
-      }));
-    });
-    return;
-  }
-
-  // ===== Bundle =====
-  if (it.type === 'bundle') {
-    const bd = currentVault.bundles.find(b => b.id === it.id);
-    const memberCount = bd ? (bd.itemIds || []).length : 0;
-    openSheet('📦 ' + esc(it.title || 'Bundle'), T.label + ' · ' + memberCount + ' anggota', b => {
-      // Resolve members untuk preview (async)
-      resolveBundleMembers(bd?.itemIds || []).then(members => {
-        const memberList = members.length
-          ? members.map(m => {
-              const Tm = TYPE[m.type] || { label: m.type };
-              return '<div class="fs-member"><span class="pt-type t-' + m.type + '">' + Tm.label + '</span><span class="fs-member-title">' + esc((m.title || '(untitled)').slice(0, 50)) + '</span></div>';
-            }).join('')
-          : '<div style="padding:12px;text-align:center;color:var(--muted);font-size:11px">Bundle kosong — tambah anggota dari editor.</div>';
-
-        b.innerHTML =
-          '<div class="fs-members" style="margin-bottom:10px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">' + memberList + '</div>'
-          + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
-          +   '<button class="btn btn-p" data-fa="copy">' + ICONS.copy + ' Salin semua (' + memberCount + ')</button>'
-          +   (currentAiDomain ? '<button class="btn btn-g" data-fa="inject" title="Sisipkan semua item bundle ke chat AI">' + ICONS.zap + ' Sisipkan ke AI</button>' : '')
-          + '</div>'
-          + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap">'
-          +   '<button class="btn btn-g" data-fa="edit">' + ICONS.edit + ' Edit anggota</button>'
-          +   '<button class="btn btn-g" data-fa="archive">' + ICONS.archive + (bd?.archived ? ' Unarsip' : ' Arsipkan') + '</button>'
-          +   '<button class="btn btn-d" data-fa="del">' + ICONS.trash + ' Hapus bundle</button>'
-          + '</div>';
-
-        b.querySelectorAll('[data-fa]').forEach(btn => btn.addEventListener('click', async () => {
-          const a = btn.dataset.fa;
-          if (a === 'copy') { closeSheet(); await injectBundle(it.id); }
-          else if (a === 'inject') {
-            closeSheet();
-            const bundle = currentVault.bundles.find(bx => bx.id === it.id);
-            if (bundle) {
-              const items = await resolveBundleMembers(bundle.injectOrder || bundle.itemIds || []);
-              const textItems = items.filter(i => i.type !== 'link' && i.type !== 'screenshot');
-              if (textItems.length > 0) {
-                const text = textItems.map(i => '## ' + (i.title || i.type) + '\n' + (i.body || '')).join('\n\n---\n\n');
-                doInject(text, it.id);
-              } else { toast('Bundle tidak punya item teks', false); }
-            }
-          }
-          else if (a === 'edit') { closeSheet(); openBundleEditorSheet(it.id); }
-          else if (a === 'archive') {
-            await updateBundle(it.id, { archived: !bd?.archived });
-            closeSheet(); await refreshVault();
-            toast(bd?.archived ? '📦 Unarsip' : '📦 Arsipkan');
-          }
-          else if (a === 'del') {
-            b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus bundle <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
-              + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
-            b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
-            b.querySelector('[data-c="1"]').addEventListener('click', async () => {
-              await deleteBundle(it.id); closeSheet(); await refreshVault(); toast('Bundle dihapus');
-            });
-          }
-        }));
-      });
-    });
-    return;
-  }
-
-  // ===== Link =====
-  if (it.type === 'link') {
-    openSheet('🔗 ' + esc(it.title || 'Link'), T.label + (it.source?.url ? ' · sumber: ' + it.source.url.slice(0, 40) : ''), b => {
-      b.innerHTML =
-        '<div class="fs-link-url" style="background:var(--surface-2);border-radius:8px;padding:8px 11px;font-family:var(--mono);font-size:11.5px;color:var(--text-2);word-break:break-all;margin-bottom:10px">' + esc(it.linkUrl || it.body || '') + '</div>'
-        + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
-        +   '<button class="btn btn-p" data-fa="copy">' + ICONS.copy + ' Salin URL</button>'
-        +   '<button class="btn btn-g" data-fa="open">' + ICONS.spark + ' Buka di tab baru</button>'
-        +   (currentAiDomain ? '<button class="btn btn-g" data-fa="inject">' + ICONS.zap + ' Sisipkan ke AI</button>' : '')
-        + '</div>'
-        + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap">'
-        +   '<button class="btn btn-g" data-fa="edit">' + ICONS.edit + ' Edit</button>'
-        +   '<button class="btn btn-g" data-fa="fav">' + ICONS.star + (it.favorite ? ' Unfavorit' : ' Favoritkan') + '</button>'
-        +   '<button class="btn btn-g" data-fa="archive">' + ICONS.archive + (it.archived ? ' Unarsip' : ' Arsipkan') + '</button>'
-        +   '<button class="btn btn-d" data-fa="del">' + ICONS.trash + ' Hapus</button>'
-        + '</div>';
-      b.querySelectorAll('[data-fa]').forEach(btn => btn.addEventListener('click', async () => {
-        const a = btn.dataset.fa;
-        if (a === 'copy') { closeSheet(); await copyLinkToClipboard(it); }
-        else if (a === 'open') { closeSheet(); await openLinkInNewTab(it); }
-        else if (a === 'inject') { closeSheet(); await injectLinkToChat(it); }
-        else if (a === 'edit') { closeSheet(); openEditorSheet(it.id); }
-        else if (a === 'fav') { await toggleFav(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.favorite ? '★ Unfavorit' : '★ Favoritkan'); }
-        else if (a === 'archive') { await toggleArchive(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.archived ? '📦 Unarsip' : '📦 Arsipkan'); }
-        else if (a === 'del') {
-          b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
-            + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
-          b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
-          b.querySelector('[data-c="1"]').addEventListener('click', async () => {
-            await deleteItem(it.id); closeSheet(); await refreshVault(); toast('Item dihapus');
-          });
-        }
-      }));
-    });
-    return;
-  }
-
-  // ===== Prompt / Konteks / Snapshot =====
-  const bodyPreview = (it.body || '').slice(0, 800) + ((it.body || '').length > 800 ? '\n\n…(dipotong — lihat editor untuk full text)' : '');
-  const vars = it.body ? extractVariables(it.body).length : 0;
-  openSheet(esc(it.title || 'Item'), T.label + (vars ? ' · ' + vars + ' variabel' : '') + (it.useCount ? ' · ' + it.useCount + '× dipakai' : ''), b => {
-    b.innerHTML =
-      '<div class="fs-body" style="background:var(--surface-2);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:11.5px;color:var(--text-2);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;margin-bottom:10px;line-height:1.5">' + esc(bodyPreview) + '</div>'
-      + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
-      +   (currentAiDomain ? '<button class="btn btn-p" data-fa="inject">' + ICONS.zap + ' Sisipkan ke AI</button>' : '<button class="btn btn-p" data-fa="copy">' + ICONS.copy + ' Salin ke clipboard</button>')
-      +   ((it.type === 'prompt' || it.type === 'context') ? '<button class="btn btn-g" data-fa="attach">' + ICONS.clipA + ' Sisipkan + lampiran</button>' : '')
-      + '</div>'
-      + '<div class="fs-actions" style="display:flex;gap:6px;flex-wrap:wrap">'
-      +   '<button class="btn btn-g" data-fa="edit">' + ICONS.edit + ' Edit</button>'
-      +   '<button class="btn btn-g" data-fa="fav">' + ICONS.star + (it.favorite ? ' Unfavorit' : ' Favoritkan') + '</button>'
-      +   '<button class="btn btn-g" data-fa="archive">' + ICONS.archive + (it.archived ? ' Unarsip' : ' Arsipkan') + '</button>'
-      +   '<button class="btn btn-g" data-fa="bundle">' + ICONS.clipA + ' Tambah ke Bundle</button>'
-      +   '<button class="btn btn-d" data-fa="del">' + ICONS.trash + ' Hapus</button>'
-      + '</div>';
-    b.querySelectorAll('[data-fa]').forEach(btn => btn.addEventListener('click', async () => {
-      const a = btn.dataset.fa;
-      if (a === 'inject' || a === 'copy') {
-        closeSheet();
-        const vars = extractVariables(it.body || '');
-        const finalBody = await buildFinalPrompt(it.body || '', it.toppings || []);
-        if (vars.length > 0) { pendingInjectItem = { ...it, body: finalBody }; openVarsModal(vars); }
-        else { await doInject(finalBody, it.id); }
-      }
-      else if (a === 'attach') { closeSheet(); openAttachModal(it.id); }
-      else if (a === 'edit') { closeSheet(); openEditorSheet(it.id); }
-      else if (a === 'fav') { await toggleFav(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.favorite ? '★ Unfavorit' : '★ Favoritkan'); }
-      else if (a === 'archive') { await toggleArchive(it.id); closeSheet(); openFunctionalSheet(it.id); toast(it.archived ? '📦 Unarsip' : '📦 Arsipkan'); }
-      else if (a === 'bundle') { closeSheet(); openReassignBundleSheet(it.id); }
-      else if (a === 'del') {
-        b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
-          + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
-        b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
-        b.querySelector('[data-c="1"]').addEventListener('click', async () => {
-          await deleteItem(it.id); closeSheet(); await refreshVault(); toast('Item dihapus');
-        });
-      }
-    }));
   });
 }
 function findItem(id) {
@@ -785,9 +557,31 @@ function findItem(id) {
   return items.find(i => String(i.id) === String(id));
 }
 async function primaryAction(id) {
-  // v3.8.0 (Issue 7): Redirect ke functional sheet — single source of truth.
-  // Untuk backward-compat: dipanggil dari itemSheet "primary" & search results.
-  openFunctionalSheet(id);
+  const it = findItem(id);
+  if (!it) return;
+  if (it.type === 'link') {
+    // v3.6: Tombol "Salin" untuk Link harus SALIN URL, bukan buka link.
+    // Untuk buka link, sediakan tombol terpisah "Buka" (openLinkInNewTab).
+    await copyLinkToClipboard(it);
+    return;
+  }
+  if (it.type === 'bundle') {
+    await injectBundle(it.id);
+    return;
+  }
+  if (it.type === 'screenshot') {
+    openScreenshotViewer(it.id);
+    return;
+  }
+  // prompt / context / snapshot
+  const vars = extractVariables(it.body || '');
+  const finalBody = await buildFinalPrompt(it.body || '', it.toppings || []);
+  if (vars.length > 0) {
+    pendingInjectItem = { ...it, body: finalBody };
+    openVarsModal(vars);
+  } else {
+    await doInject(finalBody, it.id);
+  }
 }
 
 // v3.6: Helper untuk salin URL Link ke clipboard (bukan buka link)
@@ -882,28 +676,23 @@ async function doInject(body, itemId) {
 async function injectBundle(id) {
   const bundle = currentVault.bundles.find(b => b.id === id);
   if (!bundle) return;
-  // v3.8.0 (Issue 5): Pakai resolveBundleMembers supaya notes (yang sekarang jadi anggota
-  // bundle) ikut ter-render. Sebelumnya hanya resolve ke vault.items → note diabaikan.
-  const items = await resolveBundleMembers(bundle.injectOrder || bundle.itemIds || []);
+  const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
   if (items.length === 0) { toast('Bundle kosong', false); return; }
   // v3.7.1-FIX: Bundle sekarang salin semua konten ke clipboard, bukan buka link di tab baru
   const allParts = items.map(i => {
-    const T = TYPE[i.type] || { label: i.type };
-    const header = '## ' + (i.title || i.type) + ' [' + (T.label || i.type) + ']';
+    const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
     if (i.type === 'link') return header + '\n' + (i.linkUrl || i.body || '');
-    if (i.type === 'screenshot') return header + '\n[🖼️ Screenshot — buka dari vault untuk lihat gambar]';
     return header + '\n' + (i.body || '');
   });
   const fullText = allParts.join('\n\n---\n\n');
   try {
     await navigator.clipboard.writeText(fullText);
-    for (const i of items) {
-      if (i.id && !i.id.startsWith('n_')) await incrementUseCount(i.id);
-    }
+    for (const i of items) await incrementUseCount(i.id);
     toast('📋 Bundle disalin ke clipboard (' + items.length + ' item)');
   } catch (e) {
     try {
       await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      for (const i of items) await incrementUseCount(i.id);
       toast('📋 Bundle disalin ke clipboard (' + items.length + ' item)');
     } catch (e2) {
       toast('⚠ Gagal menyalin bundle', false);
@@ -912,9 +701,17 @@ async function injectBundle(id) {
   if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
 }
 function openScreenshotViewer(id) {
-  // v3.8.0 (Issue 7): Redirect ke functional sheet (in-app viewer) — sebelumnya
-  // buka window.open baru yang minim (hanya gambar polos, tanpa aksi).
-  openFunctionalSheet(id);
+  browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id }).then(res => {
+    if (res?.ok && res.dataUrl) {
+      const w = window.open('');
+      if (w) {
+        const item = currentVault.items.find(i => i.id === id);
+        w.document.write('<!DOCTYPE html><title>' + esc(item?.title || 'Screenshot') + '</title><body style="margin:0;background:#0c0a09;display:flex;align-items:center;justify-content:center;min-height:100vh;"><img src="' + res.dataUrl + '" style="max-width:100%;max-height:100vh;" /></body>');
+      }
+    } else {
+      toast('Gagal memuat gambar', false);
+    }
+  });
 }
 function renderVault() { renderChips(); renderList(); }
 
@@ -1011,194 +808,89 @@ function openReassignBundleSheet(itemId) {
   });
 }
 // v3.7.2 (Issue 1): Bundle editor — ubah nama, tambah / hapus anggota, arsipkan bundle.
-// v3.8.0 (Issue 5): Editor diperkaya:
-//   - Catatan (notes) sekarang BISA dipilih sebagai anggota bundle.
-//   - Search box untuk filter item berdasarkan judul/tags.
-//   - Filter chips per-tipe (prompt, konteks, link, screenshot, snapshot, catatan).
-//   - Type badge di-picker pakai warna (sebelumnya teks abu-abu saja).
-//   - Inline add: tombol "+ Tambah catatan baru" & "+ Tambah prompt baru"
-//     yang langsung bikin item & centang otomatis.
-//   - Opsi "save as prompt" saat inline add prompt — default OFF.
 function openBundleEditorSheet(bundleId) {
   const bd = currentVault.bundles.find(b => b.id === bundleId);
   if (!bd) { toast('Bundle tidak ditemukan', false); return; }
-  // v3.8.0: Muat notes sebagai kandidat virtual
-  getNotesAsBundleCandidates().then(notesCandidates => {
-    const vaultCandidates = (currentVault?.items || [])
-      .filter(i => ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived);
-    // Gabungkan — notes pakai type:'note'
-    const allCandidates = [...vaultCandidates, ...notesCandidates];
+  // v3.9.0 (Issue 2): Sort by type + add filter chips + color badges
+  const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5 };
+  const allCandidates = (currentVault?.items || []).filter(i =>
+    ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
+  ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
+                    (a.title || '').localeCompare(c.title || ''));
 
-    openSheet('📦 Edit Bundle', 'Ubah nama, tambah / hapus anggota (termasuk catatan), atau arsipkan bundle', b => {
-      b.innerHTML = '<div class="sheet-form">'
-        + '<div><label>Nama Bundle</label><input class="f" id="ebName" value="' + esc(bd.name || '') + '" placeholder="mis. Riset kompetitor…"></div>'
-        // v3.8.0 (Issue 5): Search box
-        + '<div><label>Cari anggota <span class="field-hint">(ketik untuk filter)</span></label><input class="f" id="ebSearch" placeholder="Cari judul / tag…"></div>'
-        // v3.8.0 (Issue 5): Filter chips per-tipe
-        + '<div class="bf-chips" id="ebChips"></div>'
-        + '<div><label>Anggota <span class="field-hint" id="ebCount">' + (bd.itemIds || []).length + ' dipilih</span></label>'
-        + '<div class="picklist" id="ebList"></div></div>'
-        // v3.8.0 (Issue 5): Inline add — tambah item baru langsung dari editor bundle
-        + '<div style="display:flex;gap:6px;margin-top:6px">'
-        +   '<button class="btn btn-g" id="ebAddNote" style="flex:1;padding:6px 8px;font-size:11px">+ Catatan baru</button>'
-        +   '<button class="btn btn-g" id="ebAddPrompt" style="flex:1;padding:6px 8px;font-size:11px">+ Prompt baru</button>'
-        + '</div>'
-        + '<div class="btn-row"><button class="btn btn-g" id="ebArchive">' + ICONS.archive + (bd.archived ? 'Keluarkan dari arsip' : 'Arsipkan') + '</button>'
-        + '<span style="flex:1"></span>'
-        + '<button class="btn btn-g" id="ebCancel">Batal</button><button class="btn btn-p" id="ebSave">' + ICONS.check + 'Simpan</button></div></div>';
+  openSheet('📦 Edit Bundle', 'Filter per tipe, centang anggota, simpan', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Nama Bundle</label><input class="f" id="ebName" value="' + esc(bd.name || '') + '" placeholder="mis. Riset kompetitor…"></div>'
+      // v3.9.0 (Issue 2): Filter chips per tipe
+      + '<div><label>Filter per tipe <span class="field-hint">(klik untuk filter)</span></label>'
+      +   '<div class="eb-filters" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'
+      +     '<button class="chip eb-filter on" data-cat="all" style="font-size:10.5px;padding:3px 9px">Semua</button>'
+      +     '<button class="chip eb-filter" data-cat="prompt" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--primary)">💬 Prompt</button>'
+      +     '<button class="chip eb-filter" data-cat="context" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--violet)">📋 Konteks</button>'
+      +     '<button class="chip eb-filter" data-cat="link" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #0891b2">🔗 Link</button>'
+      +     '<button class="chip eb-filter" data-cat="screenshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--green)">🖼️ Media</button>'
+      +     '<button class="chip eb-filter" data-cat="snapshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--amber)">📸 Snapshot</button>'
+      +   '</div></div>'
+      + '<div><label>Anggota <span class="field-hint" id="ebCount">' + (bd.itemIds || []).length + ' dipilih</span></label>'
+      +   '<div class="picklist" id="ebList"></div></div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="ebArchive">' + ICONS.archive + (bd.archived ? 'Keluarkan dari arsip' : 'Arsipkan') + '</button>'
+      +   '<span style="flex:1"></span>'
+      +   '<button class="btn btn-g" id="ebCancel">Batal</button><button class="btn btn-p" id="ebSave">' + ICONS.check + 'Simpan</button></div></div>';
 
-      // State filter
-      const selectedTypes = new Set(['prompt', 'context', 'link', 'screenshot', 'snapshot', 'note']);
-      // Render chips
-      const chipsEl = b.querySelector('#ebChips');
-      const TYPE_FILTERS = [
-        ['prompt', '💬 Prompt'], ['context', '📋 Konteks'], ['link', '🔗 Link'],
-        ['screenshot', '🖼️ Media'], ['snapshot', '📸 Snapshot'], ['note', '📝 Catatan']
-      ];
-      chipsEl.innerHTML = TYPE_FILTERS.map(t => '<button class="bf-chip on" data-t="' + t[0] + '">' + t[1] + '</button>').join('');
-      chipsEl.querySelectorAll('.bf-chip').forEach(ch => ch.addEventListener('click', () => {
-        const t = ch.dataset.t;
-        if (selectedTypes.has(t)) { selectedTypes.delete(t); ch.classList.remove('on'); }
-        else { selectedTypes.add(t); ch.classList.add('on'); }
-        renderPicklist();
-      }));
+    // v3.9.0 (Issue 2): Render list with filter + track checked items in a Set
+    const listBox = b.querySelector('#ebList');
+    let activeFilter = 'all';
+    b._checkedSet = new Set(bd.itemIds || []);
 
-      // State checked (initialized from bundle's existing itemIds)
-      const checked = new Set(bd.itemIds || []);
-
-      function renderPicklist() {
-        const q = (b.querySelector('#ebSearch').value || '').toLowerCase().trim();
-        const list = b.querySelector('#ebList');
-        const filtered = allCandidates.filter(it => {
-          if (!selectedTypes.has(it.type)) return false;
-          if (!q) return true;
-          const hay = ((it.title || '') + ' ' + (it.tags || []).join(' ') + ' ' + (it.body || '')).toLowerCase();
-          return hay.indexOf(q) >= 0;
+    function renderList() {
+      const filtered = activeFilter === 'all'
+        ? allCandidates
+        : allCandidates.filter(it => it.type === activeFilter);
+      listBox.innerHTML = filtered.map(it => {
+        const T = TYPE[it.type] || { icon: '', label: it.type };
+        const checked = b._checkedSet.has(it.id) ? ' checked' : '';
+        return '<label class="pickrow"><input type="checkbox" value="' + it.id + '"' + checked + '>'
+          + '<span class="item-ic t-' + it.type + '" style="width:18px;height:18px;font-size:11px;flex-shrink:0">' + T.icon + '</span>'
+          + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</span>'
+          + '<span class="pt-type" style="font-size:10px;color:#888">' + T.label + '</span></label>';
+      }).join('');
+      // Bind change handlers
+      listBox.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          if (cb.checked) b._checkedSet.add(cb.value);
+          else b._checkedSet.delete(cb.value);
+          b.querySelector('#ebCount').textContent = b._checkedSet.size + ' dipilih';
         });
-        if (!filtered.length) {
-          list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-size:11px">Tidak ada item cocok dengan filter.</div>';
-          return;
-        }
-        // Sort: checked first, then by updatedAt desc
-        filtered.sort((a, b) => {
-          if (checked.has(a.id) !== checked.has(b.id)) return checked.has(a.id) ? -1 : 1;
-          return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
-        });
-        list.innerHTML = filtered.map(it => {
-          const T = TYPE[it.type] || { label: it.type };
-          const isOn = checked.has(it.id);
-          // v3.8.0 (Issue 5): Badge tipe pakai warna — class .pt-type + .pt-type.t-<type>
-          return '<label class="pickrow' + (isOn ? ' on' : '') + '">'
-            + '<input type="checkbox" value="' + esc(it.id) + '"' + (isOn ? ' checked' : '') + '>'
-            + '<span class="pickrow-title">' + esc(it.title || '(untitled)') + '</span>'
-            + '<span class="pt-type t-' + it.type + '">' + T.label + '</span>'
-            + '</label>';
-        }).join('');
-        list.querySelectorAll('input[type=checkbox]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            if (cb.checked) checked.add(cb.value); else checked.delete(cb.value);
-            // Update count + re-render picklist (untuk urutan checked-first)
-            b.querySelector('#ebCount').textContent = checked.size + ' dipilih';
-            renderPicklist();
-          });
-        });
-        b.querySelector('#ebCount').textContent = checked.size + ' dipilih';
-      }
-
-      b.querySelector('#ebSearch').addEventListener('input', renderPicklist);
-      renderPicklist();
-
-      // v3.8.0 (Issue 5): Inline add — tambah catatan baru & centang otomatis
-      b.querySelector('#ebAddNote').addEventListener('click', async () => {
-        const body = prompt('Isi catatan baru (singkat):');
-        if (!body || !body.trim()) return;
-        const title = prompt('Judul catatan (opsional, Enter untuk skip):') || '';
-        const note = await addNote(body.trim(), { title: title.trim() });
-        // Tambahkan ke candidates list supaya muncul
-        allCandidates.unshift({
-          id: note.id,
-          type: 'note',
-          title: note.title || note.body.slice(0, 60),
-          body: note.body,
-          tags: [],
-          updatedAt: note.updatedAt
-        });
-        checked.add(note.id);
-        // Aktifkan chip note kalau belum
-        if (!selectedTypes.has('note')) {
-          selectedTypes.add('note');
-          chipsEl.querySelector('[data-t="note"]')?.classList.add('on');
-        }
-        renderPicklist();
-        toast('📝 Catatan baru ditambahkan & di-centang');
       });
+    }
+    renderList();
 
-      // v3.8.0 (Issue 5): Inline add — tambah prompt baru dengan opsi "save as prompt"
-      b.querySelector('#ebAddPrompt').addEventListener('click', async () => {
-        const body = prompt('Isi prompt baru:');
-        if (!body || !body.trim()) return;
-        const title = prompt('Judul prompt (opsional):') || '';
-        // Default: prompt di-centang sebagai anggota bundle TAPI tidak disave sebagai prompt vault.
-        // Hanya disave kalau user explicitly opt-in via confirm dialog.
-        let saveAsPrompt = false;
-        if (confirm('Simpan juga sebagai item Prompt di vault? (Bisa dipakai ulang di bundle lain)\n\nCancel = hanya untuk bundle ini, OK = simpan ke vault juga.')) {
-          saveAsPrompt = true;
-        }
-        if (saveAsPrompt) {
-          // Tambah ke vault.items sebagai prompt
-          const item = await addItem({
-            type: 'prompt',
-            title: title.trim() || body.slice(0, 60),
-            body: body.trim(),
-            tags: ['bundle-inline'],
-            useCount: 0
-          });
-          allCandidates.unshift(item);
-          checked.add(item.id);
-          toast('✓ Prompt baru disimpan & di-centang');
-        } else {
-          // Simpan sebagai note dengan tag 'prompt' supaya tetap bisa masuk bundle
-          const note = await addNote(body.trim(), { title: title.trim() || body.slice(0, 60), group: 'bundle-prompts' });
-          allCandidates.unshift({
-            id: note.id,
-            type: 'note',
-            title: note.title || note.body.slice(0, 60),
-            body: note.body,
-            tags: [],
-            updatedAt: note.updatedAt
-          });
-          checked.add(note.id);
-          toast('✓ Prompt inline ditambahkan ke bundle (sebagai catatan)');
-        }
-        if (!selectedTypes.has('note') && !saveAsPrompt) {
-          selectedTypes.add('note');
-          chipsEl.querySelector('[data-t="note"]')?.classList.add('on');
-        }
-        if (saveAsPrompt && !selectedTypes.has('prompt')) {
-          selectedTypes.add('prompt');
-          chipsEl.querySelector('[data-t="prompt"]')?.classList.add('on');
-        }
-        renderPicklist();
-      });
-
-      $('#ebCancel').addEventListener('click', closeSheet);
-      $('#ebSave').addEventListener('click', async () => {
-        const name = ($('#ebName').value || '').trim() || 'Bundle tanpa nama';
-        const ids = Array.from(checked);
-        await updateBundle(bd.id, { name, itemIds: ids, injectOrder: ids });
-        closeSheet();
-        await refreshVault();
-        toast('Bundle diperbarui ✓ · ' + ids.length + ' item');
-      });
-      $('#ebArchive').addEventListener('click', async () => {
-        await updateBundle(bd.id, { archived: !bd.archived });
-        closeSheet();
-        await refreshVault();
-        toast(bd.archived ? '📦 Dikeluarkan dari arsip' : '📦 Bundle diarsipkan');
+    // Filter chip handlers
+    b.querySelectorAll('.eb-filter').forEach(btn => {
+      btn.addEventListener('click', () => {
+        b.querySelectorAll('.eb-filter').forEach(c => c.classList.remove('on'));
+        btn.classList.add('on');
+        activeFilter = btn.dataset.cat;
+        renderList();
       });
     });
-  }).catch(err => {
-    toast('Gagal memuat editor bundle: ' + err.message, false);
+
+    $('#ebCancel').addEventListener('click', closeSheet);
+    $('#ebSave').addEventListener('click', async () => {
+      const name = ($('#ebName').value || '').trim() || 'Bundle tanpa nama';
+      const ids = Array.from(b._checkedSet || []);
+      if (ids.length < 1) { toast('Pilih minimal 1 item', false); return; }
+      await updateBundle(bd.id, { name, itemIds: ids, injectOrder: ids });
+      closeSheet();
+      await refreshVault();
+      toast('Bundle diperbarui ✓ · ' + ids.length + ' item');
+    });
+    $('#ebArchive').addEventListener('click', async () => {
+      await updateBundle(bd.id, { archived: !bd.archived });
+      closeSheet();
+      await refreshVault();
+      toast(bd.archived ? '📦 Dikeluarkan dari arsip' : '📦 Bundle diarsipkan');
+    });
   });
 }
 async function downloadScreenshot(id) {
@@ -1225,7 +917,12 @@ async function openEditorSheet(id) {
       ].map(o => '<option value="' + o[0] + '"' + (o[0] === type ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></div>'
       + '<div><label>Judul</label><input class="f" id="fTitle" value="' + esc(it?.title || '') + '" placeholder="Judul singkat…"></div>'
       + (isLink ? '<div><label>URL</label><input class="f" id="fUrl" value="' + esc(it?.linkUrl || it?.body || '') + '" placeholder="https://..."></div>' : '')
-      + (isShot ? '' : '<div><label>Isi <span class="field-hint">— pakai {{nama}} untuk variabel</span></label><textarea class="f" id="fBody" rows="4" placeholder="Isi prompt / konteks…">' + esc(it?.body || '') + '</textarea><div class="varchips" id="fVars"></div></div>')
+      + (isShot ? '' : '<div><label>Isi <span class="field-hint">— pakai {{nama}} untuk variabel</span></label><textarea class="f" id="fBody" rows="4" placeholder="Isi prompt / konteks…">' + esc(it?.body || '') + '</textarea><div class="varchips" id="fVars"></div>'
+        // v3.10.0 (Issue 5): Compose + Parafrase — tersedia di semua edit item (kecuali screenshot)
+        + '<div style="display:flex;gap:6px;margin-top:6px">'
+        +   '<button class="btn btn-g" id="fCompose" title="AI generate body dari judul — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">✨ Compose dengan AI</button>'
+        +   '<button class="btn btn-g" id="fParafrase" title="AI parafrase body yang sudah ada — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">🔄 Parafrase</button>'
+        + '</div></div>')
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="fTags" value="' + esc(it ? (Array.isArray(it.tags) ? it.tags.join(', ') : (it.tags || '')) : '') + '" placeholder="coding, review"></div>'
       + (type === 'prompt' ? '<div><button class="toppick-btn" id="fTopBtn">' + ICONS.plus + 'Pilih topping <span class="field-hint" style="display:inline">(opsional)</span></button><div class="topchips" id="fTops"></div></div>' : '')
       + '<div class="btn-row"><button class="btn btn-g" id="fCancel">Batal</button><button class="btn btn-p" id="fSave">' + ICONS.check + 'Simpan</button></div></div>';
@@ -1258,6 +955,50 @@ async function openEditorSheet(id) {
 
     b.querySelector('#fCancel').addEventListener('click', closeSheet);
     b.querySelector('#fSave').addEventListener('click', () => saveEditorSheet(it));
+
+    // v3.10.0 (Issue 5): Compose + Parafrase untuk semua edit item
+    const composeBtn = b.querySelector('#fCompose');
+    const parafraseBtn = b.querySelector('#fParafrase');
+    if (composeBtn) composeBtn.addEventListener('click', async () => {
+      const titleVal = ($('#fTitle').value || '').trim();
+      if (!titleVal) { toast('Isi judul dulu, lalu klik Compose'); return; }
+      const orig = composeBtn.textContent;
+      composeBtn.textContent = '⏳ Composing...';
+      composeBtn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+        const sys = 'Anda adalah asisten yang menulis konten efektif. Berdasarkan judul dari user, tulis isi yang lengkap dan siap pakai. Maksimal 300 kata. Jawab HANYA isinya saja, tanpa penjelasan tambahan.';
+        let acc = '';
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: 'Judul: "' + titleVal + '"\n\nTulis isi lengkap berdasarkan judul ini.' }],
+          { onToken: (t) => { acc += t; if (body) { body.value = acc; body.dispatchEvent(new Event('input')); } } }
+        );
+        if (!acc && resp?.content && body) { body.value = resp.content; body.dispatchEvent(new Event('input')); }
+        toast('✨ Isi di-generate. Klik lagi untuk varian lain.');
+      } catch (e) { toast('Gagal compose: ' + e.message); }
+      finally { composeBtn.textContent = orig; composeBtn.disabled = false; }
+    });
+    if (parafraseBtn) parafraseBtn.addEventListener('click', async () => {
+      if (!body || !body.value.trim()) { toast('Isi body dulu, lalu klik Parafrase'); return; }
+      const orig = parafraseBtn.textContent;
+      parafraseBtn.textContent = '⏳ Parafrase...';
+      parafraseBtn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+        const sys = 'Anda adalah asisten yang memparafrase teks agar lebih efektif, jelas, dan rapi. Pertahankan semua informasi penting. Bisa lebih panjang atau lebih pendek sesuai kebutuhan. Jawab HANYA teks hasil parafrase, tanpa penjelasan.';
+        let acc = '';
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: 'Teks asli:\n\n' + body.value + '\n\nParafrase agar lebih efektif.' }],
+          { onToken: (t) => { acc += t; body.value = acc; body.dispatchEvent(new Event('input')); } }
+        );
+        if (!acc && resp?.content) { body.value = resp.content; body.dispatchEvent(new Event('input')); }
+        toast('🔄 Parafrase selesai. Klik lagi untuk varian lain.');
+      } catch (e) { toast('Gagal parafrase: ' + e.message); }
+      finally { parafraseBtn.textContent = orig; parafraseBtn.disabled = false; }
+    });
+
     setTimeout(() => b.querySelector('#fTitle')?.focus(), 120);
   });
 }
@@ -1275,13 +1016,7 @@ async function saveEditorSheet(existing) {
     if (existing) await updateItem(existing.id, { type, title: linkTitle, tags, body: url, linkUrl: url, linkTitle });
     else await addItem({ type, title: linkTitle, tags, body: url, linkUrl: url, linkTitle });
   } else if (type === 'screenshot') {
-    // v3.8.0 (Issue 3): Tidak lagi blok pembuatan screenshot baru — redirect ke upload sheet.
-    if (!existing) {
-      closeSheet();
-      toast('Untuk screenshot baru, gunakan upload atau tombol Shot', false);
-      setTimeout(() => saveScreenshotUploadSheet(), 200);
-      return;
-    }
+    if (!existing) { toast('Screenshot baru pakai tombol Shot', false); return; }
     await updateItem(existing.id, { type, title: title || existing.title, tags, body: existing.body || '' });
   } else {
     if (!title && !body) { closeSheet(); return; }
@@ -1299,7 +1034,12 @@ async function saveEditorSheet(existing) {
 function savePromptSheet() {
   openSheet('💬 Simpan Prompt', 'Field Prompt saja — toppings & variabel muncul saat relevan', b => {
     b.innerHTML = '<div class="sheet-form">'
-      + '<div><label>Judul</label><input class="f" id="pT" placeholder="mis. Review kode Go idiomatic…"></div>'
+      + '<div><label>Judul</label><input class="f" id="pT" placeholder="mis. Review kode Go idiomatic…" autofocus></div>'
+      // v3.9.0 (Issue 4): Tombol Compose dengan AI — judul singkat → body panjang
+      + '<div style="display:flex;gap:6px;margin-bottom:6px">'
+      +   '<button class="btn btn-g" id="pCompose" title="AI generate body lengkap dari judul — bisa diulang sampai pas" style="flex:1;padding:6px 8px;font-size:11px">✨ Compose dengan AI</button>'
+      +   '<button class="btn btn-g" id="pParafrase" title="AI parafrase body yang sudah ada — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">🔄 Parafrase</button>'
+      + '</div>'
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="pTag" placeholder="golang, review"></div>'
       + '<div><label>Isi Prompt <span class="field-hint">— pakai {{nama}} untuk variabel</span></label>'
       + '<textarea class="f" id="pBody" rows="4" placeholder="Kamu adalah reviewer senior. Tinjau kode {{bahasa}} berikut…"></textarea>'
@@ -1313,6 +1053,70 @@ function savePromptSheet() {
       while ((m = re.exec(body.value))) { if (found.indexOf(m[1]) < 0) found.push(m[1]); }
       varsEl.innerHTML = found.length ? '<span style="font-size:10px;color:var(--muted);align-self:center">Variabel:</span>' + found.map(v => '<span class="varchip">{{' + v + '}}</span>').join('') : '';
     });
+
+    // v3.9.0 (Issue 4): Compose dengan AI — judul singkat → body lengkap. Bisa diulang.
+    b.querySelector('#pCompose').addEventListener('click', async () => {
+      const btn = b.querySelector('#pCompose');
+      const title = ($('#pT').value || '').trim();
+      if (!title) { toast('Isi judul dulu, lalu klik Compose'); return; }
+      const orig = btn.textContent;
+      btn.textContent = '⏳ AI composing...';
+      btn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback, buildSystemPrompt } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) {
+          toast('Setup AI Assistant dulu di Pengaturan (Groq gratis)');
+          return;
+        }
+        const sys = 'Anda adalah asisten yang menulis prompt AI yang efektif. Berdasarkan judul singkat dari user, tulis body prompt lengkap yang siap pakai. Body harus: (1) jelas peran AI, (2) instruksi spesifik, (3) format output yang diharapkan. Gunakan {{variabel}} untuk parameter yang bisa diganti. Maksimal 200 kata. Jawab HANYA body prompt-nya saja, tanpa penjelasan tambahan.';
+        const userMsg = 'Judul: "' + title + '"\n\nTulis body prompt lengkap berdasarkan judul ini.';
+        let acc = '';
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: userMsg }],
+          { onToken: (t) => { acc += t; body.value = acc; body.dispatchEvent(new Event('input')); } }
+        );
+        if (!acc && resp?.content) body.value = resp.content;
+        body.dispatchEvent(new Event('input'));
+        toast('✨ Body di-generate. Klik lagi untuk varian lain, atau edit manual.');
+      } catch (e) {
+        toast('Gagal compose: ' + e.message);
+      } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+    // v3.9.0 (Issue 4): Parafrase body yang sudah ada — bisa diulang sampai pas
+    b.querySelector('#pParafrase').addEventListener('click', async () => {
+      const btn = b.querySelector('#pParafrase');
+      const currentBody = body.value.trim();
+      if (!currentBody) { toast('Isi body dulu, lalu klik Parafrase'); return; }
+      const orig = btn.textContent;
+      btn.textContent = '⏳ AI parafrase...';
+      btn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) {
+          toast('Setup AI Assistant dulu di Pengaturan (Groq gratis)');
+          return;
+        }
+        const sys = 'Anda adalah asisten yang memparafrase prompt AI agar lebih efektif. Pertahankan semua instruksi penting, tetapi perbaiki: kejelasan, struktur, dan efektivitas. Bisa lebih panjang atau lebih pendek sesuai kebutuhan. Jawab HANYA prompt hasil parafrase, tanpa penjelasan.';
+        const userMsg = 'Prompt asli:\n\n' + currentBody + '\n\nParafrase agar lebih efektif.';
+        let acc = '';
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: userMsg }],
+          { onToken: (t) => { acc += t; body.value = acc; body.dispatchEvent(new Event('input')); } }
+        );
+        if (!acc && resp?.content) body.value = resp.content;
+        body.dispatchEvent(new Event('input'));
+        toast('🔄 Parafrase selesai. Klik lagi untuk varian lain.');
+      } catch (e) {
+        toast('Gagal parafrase: ' + e.message);
+      } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+
     getAllToppings().then(tops => {
       const topsEl = b.querySelector('#pTops');
       topsEl.innerHTML = tops.map(t => '<button class="topchip" data-t="' + esc(t.id) + '">' + esc(t.emoji || '') + ' ' + esc(t.name) + '</button>').join('');
@@ -1337,12 +1141,7 @@ function savePromptSheet() {
   });
 }
 function saveKonteksSheet() {
-  // v3.8.0 (Issue 4): Form konteks diperbaiki total — tombol "Ambil dari halaman aktif"
-  // sebelumnya tidak berfungsi karena tidak ada handler GET_PAGE_CONTEXT. Sekarang
-  // tombol benar-benar mengekstrak title + URL + meta description + main content
-  // dari halaman aktif via browser.scripting.executeScript (di background).
-  // Plus: tombol baru "Ringkas dengan AI" yang mengirim konten ke Groq/Gemini
-  // untuk diringkas + diklasifikasikan, sehingga konteks jadi lebih ringkas & berguna.
+  // v3.7.1-FIX: Form konteks diperkaya — tujuan, auto-grab halaman, template
   const TUJUAN_OPTIONS = [
     ['system', 'Instruksi Sistem (system prompt)'],
     ['project', 'Konteks Proyek (stack, arsitektur)'],
@@ -1360,114 +1159,164 @@ function saveKonteksSheet() {
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="cTag" placeholder="pos, arsitektur"></div>'
       + '<div style="display:flex;gap:6px;margin-bottom:4px">'
       +   '<button class="btn btn-g" id="cGrabPage" style="flex:1;padding:6px 8px;font-size:11px">' + ICONS.spark + ' Ambil dari halaman aktif</button>'
-      +   '<button class="btn btn-g" id="cSummarize" style="flex:1;padding:6px 8px;font-size:11px">🤖 Ringkas dengan AI</button>'
-      + '</div>'
-      + '<div style="display:flex;gap:6px;margin-bottom:4px">'
+      +   '<button class="btn btn-g" id="cAiSummarize" style="flex:1;padding:6px 8px;font-size:11px">🤖 Ringkas dengan AI</button>'
       +   '<button class="btn btn-g" id="cFromTemplate" style="flex:1;padding:6px 8px;font-size:11px">📄 Dari template</button>'
       + '</div>'
-      + '<div id="cStatus" style="font-size:11px;color:var(--muted);margin-bottom:4px;display:none"></div>'
-      + '<div><label>Konteks</label><textarea class="f" id="cBody" rows="6" placeholder="Proyek ini pakai React + TypeScript, state Zustand…\n\nTujuan: ...\nStack: ...\nKonvensi: ..."></textarea></div>'
+      + '<div><label>Konteks</label><textarea class="f" id="cBody" rows="6" placeholder="Proyek ini pakai React + TypeScript, state Zustand…\n\nTujuan: ...\nStack: ...\nKonvensi: ..."></textarea>'
+      // v3.10.0 (Issue 5): Compose + Parafrase untuk konteks
+      + '<div style="display:flex;gap:6px;margin-top:6px">'
+      +   '<button class="btn btn-g" id="cCompose" title="AI generate konteks dari judul — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">✨ Compose dengan AI</button>'
+      +   '<button class="btn btn-g" id="cParafrase" title="AI parafrase konteks — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">🔄 Parafrase</button>'
+      + '</div></div>'
       + '<div class="btn-row"><button class="btn btn-g" id="cCancel">Batal</button><button class="btn btn-p" id="cSave">' + ICONS.check + 'Simpan Konteks</button></div></div>';
 
-    // v3.8.0 (Issue 4): Tombol "Ambil dari halaman aktif" sekarang benar-benar mengambil konten.
+    // v3.8.1 (Issue #4): "Ambil dari halaman aktif" — sekarang ROBUST.
+    // Sebelumnya handler GET_PAGE_CONTEXT tidak ada di content script → tombol gagal diam-diam.
+    // Sekarang: coba kirim ke content script dulu, kalau gagal fallback ke background
+    // via browser.scripting.executeScript on-demand. Plus dapat body text halaman (bukan hanya metadata).
+    let _lastPageContext = null; // cache untuk tombol AI summarize
     b.querySelector('#cGrabPage').addEventListener('click', async () => {
-      const statusEl = b.querySelector('#cStatus');
-      statusEl.style.display = '';
-      statusEl.textContent = '⏳ Mengambil konten halaman…';
+      const btn = b.querySelector('#cGrabPage');
+      const orig = btn.textContent;
+      btn.textContent = '⏳ Mengambil...';
+      btn.disabled = true;
       try {
-        const res = await browser.runtime.sendMessage({ type: 'GET_PAGE_CONTEXT' });
-        if (!res?.ok) {
-          statusEl.textContent = '⚠ Gagal: ' + (res?.error || 'tidak bisa ekstrak halaman');
-          statusEl.style.color = 'var(--red)';
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        if (!tabs[0]) { toast('Tidak ada tab aktif', false); return; }
+        const tab = tabs[0];
+        const title = tab.title || '';
+        const url = tab.url || '';
+
+        // Cek apakah URL http(s) — bukan about:, moz-extension:, dll
+        if (!url || !/^https?:\/\//.test(url)) {
+          toast('Halaman ini tidak bisa diambil kontennya (URL: ' + (url || 'kosong') + ')', false);
           return;
         }
-        const body = $('#cBody');
-        // Susun konteks: title + URL + description + main content (truncated)
-        let parts = [];
-        parts.push('[Halaman: ' + (res.title || '(tanpa judul)') + ']');
-        parts.push('[URL: ' + res.url + ']');
-        if (res.h1 && res.h1 !== res.title) parts.push('[H1: ' + res.h1 + ']');
-        if (res.description) parts.push('[Deskripsi: ' + res.description + ']');
-        if (res.text) {
-          parts.push('');
-          parts.push('=== KONTEN HALAMAN ===');
-          parts.push(res.text);
-        }
-        const fullContent = parts.join('\n');
-        // Append, bukan replace — supaya user bisa ambil dari beberapa halaman sekaligus.
-        if (body.value.trim()) {
-          body.value = body.value + '\n\n---\n\n' + fullContent;
-        } else {
-          body.value = fullContent;
-        }
-        // Auto-fill judul kalau kosong
-        if (!$('#cT').value.trim() && res.title) {
-          $('#cT').value = res.title.slice(0, 60);
-        }
-        // Simpan source URL supaya context tahu asalnya (sebelumnya tidak dikirim dari modal)
-        b.dataset.sourceUrl = res.url;
-        b.dataset.sourceTitle = res.title || '';
 
-        const contentLen = res.text ? res.text.length : 0;
-        statusEl.style.color = 'var(--green)';
-        if (res.partial) {
-          statusEl.textContent = '⚠ ' + (res.note || 'Halaman non-http — hanya judul & URL') + ' · ' + contentLen + ' char';
-        } else {
-          statusEl.textContent = '✓ Tersimpan: ' + contentLen + ' char konten · sumber: ' + (res.sourceSelector || 'body');
+        // v3.9.0 (Issue 3): Isi metadata (title, URL, tag) SEGERA — UX instant
+        const bodyEl = $('#cBody');
+        const titleEl = $('#cT');
+        const tagEl = $('#cTag');
+        if (titleEl && !titleEl.value.trim()) titleEl.value = title.slice(0, 60) || 'Konteks dari halaman';
+        if (tagEl && !tagEl.value.trim() && url) {
+          try { tagEl.value = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (e) {}
         }
-        toast('📋 Konten halaman diambil: ' + contentLen + ' char');
+        // Update tombol: tahap 2 — ambil konten
+        btn.textContent = '⏳ Ambil konten...';
+
+        // Strategi 1: kirim ke content script (jika ter-inject) — cepat
+        let pageContent = '';
+        let ctxMeta = null;
+        try {
+          const res = await browser.tabs.sendMessage(tab.id, { type: 'GET_PAGE_CONTEXT', maxLen: 8000 });
+          if (res?.ok && res.text) {
+            pageContent = res.text;
+            ctxMeta = res.meta || null;
+          }
+        } catch (e) {
+          // Content script belum ter-inject — fallback via background
+        }
+
+        // Strategi 2: fallback via background (inject on-demand)
+        if (!pageContent) {
+          try {
+            const res = await browser.runtime.sendMessage({ type: 'GET_PAGE_CONTEXT_VIA_BG', maxLen: 8000 });
+            if (res?.ok && res.text) {
+              pageContent = res.text;
+              ctxMeta = res.meta || null;
+            }
+          } catch (e) {}
+        }
+
+        // Cache untuk tombol AI summarize
+        _lastPageContext = { title, url, text: pageContent, meta: ctxMeta };
+
+        // v3.9.0 (Issue 3): Isi body — metadata (title/tag) sudah diisi di tahap 1
+        if (bodyEl) {
+          // Append mode (bukan replace) — biar user bisa pakai tombol berkali-kali
+          const existing = bodyEl.value.trim();
+          const newBlock = '[Halaman: ' + title + ']\n[URL: ' + url + ']'
+            + (pageContent ? '\n\n' + pageContent : '');
+          bodyEl.value = existing ? (existing + '\n\n---\n\n' + newBlock) : newBlock;
+        }
+
+        // Toast jujur — kasih tahu kalau konten kosong
+        if (pageContent) {
+          const wc = ctxMeta?.wordCount || pageContent.split(/\s+/).length;
+          toast('📋 Halaman diambil (' + wc + ' kata, ' + pageContent.length + ' char)');
+        } else {
+          toast('⚠️ Hanya metadata (konten halaman tidak bisa diakses)', false);
+        }
       } catch (e) {
-        statusEl.textContent = '⚠ Error: ' + e.message;
-        statusEl.style.color = 'var(--red)';
-        toast('Gagal mengambil info halaman', false);
+        toast('Gagal mengambil info halaman: ' + e.message, false);
+      } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
       }
     });
 
-    // v3.8.0 (Issue 4): Tombol "Ringkas dengan AI" — kirim konteks halaman ke AI
-    // untuk diringkas. Membantu user membuat konteks padat dari halaman panjang.
-    b.querySelector('#cSummarize').addEventListener('click', async () => {
-      const statusEl = b.querySelector('#cStatus');
-      const body = $('#cBody');
-      const currentText = body.value.trim();
-      if (!currentText) {
-        toast('Isi konteks dulu (atau klik "Ambil dari halaman aktif")', false);
-        return;
-      }
-      if (currentText.length < 200) {
-        toast('Konteks terlalu pendek untuk diringkas', false);
-        return;
-      }
-      statusEl.style.display = '';
-      statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = '🤖 AI sedang meringkas… (bisa ~10 detik)';
-      const btn = b.querySelector('#cSummarize');
+    // v3.8.1 (Issue #4): Tombol "Ringkas dengan AI" — pakai AI Assistant yang sudah ada
+    // untuk meringkas halaman aktif jadi konteks ringkas (200-300 kata).
+    // v3.9.0 (Issue 3): Smooth-kan — pakai async wait yang benar (bukan setTimeout fixed).
+    b.querySelector('#cAiSummarize').addEventListener('click', async () => {
+      const btn = b.querySelector('#cAiSummarize');
+      const orig = btn.textContent;
+      btn.textContent = '⏳ AI meringkas...';
       btn.disabled = true;
       try {
-        const title = $('#cT').value || '';
-        const url = b.dataset.sourceUrl || '';
-        const res = await browser.runtime.sendMessage({
-          type: 'SUMMARIZE_TEXT',
-          text: currentText,
-          title,
-          url
-        });
-        if (!res?.ok) {
-          statusEl.textContent = '⚠ ' + (res?.error || 'Gagal');
-          statusEl.style.color = 'var(--red)';
-          toast('⚠ Gagal: ' + (res?.error || ''), false);
+        // v3.9.0 (Issue 3): Kalau belum ada context ter-cache, ambil dulu (await proper)
+        if (!_lastPageContext || !_lastPageContext.text) {
+          // Trigger tombol Ambil dari halaman aktif secara programatik dan tunggu selesai
+          const grabBtn = b.querySelector('#cGrabPage');
+          // Click tombol grab dan tunggu handler async-nya selesai dengan polling state
+          grabBtn.click();
+          // Polling _lastPageContext sampai terisi atau timeout 10s
+          const startTime = Date.now();
+          while ((!_lastPageContext || !_lastPageContext.text) && Date.now() - startTime < 10000) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
+        if (!_lastPageContext || !_lastPageContext.text) {
+          toast('Ambil konten halaman dulu sebelum AI meringkas', false);
           return;
         }
-        // Replace body dengan ringkasan AI
-        const summary = res.summary || '';
-        body.value = '[AI Summary · ' + new Date().toLocaleString('id-ID') + ']\n' + summary;
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent = '✓ Ringkasan AI diterapkan · ' + summary.length + ' char';
-        toast('🤖 Konten diringkas AI');
+
+        // Cek AI Assistant terkonfigurasi
+        const { isAssistantConfigured } = await import('../lib/assistant.js');
+        const configured = await isAssistantConfigured();
+        if (!configured) {
+          toast('AI Assistant belum dikonfigurasi. Set API key di Settings dulu.', false);
+          return;
+        }
+
+        const { chatWithFallback } = await import('../lib/assistant.js');
+        const sysPrompt = 'Anda adalah asisten yang ahli meringkas halaman web menjadi konteks padat untuk AI lain. ' +
+                          'Ringkas halaman berikut menjadi 200-300 kata, fokus pada: ' +
+                          '(1) topik utama, (2) poin-poin penting, (3) data/angka kunci, (4) kesimpulan. ' +
+                          'Gunakan Bahasa Indonesia. Format markdown ringkas. Jangan tambahkan komentar meta.';
+        const userPrompt = 'Halaman: ' + _lastPageContext.title + '\nURL: ' + _lastPageContext.url +
+                          '\n\nKonten halaman:\n' + _lastPageContext.text.slice(0, 6000);
+
+        const result = await chatWithFallback([
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: userPrompt }
+        ]);
+
+        if (result?.content) {
+          const bodyEl = $('#cBody');
+          const existing = bodyEl.value.trim();
+          const summaryBlock = '## 📋 Ringkasan AI: ' + _lastPageContext.title + '\n\n' + result.content +
+                              '\n\n---\n[Sumber: ' + _lastPageContext.url + ']';
+          bodyEl.value = existing ? (existing + '\n\n---\n\n' + summaryBlock) : summaryBlock;
+          toast('✨ AI selesai meringkas (' + result.content.length + ' char)');
+        } else {
+          toast('AI tidak memberikan respons', false);
+        }
       } catch (e) {
-        statusEl.textContent = '⚠ Error: ' + e.message;
-        statusEl.style.color = 'var(--red)';
-        toast('Gagal: ' + e.message, false);
+        toast('Gagal AI summarize: ' + e.message, false);
+        console.warn('[RecallFox] AI summarize error:', e);
       } finally {
+        btn.textContent = orig;
         btn.disabled = false;
       }
     });
@@ -1498,6 +1347,52 @@ function saveKonteksSheet() {
     });
 
     b.querySelector('#cCancel').addEventListener('click', closeSheet);
+
+    // v3.10.0 (Issue 5): Compose + Parafrase untuk konteks
+    const cComposeBtn = b.querySelector('#cCompose');
+    const cParafraseBtn = b.querySelector('#cParafrase');
+    if (cComposeBtn) cComposeBtn.addEventListener('click', async () => {
+      const titleVal = ($('#cT').value || '').trim();
+      if (!titleVal) { toast('Isi judul dulu, lalu klik Compose'); return; }
+      const orig = cComposeBtn.textContent;
+      cComposeBtn.textContent = '⏳ Composing...';
+      cComposeBtn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+        const sys = 'Anda adalah asisten yang menulis konteks proyek yang efektif untuk AI. Berdasarkan judul, tulis konteks lengkap dengan: Tujuan, Stack/Teknologi, Konvensi, Catatan penting. Maksimal 300 kata. Jawab HANYA konteksnya.';
+        let acc = '';
+        const cBodyEl = $('#cBody');
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: 'Judul: "' + titleVal + '"\n\nTulis konteks lengkap.' }],
+          { onToken: (t) => { acc += t; if (cBodyEl) cBodyEl.value = acc; } }
+        );
+        if (!acc && resp?.content && cBodyEl) cBodyEl.value = resp.content;
+        toast('✨ Konteks di-generate. Klik lagi untuk varian lain.');
+      } catch (e) { toast('Gagal compose: ' + e.message); }
+      finally { cComposeBtn.textContent = orig; cComposeBtn.disabled = false; }
+    });
+    if (cParafraseBtn) cParafraseBtn.addEventListener('click', async () => {
+      const cBodyEl = $('#cBody');
+      if (!cBodyEl || !cBodyEl.value.trim()) { toast('Isi konteks dulu, lalu klik Parafrase'); return; }
+      const orig = cParafraseBtn.textContent;
+      cParafraseBtn.textContent = '⏳ Parafrase...';
+      cParafraseBtn.disabled = true;
+      try {
+        const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+        if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+        const sys = 'Parafrase teks berikut agar lebih jelas, rapi, dan efektif. Pertahankan semua informasi penting. Jawab HANYA teks hasil parafrase.';
+        let acc = '';
+        const resp = await chatWithFallback(
+          [{ role: 'system', content: sys }, { role: 'user', content: 'Teks asli:\n\n' + cBodyEl.value + '\n\nParafrase.' }],
+          { onToken: (t) => { acc += t; cBodyEl.value = acc; } }
+        );
+        if (!acc && resp?.content) cBodyEl.value = resp.content;
+        toast('🔄 Parafrase selesai. Klik lagi untuk varian lain.');
+      } catch (e) { toast('Gagal parafrase: ' + e.message); }
+      finally { cParafraseBtn.textContent = orig; cParafraseBtn.disabled = false; }
+    });
+
     b.querySelector('#cSave').addEventListener('click', async () => {
       const t = ($('#cT').value || '').trim() || 'Konteks tanpa judul';
       const tg = ($('#cTag').value || '').trim() || 'baru';
@@ -1506,21 +1401,8 @@ function saveKonteksSheet() {
       // Jika tujuan dipilih, prepends header ke body
       const tujuanLabel = TUJUAN_OPTIONS.find(o => o[0] === tujuan);
       const finalBody = tujuan !== 'custom' ? '[Tujuan: ' + (tujuanLabel ? tujuanLabel[1] : tujuan) + ']\n\n' + bodyVal : bodyVal;
-      // v3.8.0 (Issue 4): Sertakan source URL + title dari halaman aktif (sebelumnya tidak dikirim).
-      const sourceUrl = b.dataset.sourceUrl || '';
-      const sourceTitle = b.dataset.sourceTitle || '';
-      const source = sourceUrl ? { url: sourceUrl, title: sourceTitle, capturedAt: new Date().toISOString() } : null;
-      await addItem({
-        type: 'context',
-        title: t,
-        tags: tg.split(',').map(s => s.trim()).filter(Boolean),
-        body: finalBody,
-        contextPurpose: tujuan,
-        source,
-        useCount: 0
-      });
-      closeSheet(); await refreshVault();
-      toast('Konteks disimpan ✓' + (tujuan !== 'custom' ? ' · ' + tujuanLabel[1] : '') + (source ? ' · sumber: ' + sourceUrl.slice(0, 30) + '…' : ''));
+      await addItem({ type: 'context', title: t, tags: tg.split(',').map(s => s.trim()).filter(Boolean), body: finalBody, contextPurpose: tujuan, useCount: 0 });
+      closeSheet(); await refreshVault(); toast('Konteks disimpan ✓' + (tujuan !== 'custom' ? ' · ' + tujuanLabel[1] : ''));
     });
     setTimeout(() => b.querySelector('#cT').focus(), 120);
   });
@@ -1549,162 +1431,93 @@ async function saveLinkSheet() {
   });
 }
 function saveBundleSheet() {
-  // v3.11.0 (Issue 3): FIX timing bug — sebelumnya getNotesAsBundleCandidates() dipanggil
-  // DI DALAM openSheet callback, menyebabkan sheet terbuka kosong sejenak (flash) sebelum
-  // chips + picklist ter-render. User mengira "filter per type hilang".
-  // Solusi: resolve notes DULU, baru panggil openSheet di dalam .then() — match pattern
-  // openBundleEditorSheet (yang tidak punya flash kosong).
-  // Plus: tambah inline-add buttons "+ Catatan baru" & "+ Prompt baru" (sebelumnya hanya
-  // ada di Edit Bundle — sekarang selaras).
-  getNotesAsBundleCandidates().then(notesCandidates => {
-    const vaultCandidates = (currentVault?.items || [])
-      .filter(i => ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived);
-    const candidates = [...vaultCandidates, ...notesCandidates];
+  openSheet('📦 Buat Bundle', 'Pilih item + catatan, tambah prompt cepat inline (opsional)', b => {
+    // v3.8.1 (Issue #5a): Bundle sekarang dukung CATATAN sebagai anggota.
+    // v3.8.1 (Issue #5d): Item di-sort per tipe + badge warna (bukan cuma teks).
+    // Sertakan juga screenshot & snapshot (v3.7.2 Issue 1).
+    const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5 };
+    const itemCandidates = (currentVault?.items || []).filter(i =>
+      ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
+    ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
+                       (a.title || '').localeCompare(c.title || ''));
+    const noteCandidates = (currentNotes || []).filter(n => !n.archived);
 
-    openSheet('📦 Buat Bundle', 'Pilih ≥2 item untuk digabung jadi project session', b => {
-      b.innerHTML = '<div class="sheet-form">'
-        + '<div><label>Nama Bundle</label><input class="f" id="bT" placeholder="mis. Riset kompetitor…"></div>'
-        + '<div><label>Cari <span class="field-hint">(ketik untuk filter)</span></label><input class="f" id="bSearch" placeholder="Cari judul / tag…"></div>'
-        + '<div class="bf-chips" id="bChips"></div>'
-        + '<div><label>Pilih item <span class="field-hint" id="bCount">0 dipilih</span></label>'
-        + '<div class="picklist" id="bList"></div></div>'
-        // v3.11.0 (Issue 3): Inline-add buttons — selaras dengan Edit Bundle
-        + '<div style="display:flex;gap:6px;margin-top:6px">'
-        +   '<button class="btn btn-g" id="bAddNote" style="flex:1;padding:6px 8px;font-size:11px">+ Catatan baru</button>'
-        +   '<button class="btn btn-g" id="bAddPrompt" style="flex:1;padding:6px 8px;font-size:11px">+ Prompt baru</button>'
-        + '</div>'
-        + '<div class="btn-row"><button class="btn btn-g" id="bCancel">Batal</button><button class="btn btn-p" id="bSave">' + ICONS.check + 'Buat Bundle</button></div></div>';
-
-      const selectedTypes = new Set(['prompt', 'context', 'link', 'screenshot', 'snapshot', 'note']);
-      const checked = new Set();
-      const chipsEl = b.querySelector('#bChips');
-      const TYPE_FILTERS = [
-        ['prompt', '💬 Prompt'], ['context', '📋 Konteks'], ['link', '🔗 Link'],
-        ['screenshot', '🖼️ Media'], ['snapshot', '📸 Snapshot'], ['note', '📝 Catatan']
-      ];
-      chipsEl.innerHTML = TYPE_FILTERS.map(t => '<button class="bf-chip on" data-t="' + t[0] + '">' + t[1] + '</button>').join('');
-      chipsEl.querySelectorAll('.bf-chip').forEach(ch => ch.addEventListener('click', () => {
-        const t = ch.dataset.t;
-        if (selectedTypes.has(t)) { selectedTypes.delete(t); ch.classList.remove('on'); }
-        else { selectedTypes.add(t); ch.classList.add('on'); }
-        renderList();
-      }));
-
-      function renderList() {
-        const q = (b.querySelector('#bSearch').value || '').toLowerCase().trim();
-        const list = b.querySelector('#bList');
-        const filtered = candidates.filter(it => {
-          if (!selectedTypes.has(it.type)) return false;
-          if (!q) return true;
-          const hay = ((it.title || '') + ' ' + (it.tags || []).join(' ') + ' ' + (it.body || '')).toLowerCase();
-          return hay.indexOf(q) >= 0;
-        });
-        if (!filtered.length) {
-          list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-size:11px">Tidak ada item cocok.</div>';
-          return;
-        }
-        filtered.sort((a, b) => {
-          if (checked.has(a.id) !== checked.has(b.id)) return checked.has(a.id) ? -1 : 1;
-          return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
-        });
-        list.innerHTML = filtered.map(it => {
-          const T = TYPE[it.type] || { label: it.type };
-          const isOn = checked.has(it.id);
-          return '<label class="pickrow' + (isOn ? ' on' : '') + '">'
-            + '<input type="checkbox" value="' + esc(it.id) + '"' + (isOn ? ' checked' : '') + '>'
-            + '<span class="pickrow-title">' + esc(it.title || '(untitled)') + '</span>'
-            + '<span class="pt-type t-' + it.type + '">' + T.label + '</span>'
-            + '</label>';
-        }).join('');
-        list.querySelectorAll('input[type=checkbox]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            if (cb.checked) checked.add(cb.value); else checked.delete(cb.value);
-            b.querySelector('#bCount').textContent = checked.size + ' dipilih';
-            renderList();
-          });
-        });
+    // Build HTML untuk item candidates — dipisah dari string concat utama supaya tidak ada bug parser
+    let itemsHtml = '';
+    for (const it of itemCandidates) {
+      const T = TYPE[it.type] || { icon: '', label: it.type };
+      itemsHtml += '<label class="pickrow"><input type="checkbox" value="' + it.id + '" data-kind="item">'
+        + '<span class="item-ic t-' + it.type + '" style="width:18px;height:18px;font-size:11px;flex-shrink:0">' + T.icon + '</span>'
+        + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</span>'
+        + '<span class="pt-type" style="font-size:10px;color:#888">' + T.label + '</span></label>';
+    }
+    // Build HTML untuk note candidates — Issue #5a
+    let notesHtml = '';
+    if (noteCandidates.length > 0) {
+      notesHtml = '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
+      for (const n of noteCandidates) {
+        const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
+        notesHtml += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note">'
+          + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
+          + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(noteTitle) + '</span>'
+          + '<span class="pt-type" style="font-size:10px;color:#888">catatan</span></label>';
       }
-      b.querySelector('#bSearch').addEventListener('input', renderList);
-      renderList();
+    }
 
-      // v3.11.0 (Issue 3): Inline-add — sama dengan openBundleEditorSheet
-      b.querySelector('#bAddNote').addEventListener('click', async () => {
-        const bodyVal = prompt('Isi catatan baru (singkat):');
-        if (!bodyVal || !bodyVal.trim()) return;
-        const title = prompt('Judul catatan (opsional, Enter untuk skip):') || '';
-        const note = await addNote(bodyVal.trim(), { title: title.trim() });
-        candidates.unshift({
-          id: note.id,
-          type: 'note',
-          title: note.title || note.body.slice(0, 60),
-          body: note.body,
-          tags: [],
-          updatedAt: note.updatedAt
-        });
-        checked.add(note.id);
-        if (!selectedTypes.has('note')) {
-          selectedTypes.add('note');
-          chipsEl.querySelector('[data-t="note"]')?.classList.add('on');
-        }
-        renderList();
-        toast('📝 Catatan baru ditambahkan & di-centang');
-      });
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Nama Bundle</label><input class="f" id="bT" placeholder="mis. Riset kompetitor…"></div>'
+      + '<div><label>Warna label <span class="field-hint">(opsional, untuk sort visual)</span></label>'
+      +   '<select class="f" id="bColor">'
+      +     '<option value="">— Tanpa warna —</option>'
+      +     '<option value="orange">🟠 Oranye</option>'
+      +     '<option value="green">🟢 Hijau</option>'
+      +     '<option value="blue">🔵 Biru</option>'
+      +     '<option value="purple">🟣 Ungu</option>'
+      +     '<option value="pink">🩷 Merah Muda</option>'
+      +     '<option value="red">🔴 Merah</option>'
+      +   '</select></div>'
+      + '<div><label>Prompt cepat <span class="field-hint">(opsional — tulis prompt langsung tanpa bikin item dulu)</span></label>'
+      +   '<input class="f" id="bInlineTitle" placeholder="Judul prompt (opsional)" style="margin-bottom:4px">'
+      +   '<textarea class="f" id="bInlinePrompt" rows="3" placeholder="Tulis prompt cepat — akan di-inject sebagai prompt tambahan saat bundle dipakai..."></textarea>'
+      +   '<label class="checkrow" style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px">'
+      +     '<input type="checkbox" id="bSaveAsPrompt"> Simpan juga sebagai item Prompt tersendiri (default: mati)'
+      +   '</label></div>'
+      + '<div><label>Pilih item <span class="field-hint" id="bCount">0 dipilih</span></label>'
+      +   '<div class="picklist">' + itemsHtml + notesHtml + '</div></div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="bCancel">Batal</button><button class="btn btn-p" id="bSave">' + ICONS.check + 'Buat Bundle</button></div></div>';
 
-      b.querySelector('#bAddPrompt').addEventListener('click', async () => {
-        const bodyVal = prompt('Isi prompt baru:');
-        if (!bodyVal || !bodyVal.trim()) return;
-        const title = prompt('Judul prompt (opsional):') || '';
-        let saveAsPrompt = false;
-        if (confirm('Simpan juga sebagai item Prompt di vault? (Bisa dipakai ulang di bundle lain)\n\nCancel = hanya untuk bundle ini, OK = simpan ke vault juga.')) {
-          saveAsPrompt = true;
-        }
-        if (saveAsPrompt) {
-          const item = await addItem({
-            type: 'prompt',
-            title: title.trim() || bodyVal.slice(0, 60),
-            body: bodyVal.trim(),
-            tags: ['bundle-inline'],
-            useCount: 0
-          });
-          candidates.unshift(item);
-          checked.add(item.id);
-          toast('✓ Prompt baru disimpan & di-centang');
-        } else {
-          const note = await addNote(bodyVal.trim(), { title: title.trim() || bodyVal.slice(0, 60), group: 'bundle-prompts' });
-          candidates.unshift({
-            id: note.id,
-            type: 'note',
-            title: note.title || note.body.slice(0, 60),
-            body: note.body,
-            tags: [],
-            updatedAt: note.updatedAt
-          });
-          checked.add(note.id);
-          toast('✓ Prompt inline ditambahkan ke bundle (sebagai catatan)');
-        }
-        if (!selectedTypes.has('note') && !saveAsPrompt) {
-          selectedTypes.add('note');
-          chipsEl.querySelector('[data-t="note"]')?.classList.add('on');
-        }
-        if (saveAsPrompt && !selectedTypes.has('prompt')) {
-          selectedTypes.add('prompt');
-          chipsEl.querySelector('[data-t="prompt"]')?.classList.add('on');
-        }
-        renderList();
+    const boxes = [...b.querySelectorAll('input[type=checkbox]')];
+    boxes.forEach(x => x.addEventListener('change', () => {
+      b.querySelector('#bCount').textContent = boxes.filter(c => c.checked).length + ' dipilih';
+    }));
+    b.querySelector('#bCancel').addEventListener('click', closeSheet);
+    b.querySelector('#bSave').addEventListener('click', async () => {
+      const totalChecked = boxes.filter(c => c.checked).length;
+      const inlinePrompt = (b.querySelector('#bInlinePrompt')?.value || '').trim();
+      const saveAsPrompt = b.querySelector('#bSaveAsPrompt')?.checked || false;
+      // Validasi: minimal 2 item ATAU ada inlinePrompt
+      if (totalChecked < 2 && !inlinePrompt) {
+        toast('Pilih minimal 2 item ATAU tulis prompt cepat inline', false);
+        return;
+      }
+      const name = (b.querySelector('#bT')?.value || '').trim() || 'Bundle tanpa nama';
+      const color = b.querySelector('#bColor')?.value || '';
+      const itemIds = boxes.filter(c => c.checked && c.dataset.kind === 'item').map(c => c.value);
+      const noteIds = boxes.filter(c => c.checked && c.dataset.kind === 'note').map(c => c.value);
+      const inlineTitle = (b.querySelector('#bInlineTitle')?.value || '').trim();
+      // v3.8.1: addBundle sekarang terima opts { color, noteIds, inlinePrompt, inlineTitle, saveAsPrompt }
+      await addBundle(name, itemIds, {
+        color,
+        noteIds,
+        inlinePrompt,
+        inlineTitle,
+        saveAsPrompt
       });
-
-      b.querySelector('#bCancel').addEventListener('click', closeSheet);
-      b.querySelector('#bSave').addEventListener('click', async () => {
-        if (checked.size < 2) { toast('Pilih minimal 2 item', false); return; }
-        const name = ($('#bT').value || '').trim() || 'Bundle tanpa nama';
-        const ids = Array.from(checked);
-        await addBundle(name, ids);
-        closeSheet(); await refreshVault();
-        toast('Bundle "' + name + '" dibuat ✓ · ' + ids.length + ' item' + (ids.some(id => id.startsWith('n_')) ? ' (termasuk catatan)' : ''));
-      });
+      closeSheet(); await refreshVault();
+      toast('Bundle "' + name + '" dibuat ✓ · ' + (itemIds.length + noteIds.length) + ' anggota'
+            + (inlinePrompt ? ' + 1 prompt inline' : '')
+            + (saveAsPrompt ? ' (prompt disimpan juga)' : ''));
     });
-  }).catch(err => {
-    toast('Gagal memuat form bundle: ' + err.message, false);
   });
 }
 async function snapshotFlow() {
@@ -1727,10 +1540,17 @@ async function snapshotFlow() {
   } catch (e) { toast('Error: ' + e.message, false); }
 }
 async function doShot(mode) {
-  // mode: 'entire' | 'visible' | 'selection' | undefined (shows picker)
+  // mode: 'entire' | 'visible' | 'selection' | 'upload' | undefined (shows picker)
   // Guard against accidental event-object args (defensive: doShot must never
   // receive a PointerEvent — if it does, treat as undefined to show picker)
   if (mode && typeof mode !== 'string') mode = undefined;
+
+  // v3.8.1 (Issue #3): Mode 'upload' → buka form upload manual
+  if (mode === 'upload') {
+    saveScreenshotManualSheet();
+    return;
+  }
+
   const modeLabel = mode === 'selection' ? 'area' : mode === 'visible' ? 'viewport' : mode === 'entire' ? 'full page' : 'picker';
   toast('🖼️ Menangkap (' + modeLabel + ')…');
   try {
@@ -1747,6 +1567,189 @@ async function doShot(mode) {
       toast(msg, false);
     }
   } catch (e) { toast('Error: ' + e.message, false); }
+}
+
+// v3.8.1 (Issue #3): Upload manual screenshot — untuk screenshot dari luar web
+// (desktop, aplikasi lain, file PNG/JPG existing). User bisa:
+//   - Klik "Pilih file" → file picker
+//   - Paste dari clipboard (Ctrl+V)
+//   - Drag & drop file ke area dropzone
+// Setelah simpan, item masuk ke vault + sync ke GDrive (jika aktif).
+function saveScreenshotManualSheet() {
+  openSheet('🖼️ Upload Screenshot Manual', 'Pilih file gambar, paste dari clipboard, atau drag & drop', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
+      +   '<input class="f" id="shT" placeholder="mis. Bukti transfer bank..."></div>'
+      + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
+      +   '<input class="f" id="shTag" placeholder="bukti, keuangan"></div>'
+      // Dropzone
+      + '<div id="shDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
+      +   '<div style="font-size:32px;margin-bottom:8px">📷</div>'
+      +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
+      +   '<div style="font-size:11px;margin-top:4px">atau drag & drop, atau paste (Ctrl+V)</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Format: PNG, JPG, JPEG, GIF, WEBP (max 10MB)</div>'
+      + '</div>'
+      + '<input type="file" id="shFileInput" accept="image/*" style="display:none">'
+      // Preview
+      + '<div id="shPreview" style="display:none;margin:8px 0">'
+      +   '<img id="shPreviewImg" style="max-width:100%;max-height:200px;border-radius:6px;border:1px solid #ddd">'
+      +   '<div style="font-size:11px;color:#666;margin-top:4px" id="shPreviewMeta"></div>'
+      + '</div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="shCancel">Batal</button>'
+      +   '<button class="btn btn-p" id="shSave" disabled>' + ICONS.check + 'Simpan Screenshot</button></div></div>';
+
+    let _dataUrl = null;
+    let _filename = '';
+
+    const dropzone = b.querySelector('#shDropzone');
+    const fileInput = b.querySelector('#shFileInput');
+
+    // Klik dropzone → trigger file picker
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    // File picker change
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) await _handleFile(file);
+    });
+
+    // Drag & drop
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#FF7139';
+      dropzone.style.background = '#FFF4E6';
+    });
+    dropzone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#c0c0c0';
+      dropzone.style.background = '';
+    });
+    dropzone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#c0c0c0';
+      dropzone.style.background = '';
+      const file = e.dataTransfer.files[0];
+      if (file) await _handleFile(file);
+    });
+
+    // Paste from clipboard
+    async function _pasteHandler(e) {
+      const items = e.clipboardData?.items || [];
+      for (const it of items) {
+        if (it.type.startsWith('image/')) {
+          const file = it.getAsFile();
+          if (file) {
+            await _handleFile(file);
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    }
+    document.addEventListener('paste', _pasteHandler);
+
+    // Cleanup paste handler saat sheet ditutup — pakai MutationObserver pada scrim
+    // (jangan override closeSheet global, itu bisa break flow lain)
+    const _cleanupPaste = () => {
+      document.removeEventListener('paste', _pasteHandler);
+    };
+    // Pasang observer ke tombol Cancel & Save (yang panggil closeSheet)
+    b.querySelector('#shCancel').addEventListener('click', _cleanupPaste);
+    // Save button cleanup setelah sukses (closeSheet dipanggil di handler save)
+    // Plus observer pada scrim class change sebagai fallback
+    const scrim = $('#scrim');
+    if (scrim) {
+      const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          if (m.attributeName === 'class' && !scrim.classList.contains('show')) {
+            _cleanupPaste();
+            observer.disconnect();
+            break;
+          }
+        }
+      });
+      observer.observe(scrim, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    async function _handleFile(file) {
+      if (!file.type.startsWith('image/')) {
+        toast('File bukan gambar: ' + file.type, false);
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast('File terlalu besar (max 10MB)', false);
+        return;
+      }
+      try {
+        // Baca sebagai data URL
+        const reader = new FileReader();
+        const dataUrl = await new Promise((resolve, reject) => {
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        _dataUrl = dataUrl;
+        _filename = file.name;
+        // Preview
+        const previewImg = b.querySelector('#shPreviewImg');
+        const previewMeta = b.querySelector('#shPreviewMeta');
+        const previewBox = b.querySelector('#shPreview');
+        previewImg.src = dataUrl;
+        const sizeKb = (file.size / 1024).toFixed(1);
+        previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeKb + ' KB · ' + file.type;
+        previewBox.style.display = '';
+        // Enable save button
+        b.querySelector('#shSave').disabled = false;
+        // Auto-fill title kalau kosong
+        const titleEl = b.querySelector('#shT');
+        if (!titleEl.value.trim()) {
+          titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
+        }
+        toast('📋 Gambar dimuat — klik Simpan untuk menyimpan');
+      } catch (e) {
+        toast('Gagal membaca file: ' + e.message, false);
+      }
+    }
+
+    b.querySelector('#shCancel').addEventListener('click', closeSheet);
+    b.querySelector('#shSave').addEventListener('click', async () => {
+      if (!_dataUrl) { toast('Pilih file dulu', false); return; }
+      const title = (b.querySelector('#shT').value || '').trim() || _filename || 'Screenshot Upload';
+      const tags = (b.querySelector('#shTag').value || '').trim();
+      const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['upload'];
+
+      const btn = b.querySelector('#shSave');
+      const orig = btn.textContent;
+      btn.textContent = '⏳ Menyimpan...';
+      btn.disabled = true;
+      try {
+        const result = await browser.runtime.sendMessage({
+          type: 'SAVE_UPLOADED_SCREENSHOT',
+          title,
+          dataUrl: _dataUrl,
+          source: {
+            kind: 'upload',
+            url: '',
+            title: _filename || title,
+            filename: _filename,
+            uploadedAt: new Date().toISOString()
+          }
+        });
+        if (result?.ok) {
+          closeSheet(); await refreshVault();
+          toast('🖼️ Screenshot upload disimpan ✓');
+        } else {
+          toast('Gagal simpan: ' + (result?.error || 'unknown'), false);
+          btn.textContent = orig;
+          btn.disabled = false;
+        }
+      } catch (e) {
+        toast('Error: ' + e.message, false);
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 // ============ AI Tools launcher ============
@@ -1780,168 +1783,12 @@ function addItemMenu() {
       ['✂️ Screenshot area', () => doShot('selection')],
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
-      // v3.8.0 (Issue 3): Upload manual — untuk screenshot dari luar web (file lokal, paste dari OS clipboard).
-      ['📁 Upload gambar (manual)', saveScreenshotUploadSheet],
+      ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => { closeSheet(); setTimeout(opts[a.dataset.i][1], 80); }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 3 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch). Plus <b>Upload gambar</b> untuk screenshot dari luar browser.</div>');
-  });
-}
-
-// v3.8.0 (Issue 3): Upload screenshot manual — untuk screenshot dari luar web
-// (file lokal, paste dari OS clipboard, gambar dari aplikasi lain).
-function saveScreenshotUploadSheet() {
-  // Sediakan form judul + tag + tombol upload + area paste
-  openSheet('📁 Upload Screenshot Manual', 'Pilih file gambar atau paste (Ctrl+V) dari clipboard OS', b => {
-    b.innerHTML = '<div class="sheet-form">'
-      + '<div><label>Judul</label><input class="f" id="uT" placeholder="mis. Error log dari VSCode"></div>'
-      + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="uTag" placeholder="error, debug"></div>'
-      + '<div><label>URL sumber <span class="field-hint">(opsional — halaman terkait screenshot)</span></label><input class="f" id="uUrl" placeholder="https://..."></div>'
-      + '<div class="upload-zone" id="uZone" style="border:2px dashed var(--border-strong);border-radius:10px;padding:20px;text-align:center;cursor:pointer;margin-bottom:8px">'
-      +   '<div style="font-size:32px;margin-bottom:6px">📁</div>'
-      +   '<div style="font-size:12px;font-weight:600">Klik untuk pilih file gambar</div>'
-      +   '<div style="font-size:10.5px;color:var(--muted);margin-top:4px">atau <b>paste (Ctrl+V)</b> dari clipboard OS di area ini</div>'
-      +   '<div style="font-size:10px;color:var(--muted);margin-top:6px">Format: PNG, JPG, GIF, WebP · maks ~10 MB</div>'
-      + '</div>'
-      + '<div id="uPreview" style="display:none;margin-bottom:8px">'
-      +   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:4px">Preview:</div>'
-      +   '<div class="screenshot-preview" style="max-height:160px;overflow:hidden"><img id="uPreviewImg" style="display:block;width:100%;height:auto" /></div>'
-      +   '<div class="screenshot-meta" id="uMeta" style="padding:6px 10px;font-size:10.5px;color:var(--muted);background:var(--surface-2);display:flex;gap:10px;margin-top:4px"></div>'
-      + '</div>'
-      + '<div id="uStatus" style="font-size:11px;display:none;margin-bottom:8px"></div>'
-      + '<div class="btn-row"><button class="btn btn-g" id="uCancel">Batal</button><button class="btn btn-p" id="uSave" disabled>' + ICONS.check + 'Simpan ke Vault</button></div></div>';
-
-    let pendingDataUrl = '';
-    const fileInput = $('#screenshotFileInput');
-    const zone = b.querySelector('#uZone');
-    const statusEl = b.querySelector('#uStatus');
-    const previewWrap = b.querySelector('#uPreview');
-    const previewImg = b.querySelector('#uPreviewImg');
-    const metaEl = b.querySelector('#uMeta');
-    const saveBtn = b.querySelector('#uSave');
-
-    // Klik zone → trigger file input
-    zone.addEventListener('click', () => fileInput.click());
-
-    // File input change handler (reusable)
-    fileInput.onchange = (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      handleImageFile(file);
-      e.target.value = '';
-    };
-
-    // Paste handler — tangkap gambar dari OS clipboard (Snipping Tool, screenshot macOS, dll.)
-    function pasteHandler(e) {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const it of items) {
-        if (it.type.startsWith('image/')) {
-          const file = it.getAsFile();
-          if (file) {
-            e.preventDefault();
-            handleImageFile(file);
-            return;
-          }
-        }
-      }
-    }
-    // Pasang paste handler di zone dan global (selama sheet terbuka)
-    zone.addEventListener('paste', pasteHandler);
-    document.addEventListener('paste', pasteHandler);
-
-    function handleImageFile(file) {
-      statusEl.style.display = '';
-      statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = '⏳ Membaca ' + file.name + ' (' + Math.round(file.size / 1024) + ' KB)…';
-      if (file.size > 10 * 1024 * 1024) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = '⚠ File terlalu besar (> 10 MB). Pilih file lebih kecil.';
-        return;
-      }
-      if (!file.type.startsWith('image/')) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = '⚠ File bukan gambar: ' + file.type;
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        pendingDataUrl = reader.result;
-        previewImg.src = pendingDataUrl;
-        previewWrap.style.display = '';
-        // Decode dimensi via Image
-        const tmpImg = new Image();
-        tmpImg.onload = () => {
-          metaEl.innerHTML = '<span>📐 ' + tmpImg.width + '×' + tmpImg.height + '</span>'
-            + '<span>📦 ' + Math.round(file.size / 1024) + ' KB</span>'
-            + '<span>🎨 ' + (file.type.split('/')[1] || '?') + '</span>';
-          statusEl.style.color = 'var(--green)';
-          statusEl.textContent = '✓ Siap disimpan · ' + file.name;
-          saveBtn.disabled = false;
-        };
-        tmpImg.onerror = () => {
-          statusEl.style.color = 'var(--red)';
-          statusEl.textContent = '⚠ Gagal decode gambar';
-        };
-        tmpImg.src = pendingDataUrl;
-        // Auto-fill judul kalau kosong
-        if (!$('#uT').value.trim()) {
-          $('#uT').value = file.name.replace(/\.[^.]+$/, '').slice(0, 60) || 'Uploaded screenshot';
-        }
-      };
-      reader.onerror = () => {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = '⚠ Gagal baca file';
-      };
-      reader.readAsDataURL(file);
-    }
-
-    b.querySelector('#uCancel').addEventListener('click', () => {
-      // Cleanup paste handler saat sheet ditutup
-      document.removeEventListener('paste', pasteHandler);
-      fileInput.onchange = null;
-      closeSheet();
-    });
-
-    saveBtn.addEventListener('click', async () => {
-      if (!pendingDataUrl) {
-        toast('Pilih atau paste gambar dulu', false);
-        return;
-      }
-      const title = ($('#uT').value || '').trim() || 'Uploaded screenshot';
-      const tagsRaw = ($('#uTag').value || '').trim();
-      const tags = tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : ['upload'];
-      const sourceUrl = ($('#uUrl').value || '').trim();
-      saveBtn.disabled = true;
-      saveBtn.textContent = '⏳ Menyimpan…';
-      try {
-        const res = await browser.runtime.sendMessage({
-          type: 'SAVE_UPLOAD_TO_VAULT',
-          dataUrl: pendingDataUrl,
-          title,
-          tags,
-          sourceUrl
-        });
-        if (res?.ok) {
-          toast('🖼️ Screenshot tersimpan ke vault ✓');
-          // Cleanup
-          document.removeEventListener('paste', pasteHandler);
-          fileInput.onchange = null;
-          closeSheet();
-          await refreshVault();
-        } else {
-          toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
-          saveBtn.disabled = false;
-          saveBtn.innerHTML = ICONS.check + 'Simpan ke Vault';
-        }
-      } catch (e) {
-        toast('⚠ Error: ' + e.message, false);
-        saveBtn.disabled = false;
-        saveBtn.innerHTML = ICONS.check + 'Simpan ke Vault';
-      }
-    });
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard).</div>');
   });
 }
 
@@ -1990,15 +1837,12 @@ function renderSearch() {
     }).slice(0, 5);
     let h = '';
     if (cs2.length) h += '<div class="sec-label">Perintah</div>' + cs2.map(c => '<div class="cmd-item" data-cmd="' + c.k + '"><div class="ci">' + ICONS.zap + '</div><div><div class="ct">' + esc(c.t) + '</div><div class="cs">' + esc(c.s) + '</div></div></div>').join('');
-    if (its.length) h += '<div class="sec-label">Item · ' + its.length + '</div>' + its.map(it => {
+    if (its.length) h += '<div class="sec-label">Item · ' + its.length + ' (semua tipe + arsip)</div>' + its.map(it => {
       const T = TYPE[it.type] || { label: it.type, icon: '' };
       const tagsStr = Array.isArray(it.tags) ? it.tags.join(', ') : (it.tags || '');
-      // v3.11.0 (Issue 4): Tampilkan indikator "📦 Arsip" untuk item yang diarsipkan
-      // supaya user tahu kalau hasil search ada yang dari arsip.
-      const archBadge = it.archived ? ' <span style="color:var(--muted);font-size:10px">📦 arsip</span>' : '';
-      // v3.11.0 (Issue 2): Tampilkan badge "☁ Drive" untuk screenshot yang sudah di-upload ke Drive
-      const driveBadge = (it.type === 'screenshot' && it.driveFileUrl) ? ' <span style="color:#10b981;font-size:10px">☁ Drive</span>' : '';
-      return '<div class="cmd-item" data-item="' + it.id + '"><div class="item-ic t-' + it.type + '" style="width:28px;height:28px">' + T.icon + '</div><div><div class="ct" style="font-size:12.5px">' + esc(it.title) + archBadge + driveBadge + '</div><div class="cs">' + T.label + ' · ' + esc(tagsStr) + '</div></div></div>';
+      // v3.10.0 (Issue 4): Tampilkan badge Arsip jika item di-arsipkan
+      const archiveBadge = it.archived ? ' <span style="font-size:9px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700">ARSIP</span>' : '';
+      return '<div class="cmd-item" data-item="' + it.id + '"><div class="item-ic t-' + it.type + '" style="width:28px;height:28px">' + T.icon + '</div><div><div class="ct" style="font-size:12.5px">' + esc(it.title) + archiveBadge + '</div><div class="cs">' + T.label + ' · ' + esc(tagsStr) + '</div></div></div>';
     }).join('');
     if (noteHits.length) h += '<div class="sec-label">Catatan · ' + noteHits.length + '</div>' + noteHits.map(n => {
       const title = n.title || (n.body || '').slice(0, 60) || '(kosong)';
@@ -2012,14 +1856,7 @@ function renderSearch() {
     cr.querySelectorAll('[data-note]').forEach(el => el.addEventListener('click', () => { setView('notes'); setTimeout(() => openNoteEditor(el.dataset.note), 60); clearSearch(); }));
   }
 }
-function clearSearch() {
-  $('#search').value = '';
-  currentQuery = '';
-  // v3.11.0 (Issue 4): Sembunyikan X clear button saat search kosong
-  const clearBtn = $('#searchClear');
-  if (clearBtn) clearBtn.style.display = 'none';
-  renderSearch();
-}
+function clearSearch() { $('#search').value = ''; currentQuery = ''; renderSearch(); }
 
 // ============ View switcher ============
 function setView(v) {
@@ -2082,14 +1919,65 @@ async function renderNotes() {
     const preview = (n.body || '').slice(0, 200).replace(/\n+/g, ' ');
     const previewHtml = preview ? esc(preview) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
-    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '">'
+    // v3.9.0 (Issue 7): In batch mode, show checkbox instead of quick actions
+    let batchHtml = '';
+    if (notesBatchMode) {
+      const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
+      batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer"></div>';
+    } else {
+      batchHtml = '<div class="note-card-actions" style="display:flex;gap:4px;flex-shrink:0;opacity:0;transition:.15s;align-self:flex-start">'
+        + '<button class="note-act" data-act="edit" data-nid="' + n.id + '" title="Edit" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">✏️</button>'
+        + '<button class="note-act" data-act="archive" data-nid="' + n.id + '" title="Arsipkan" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">📦</button>'
+        + '<button class="note-act" data-act="delete" data-nid="' + n.id + '" title="Hapus" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">🗑️</button>'
+        + '</div>';
+    }
+    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary)"' : '') + '>'
+      + batchHtml
+      + '<div class="note-card-main">'
       + titleHtml
       + '<div class="note-body-txt">' + previewHtml + '</div>'
       + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
+      + '</div>'
       + '</div>';
   }).join('');
-  list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', () => openNoteEditor(c.dataset.nid)));
+  list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', (e) => {
+    // v3.9.0 (Issue 7): In batch mode, toggle selection instead of opening editor
+    if (notesBatchMode) {
+      const nid = c.dataset.nid;
+      if (notesBatchSelected.has(nid)) notesBatchSelected.delete(nid);
+      else notesBatchSelected.add(nid);
+      updateNotesBatchCount();
+      renderNotes();
+      return;
+    }
+    // Cek apakah yang diklik adalah action button
+    const actBtn = e.target.closest('.note-act');
+    if (actBtn) {
+      e.stopPropagation();
+      handleNoteQuickAction(actBtn.dataset.act, actBtn.dataset.nid);
+      return;
+    }
+    openNoteEditor(c.dataset.nid);
+  }));
   bindGroupChips();
+}
+
+// v3.9.0 (Issue 7): Quick action handler untuk note (dari list, tanpa buka editor)
+async function handleNoteQuickAction(action, noteId) {
+  const n = currentNotes.find(x => x.id === noteId);
+  if (!n) return;
+  if (action === 'edit') {
+    openNoteEditor(noteId);
+  } else if (action === 'archive') {
+    await updateNote(noteId, { archived: !n.archived, updatedAt: new Date().toISOString() });
+    toast(n.archived ? '📤 Dikeluarkan dari arsip' : '📦 Catatan diarsipkan');
+    await renderNotes();
+  } else if (action === 'delete') {
+    if (!confirm('Hapus catatan ini?')) return;
+    await deleteNote(noteId);
+    toast('🗑️ Catatan dihapus');
+    await renderNotes();
+  }
 }
 function bindGroupChips() {
   $$('.ngroup-chip').forEach(ch => ch.addEventListener('click', () => {
@@ -2112,6 +2000,11 @@ function openNoteEditor(noteId) {
     '<div class="card" style="margin-bottom:10px">'
     + '<input class="f" id="nTitle" value="' + esc(n.title || '') + '" placeholder="Judul (opsional) — dikosongkan pakai preview isi" style="margin-bottom:8px;font-weight:600">'
     + '<textarea class="f" id="nBody" rows="9" placeholder="Tulis catatan sementara di sini… (auto-save)" style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.55">' + esc(n.body || '') + '</textarea>'
+    // v3.10.0 (Issue 5): Compose + Parafrase untuk catatan
+    + '<div style="display:flex;gap:6px;margin-top:8px">'
+    +   '<button class="btn btn-g" id="nCompose" title="AI generate catatan dari judul — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">✨ Compose dengan AI</button>'
+    +   '<button class="btn btn-g" id="nParafrase" title="AI parafrase catatan — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">🔄 Parafrase</button>'
+    + '</div>'
     + '</div>'
     + '<div class="card"><h3>Grup / Proyek</h3>'
     + '<input class="f" id="nGroup" value="' + esc(n.group || '') + '" placeholder="mis. Proyek A, Riset B (opsional)" style="margin-bottom:8px">'
@@ -2165,6 +2058,52 @@ function openNoteEditor(noteId) {
     markSaved();
     toast(updated.pinned ? '📌 Disematkan' : 'Pin dilepas');
   });
+
+  // v3.10.0 (Issue 5): Compose + Parafrase untuk catatan
+  $('#nCompose').addEventListener('click', async () => {
+    const titleVal = ($('#nTitle').value || '').trim();
+    if (!titleVal) { toast('Isi judul dulu, lalu klik Compose'); return; }
+    const btn = $('#nCompose');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Composing...';
+    btn.disabled = true;
+    try {
+      const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+      if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+      const sys = 'Anda adalah asisten yang menulis catatan yang rapi dan berguna. Berdasarkan judul, tulis catatan singkat (50-150 kata) dengan poin-poin penting. Jawab HANYA isinya.';
+      let acc = '';
+      const ta = $('#nBody');
+      const resp = await chatWithFallback(
+        [{ role: 'system', content: sys }, { role: 'user', content: 'Judul: "' + titleVal + '"\n\nTulis catatan.' }],
+        { onToken: (t) => { acc += t; ta.value = acc; ta.dispatchEvent(new Event('input')); } }
+      );
+      if (!acc && resp?.content) { ta.value = resp.content; ta.dispatchEvent(new Event('input')); }
+      toast('✨ Catatan di-generate. Klik lagi untuk varian lain.');
+    } catch (e) { toast('Gagal compose: ' + e.message); }
+    finally { btn.textContent = orig; btn.disabled = false; }
+  });
+  $('#nParafrase').addEventListener('click', async () => {
+    const ta = $('#nBody');
+    if (!ta || !ta.value.trim()) { toast('Isi catatan dulu, lalu klik Parafrase'); return; }
+    const btn = $('#nParafrase');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Parafrase...';
+    btn.disabled = true;
+    try {
+      const { isAssistantConfigured, chatWithFallback } = await import('../lib/assistant.js');
+      if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
+      const sys = 'Parafrase teks berikut agar lebih jelas, rapi, dan mudah dibaca. Pertahankan semua informasi penting. Jawab HANYA teks hasil parafrase.';
+      let acc = '';
+      const resp = await chatWithFallback(
+        [{ role: 'system', content: sys }, { role: 'user', content: 'Teks asli:\n\n' + ta.value + '\n\nParafrase.' }],
+        { onToken: (t) => { acc += t; ta.value = acc; ta.dispatchEvent(new Event('input')); } }
+      );
+      if (!acc && resp?.content) { ta.value = resp.content; ta.dispatchEvent(new Event('input')); }
+      toast('🔄 Parafrase selesai. Klik lagi untuk varian lain.');
+    } catch (e) { toast('Gagal parafrase: ' + e.message); }
+    finally { btn.textContent = orig; btn.disabled = false; }
+  });
+
   // v3.7.2 (Issue 5): Arsipkan catatan tanpa hapus (paralel dengan item vault).
   $('#nArchive').addEventListener('click', async () => {
     const updated = currentNotes.find(x => x.id === n.id);
@@ -2208,9 +2147,8 @@ const TOOLS = [
   ['kontrol', 'Kontrol Situs', 'Blocker + filter konten', ICONS.shield],
   ['cache', 'Bersihkan Cache', '9 tipe data · konfirmasi', ICONS.trash, 'warn'],
   ['askai', 'Tanya AI', 'Tanya soal teks terseleksi', ICONS.spark],
-  // v3.8.0 (Issue 1+2+6): Apps Script Sync — pindah ke tool bar supaya gampang atur.
-  ['appsscript', 'Apps Script Sync', 'Backup ke Google Spreadsheet', ICONS.archive],
-  ['backup', 'Backup', 'Ekspor terenkripsi AES', ICONS.archive],
+  ['gdrive', 'Sync GDrive', 'Apps Script Spreadsheet', ICONS.cloud || '☁️'],   // v3.8.1 Issue #1+#2
+  ['backup', 'Backup', 'Ekspor terenkripsi AES + GDrive', ICONS.archive],
   ['keys', 'Pintasan', 'Semua shortcut', ICONS.kb]
 ];
 function renderTools() {
@@ -2219,7 +2157,7 @@ function renderTools() {
 }
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', appsscript: '📊 Apps Script Sync', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard' };
+  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard' };
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -2227,9 +2165,9 @@ function toolPage(k) {
   else if (k === 'puasa') renderPuasaPage(B);
   else if (k === 'volume') renderVolumePage(B);
   else if (k === 'cache') renderCachePage(B);
+  else if (k === 'gdrive') renderGDrivePage(B);   // v3.8.1 Issue #1+#2+#6
   else if (k === 'keys') renderKeysPage(B);
   else if (k === 'kontrol') renderKontrolSitusPage(B);
-  else if (k === 'appsscript') renderAppsScriptPage(B);
   else renderToolStubPage(B, k, names[k]);
 }
 function renderShalatPage(B) {
@@ -2720,142 +2658,323 @@ function renderToolStubPage(B, k, name) {
   $('#goSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
 }
 
-// v3.8.0 (Issue 1+2+6): Apps Script Sync page — UI untuk manage sync ke Google Spreadsheet.
-async function renderAppsScriptPage(B) {
+// v3.7: Halaman Backup — UI lengkap dengan export/import/info langsung
+// v3.8.1 (Issue #1, #2, #6): Halaman Sync Google Drive — bilah Alat
+// User set URL Web App + token di sini, lalu test koneksi / sync now / full backup.
+async function renderGDrivePage(B) {
   const s = currentVault?.settings || {};
 
-  // Ambil status terakhir
-  let status = null;
+  // Ambil status sync terbaru dari background
+  let syncStatus = { meta: { lastSyncAt: null, lastError: null, totalSynced: 0, totalFailed: 0 }, queueLength: 0 };
   try {
-    const res = await browser.runtime.sendMessage({ type: 'GET_APPSSCRIPT_STATUS' });
-    if (res?.ok) status = res.status;
+    const r = await browser.runtime.sendMessage({ type: 'GDRIVE_STATUS' });
+    if (r?.ok) syncStatus = { meta: r.meta, queueLength: r.queueLength };
   } catch (e) {}
 
-  const enabled = !!s.appsScriptSyncEnabled;
-  const hasUrl = !!(s.appsScriptUrl || '').trim();
-  const hasToken = !!(s.appsScriptToken || '').trim();
+  const enabled = !!s.gdriveSyncEnabled;
+  const configured = !!(s.gdriveWebAppUrl && s.gdriveAuthToken);
 
-  // Status card
-  let statusCard;
-  if (status?.lastSentAt) {
-    const d = new Date(status.lastSentAt);
-    const timeStr = d.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
-    statusCard = '<div class="card" style="background:linear-gradient(135deg,#065f46,#047857);color:#ecfdf5;border:none">'
-      + '<div style="font-size:11px;opacity:.85">Last sync</div>'
-      + '<div style="font-size:16px;font-weight:700;margin:4px 0">✓ ' + timeStr + '</div>'
-      + '<div style="font-size:11px;opacity:.85">' + (status.lastSentRows || 0) + ' baris di spreadsheet</div></div>';
-  } else if (enabled && hasUrl && hasToken) {
-    statusCard = '<div class="card" style="background:linear-gradient(135deg,#1e40af,#1e3a8a);color:#eff6ff;border:none">'
-      + '<div style="font-size:11px;opacity:.85">Siap sync</div>'
-      + '<div style="font-size:16px;font-weight:700;margin:4px 0">📊 Belum pernah kirim</div>'
-      + '<div style="font-size:11px;opacity:.85">Klik "Kirim Sekarang" untuk backup pertama</div></div>';
-  } else {
-    statusCard = '<div class="card" style="background:linear-gradient(135deg,#7c2d12,#9a3412);color:#fff7ed;border:none">'
-      + '<div style="font-size:11px;opacity:.85">⚠️ Belum dikonfigurasi</div>'
-      + '<div style="font-size:14px;font-weight:700;margin:4px 0">Lengkapi URL + Token</div>'
-      + '<div style="font-size:11px;opacity:.85">Buka Pengaturan untuk set URL Apps Script & token</div>'
-      + '<button class="btn btn-p" id="asGoSettings" style="width:100%;margin-top:8px">Buka Pengaturan</button></div>';
+  let statusBadge = '⛔ Nonaktif';
+  let statusColor = '#6b7280';
+  if (enabled && !configured) {
+    statusBadge = '⚠️ URL/Token belum diisi';
+    statusColor = '#d97706';
+  } else if (enabled && configured && syncStatus.meta?.lastError) {
+    statusBadge = '❌ Error: ' + (syncStatus.meta.lastError || '').slice(0, 60);
+    statusColor = '#dc2626';
+  } else if (enabled && configured && syncStatus.meta?.lastSyncAt) {
+    const d = new Date(syncStatus.meta.lastSyncAt);
+    statusBadge = '✅ Sync terakhir: ' + d.toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
+                + ' (' + (syncStatus.meta.totalSynced || 0) + ' total)';
+    statusColor = '#059669';
+  } else if (enabled && configured) {
+    statusBadge = '⏳ Belum pernah sync';
+    statusColor = '#6b7280';
   }
 
   B.innerHTML =
-    statusCard
-    + '<div class="card"><h3>📊 Apps Script Sync</h3>'
-    + '<div class="hintbox" style="margin-bottom:10px">Backup vault ke Google Spreadsheet via Apps Script Web App. Setiap item disimpan sebagai baris — bisa dibaca / difilter langsung di Google Sheets. Lihat <code>apps-script/recallfox-sync.gs</code> di repo untuk kode server-nya.</div>'
-    + '<div class="krow" style="padding:8px 0">'
-    +   '<div><b>Aktifkan</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Master switch</div></div>'
-    +   '<button class="ks-toggle' + (enabled ? ' on' : '') + '" id="asToggle" aria-label="Toggle"><i></i></button>'
+    '<div class="card" style="background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border:none">'
+    + '<div style="font-size:11px;opacity:.85">Status sync</div>'
+    + '<div style="font-size:14px;font-weight:600;margin:4px 0;color:' + statusColor + ';color:#fff">' + esc(statusBadge) + '</div>'
+    + '<div style="font-size:11px;opacity:.85">Queue: ' + (syncStatus.queueLength || 0) + ' item · '
+    + 'Gagal: ' + (syncStatus.meta?.totalFailed || 0) + '</div>'
+    + '</div>'
+
+    // Konfigurasi
+    + '<div class="card"><h3>⚙️ Konfigurasi</h3>'
+    + '<div style="margin:8px 0">'
+    +   '<label style="font-size:11px;color:var(--muted)">Master switch — Aktifkan sync</label><br>'
+    +   '<label class="ks-toggle' + (enabled ? ' on' : '') + '" id="rfGdToggle" aria-label="Toggle GDrive sync" style="margin-top:6px"><i></i></label>'
+    + '</div>'
+    + '<div style="margin:10px 0">'
+    +   '<label style="font-size:11px;color:var(--muted)">Web App URL (Apps Script)</label>'
+    +   '<input class="f" id="rfGdUrl" value="' + esc(s.gdriveWebAppUrl || '') + '" placeholder="https://script.google.com/macros/s/AKfyc.../exec" style="width:100%;margin-top:4px;font-size:11px">'
+    + '</div>'
+    + '<div style="margin:10px 0">'
+    +   '<label style="font-size:11px;color:var(--muted)">Auth Token (HARUS sama dengan CONFIG.AUTH_TOKEN di Apps Script)</label>'
+    +   '<div style="display:flex;gap:6px;margin-top:4px">'
+    +     '<input type="password" class="f" id="rfGdToken" value="' + esc(s.gdriveAuthToken || '') + '" placeholder="32-char random string" style="flex:1;font-size:11px">'
+    +     '<button class="btn btn-g" id="rfGdGenToken" title="Generate token acak" style="flex:none;padding:6px 10px;font-size:11px">🎲 Generate</button>'
+    +     '<button class="btn btn-g" id="rfGdCopyToken" title="Salin token ke clipboard" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy</button>'
+    +   '</div>'
+    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">Klik 🎲 Generate untuk buat token acak, lalu klik 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.</div>'
+    + '</div>'
+    + '<button class="btn btn-g" id="rfGdSave" style="width:100%;margin-top:6px">💾 Simpan Konfigurasi</button></div>'
+
+    // v3.9.0 (Issue 1): Panduan step-by-step untuk pemula
+    + '<div class="card"><h3>📖 Panduan Setup (untuk pemula)</h3>'
+    + '<div style="font-size:11.5px;line-height:1.6;color:var(--text-2)">'
+    +   '<div style="margin-bottom:8px;padding:6px 8px;background:var(--surface-2);border-radius:6px"><b>❓ Apakah Google Drive Sync sama dengan Apps Script Sync?</b><br>'
+    +   '<span style="color:var(--muted)">YA, sama. "Google Drive Sync" di RecallFox memakai <b>Google Apps Script Web App</b> sebagai backend. Apps Script ini yang menyimpan data ke Spreadsheet + Google Drive Anda. Jadi namanya berbeda, tapi teknologinya sama — keduanya butuh URL Web App + Token.</span></div>'
+    +   '<ol style="padding-left:18px;margin:0">'
+    +     '<li style="margin-bottom:6px"><b>Buat Spreadsheet baru</b> di <a href="https://sheets.google.com" target="_blank">sheets.google.com</a> (atau pakai yang sudah ada).</li>'
+    +     '<li style="margin-bottom:6px"><b>Buka Apps Script</b>: dari Spreadsheet, klik <code>Extensions → Apps Script</code>.</li>'
+    +     '<li style="margin-bottom:6px"><b>Hapus kode default</b>, lalu <b>paste isi file <code>Code.gs</code></b> dari folder <code>appscript/</code> RecallFox.</li>'
+    +     '<li style="margin-bottom:6px"><b>Ganti <code>SPREADSHEET_ID</code></b> di Code.gs dengan ID Spreadsheet Anda (dari URL sheet: <code>docs.google.com/spreadsheets/d/<b>[INI_ID_ANDA]</b>/edit</code>).</li>'
+    +     '<li style="margin-bottom:6px"><b>Klik tombol 🎲 Generate di atas</b> untuk buat token acak, lalu klik 📋 Copy.</li>'
+    +     '<li style="margin-bottom:6px"><b>Paste token ke <code>AUTH_TOKEN</code></b> di Code.gs Apps Script (ganti placeholder).</li>'
+    +     '<li style="margin-bottom:6px"><b>Run fungsi <code>setup</code></b> sekali (tombol Run di editor Apps Script, accept permissions).</li>'
+    +     '<li style="margin-bottom:6px"><b>Deploy → New deployment → Web app</b>. Set: Execute as = Me, Who has access = Anyone. Klik Deploy.</li>'
+    +     '<li style="margin-bottom:6px"><b>Copy URL Web App</b> (ends with <code>/exec</code>), paste ke kolom "Web App URL" di atas.</li>'
+    +     '<li style="margin-bottom:6px"><b>Klik Simpan Konfigurasi</b>, lalu <b>Test Koneksi</b>. Harus muncul "✅ Terhubung!".</li>'
+    +     '<li><b>Klik Full Backup</b> untuk kirim seluruh data existing Anda ke Spreadsheet.</li>'
+    +   '</ol>'
+    +   '<div style="margin-top:8px;padding:6px 8px;background:#fef3c7;border-left:3px solid #d97706;border-radius:4px;font-size:11px">'
+    +     '<b>💡 Tips:</b> Kalau Test Koneksi gagal dengan "Unauthorized", periksa: (1) token sama persis di addon & Code.gs, (2) deploy pakai <code>/exec</code> bukan <code>/dev</code>, (3) "Who has access" = Anyone.'
+    +   '</div>'
     + '</div></div>'
 
-    + '<div class="card"><h3>Konfigurasi</h3>'
-    + '<div class="hintbox" style="margin-bottom:10px">URL & token diisi di halaman Pengaturan (link di bawah).</div>'
-    + '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">URL: <code>' + esc(hasUrl ? (s.appsScriptUrl || '').slice(0, 60) + '…' : '(belum diset)') + '</code></div>'
-    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Token: ' + (hasToken ? '✓ sudah diset' : '✕ belum diset') + '</div>'
-    + '<button class="btn btn-g" id="asGoSettings2" style="width:100%">⚙ Buka Pengaturan</button></div>'
-
-    + '<div class="card"><h3>Aksi</h3>'
+    // Aksi
+    + '<div class="card"><h3>🚀 Aksi</h3>'
     + '<div class="btn-row" style="flex-direction:column;gap:6px">'
-    +   '<button class="btn btn-g" id="asTest" style="width:100%">🔌 Test Koneksi</button>'
-    +   '<button class="btn btn-p" id="asSend" style="width:100%">📤 Kirim Sekarang</button>'
+    +   '<button class="btn btn-g" id="rfGdTest" style="width:100%">🔗 Test Koneksi</button>'
+    +   '<button class="btn btn-p" id="rfGdSyncNow" style="width:100%">🔄 Sync Sekarang (flush queue)</button>'
+    +   '<button class="btn btn-p" id="rfGdFullBackup" style="width:100%">💾 Full Backup ke GDrive</button>'
+    +   '<button class="btn btn-g" id="rfGdClearQueue" style="width:100%;background:#fee2e2;color:#991b1b">🗑 Reset Queue (' + (syncStatus.queueLength || 0) + ' item)</button>'
+    + '</div></div>'
+
+    // Opsi lanjutan
+    + '<div class="card"><h3>🔧 Opsi</h3>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>Sync real-time saat save</b><div style="font-size:11px;color:var(--muted)">Setiap tambah/edit/hapus item langsung dikirim (debounced 2s)</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveSyncOnSave !== false ? ' on' : '') + '" id="rfGdOnSave" aria-label="Toggle sync-on-save"><i></i></button>'
     + '</div>'
-    + '<div id="asResult" style="margin-top:8px;font-size:11px"></div></div>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>Upload screenshot ke Drive</b><div style="font-size:11px;color:var(--muted)">Full image screenshot disimpan sebagai file PNG/JPEG di folder Drive</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveSyncScreenshots !== false ? ' on' : '') + '" id="rfGdShots" aria-label="Toggle screenshot upload"><i></i></button>'
+    + '</div>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>Auto-sync ke GDrive saat backup lokal</b><div style="font-size:11px;color:var(--muted)">Tombol "Backup sekarang" lokal juga kirim ke GDrive</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveAutoBackupOnLocalBackup !== false ? ' on' : '') + '" id="rfGdAutoBak" aria-label="Toggle auto-backup-on-local-backup"><i></i></button>'
+    + '</div>'
+    + '<div style="margin:8px 0">'
+    +   '<label style="font-size:11px;color:var(--muted)">Interval flush periodik (menit, min 1)</label>'
+    +   '<input type="number" class="f" id="rfGdInterval" value="' + (s.gdriveSyncIntervalMinutes || 5) + '" min="1" max="60" style="width:80px;margin-top:4px">'
+    + '</div></div>'
 
-    + (status?.lastError ? '<div class="card" style="border-color:var(--red)"><h3 style="color:var(--red)">⚠ Error terakhir</h3><div style="font-size:11.5px;color:var(--text-2);word-break:break-word;line-height:1.5">' + esc(status.lastError) + '</div>'
-      + '<button class="btn btn-g" id="asClearErr" style="margin-top:8px">Tutup error</button></div>' : '')
+    // Hasil operasi
+    + '<div class="card" id="rfGdResultCard" style="display:none"><h3>📋 Hasil operasi terakhir</h3>'
+    + '<div id="rfGdResult" style="font-size:12px;line-height:1.5"></div></div>'
 
-    + '<p class="hintbox" style="margin:10px 3px">💡 <b>Tip:</b> Untuk auto-sync (debounced 30s setiap perubahan vault), aktifkan toggle "Auto-sync" di halaman Pengaturan.</p>';
+    + '<p class="hintbox" style="margin:10px 3px">💡 <b>Setup:</b> 1) Deploy Apps Script Web App (lihat README). 2) Generate token via fungsi <code>generateToken()</code>. 3) Tempel URL + token di sini. 4) Klik Test Koneksi. 5) Klik Full Backup untuk kirim seluruh data existing.</p>';
 
-  // Bind events
-  $('#asGoSettings')?.addEventListener('click', () => browser.runtime.openOptionsPage());
-  $('#asGoSettings2')?.addEventListener('click', () => browser.runtime.openOptionsPage());
-
-  $('#asToggle')?.addEventListener('click', async () => {
-    const newOn = !enabled;
-    await saveSettings({ appsScriptSyncEnabled: newOn });
-    await refreshVault();
-    renderAppsScriptPage(B);
-    toast(newOn ? 'Apps Script Sync aktif' : 'Apps Script Sync dimatikan');
+  // === Bind events ===
+  $('#rfGdSave').addEventListener('click', async () => {
+    const url = ($('#rfGdUrl').value || '').trim();
+    const token = ($('#rfGdToken').value || '').trim();
+    await saveSettings({ gdriveWebAppUrl: url, gdriveAuthToken: token });
+    toast('✓ Konfigurasi disimpan');
+    renderGDrivePage(B);
   });
 
-  $('#asTest')?.addEventListener('click', async () => {
-    const btn = $('#asTest');
-    const orig = btn.textContent;
-    btn.textContent = '🔌 Menguji...';
-    btn.disabled = true;
-    const resultEl = $('#asResult');
-    resultEl.innerHTML = '⏳ Menguji koneksi...';
+  $('#rfGdToggle').addEventListener('click', async () => {
+    await saveSettings({ gdriveSyncEnabled: !enabled });
+    toast(!enabled ? '✓ GDrive sync AKTIF' : 'GDrive sync dimatikan');
+    renderGDrivePage(B);
+  });
+
+  $('#rfGdOnSave').addEventListener('click', async () => {
+    await saveSettings({ gdriveSyncOnSave: s.gdriveSyncOnSave === false ? true : false });
+    renderGDrivePage(B);
+  });
+  $('#rfGdShots').addEventListener('click', async () => {
+    await saveSettings({ gdriveSyncScreenshots: s.gdriveSyncScreenshots === false ? true : false });
+    renderGDrivePage(B);
+  });
+  $('#rfGdAutoBak').addEventListener('click', async () => {
+    await saveSettings({ gdriveAutoBackupOnLocalBackup: s.gdriveAutoBackupOnLocalBackup === false ? true : false });
+    renderGDrivePage(B);
+  });
+  $('#rfGdInterval').addEventListener('change', async (e) => {
+    const v = Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 5));
+    await saveSettings({ gdriveSyncIntervalMinutes: v });
+    toast('✓ Interval sync: ' + v + ' menit');
+  });
+
+  // v3.9.0 (Issue 1): Generate token acak
+  $('#rfGdGenToken').addEventListener('click', () => {
+    const arr = new Uint8Array(24);
+    crypto.getRandomValues(arr);
+    const token = 'rf-' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    const tokenInput = $('#rfGdToken');
+    if (tokenInput) {
+      tokenInput.value = token;
+      toast('🎲 Token di-generate. Klik 📋 Copy lalu paste ke Code.gs!');
+    }
+  });
+  // v3.9.0 (Issue 1): Copy token ke clipboard
+  $('#rfGdCopyToken').addEventListener('click', async () => {
+    const tokenInput = $('#rfGdToken');
+    const token = tokenInput?.value || '';
+    if (!token) { toast('Token masih kosong. Klik 🎲 Generate dulu.'); return; }
     try {
-      const res = await browser.runtime.sendMessage({ type: 'TEST_APPSSCRIPT' });
-      if (res?.ok) {
-        resultEl.innerHTML = '<span style="color:var(--green)">✓ Koneksi OK · ' + (res.totalRows || 0) + ' baris di spreadsheet</span>';
-        toast('✓ Koneksi OK');
-      } else {
-        resultEl.innerHTML = '<span style="color:var(--red)">⚠ ' + esc(res?.error || 'gagal') + '</span>';
-        toast('⚠ Gagal: ' + (res?.error || ''), false);
-      }
+      await navigator.clipboard.writeText(token);
+      toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
     } catch (e) {
-      resultEl.innerHTML = '<span style="color:var(--red)">⚠ ' + esc(e.message) + '</span>';
+      toast('Gagal copy: ' + e.message);
+    }
+  });
+
+  // Test koneksi
+  $('#rfGdTest').addEventListener('click', async () => {
+    const btn = $('#rfGdTest');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Testing...';
+    btn.disabled = true;
+    try {
+      const r = await browser.runtime.sendMessage({ type: 'GDRIVE_TEST' });
+      _showGDriveResult(B, r?.ok, r?.ok
+        ? '✅ Terhubung! Service: ' + (r.service || '?') + ' · waktu server: ' + (r.time || '?')
+        : '❌ Gagal: ' + (r?.error || 'unknown'));
+    } catch (e) {
+      _showGDriveResult(B, false, '❌ Error: ' + e.message);
     } finally {
       btn.textContent = orig;
       btn.disabled = false;
     }
   });
 
-  $('#asSend')?.addEventListener('click', async () => {
-    const btn = $('#asSend');
+  // Sync now
+  $('#rfGdSyncNow').addEventListener('click', async () => {
+    const btn = $('#rfGdSyncNow');
     const orig = btn.textContent;
-    btn.textContent = '📤 Mengirim...';
+    btn.textContent = '⏳ Syncing...';
     btn.disabled = true;
-    const resultEl = $('#asResult');
-    resultEl.innerHTML = '⏳ Mengirim payload...';
     try {
-      const res = await browser.runtime.sendMessage({ type: 'SYNC_TO_APPSSCRIPT' });
-      if (res?.ok) {
-        resultEl.innerHTML = '<span style="color:var(--green)">✓ Terkirim · ' + (res.totalRows || 0) + ' baris di spreadsheet</span>';
-        toast('✓ Terkirim');
-        await refreshVault();
-        renderAppsScriptPage(B);
-      } else {
-        resultEl.innerHTML = '<span style="color:var(--red)">⚠ ' + esc(res?.error || 'gagal') + '</span>';
-        toast('⚠ Gagal: ' + (res?.error || ''), false);
-        await refreshVault();
-        renderAppsScriptPage(B);
+      // v3.10.1 (Issue 1 fix): Auto-enable sync kalau URL+token sudah diisi
+      const s = currentVault?.settings || {};
+      if (s.gdriveWebAppUrl && s.gdriveAuthToken && !s.gdriveSyncEnabled) {
+        await saveSettings({ gdriveSyncEnabled: true });
+        toast('💡 Sync otomatis diaktifkan (URL+token sudah diisi)');
       }
+      const r = await browser.runtime.sendMessage({ type: 'GDRIVE_SYNC_NOW' });
+      if (r?.ok) {
+        const res = r.result || {};
+        if ((res.synced || 0) === 0 && (res.remaining || 0) === 0) {
+          // v3.10.1: Queue kosong — beri saran yang actionable
+          _showGDriveResult(B, true,
+            '✅ Sync selesai — queue kosong (tidak ada perubahan tertunda).<br>'
+            + '<span style="font-size:11px;color:var(--muted)">Item yang sudah ada sebelum sync diaktifkan TIDAK otomatis terkirim. '
+            + 'Klik <b>"Full Backup ke GDrive"</b> untuk kirim semua item existing sekaligus.</span>');
+        } else {
+          _showGDriveResult(B, true,
+            '✅ Sync selesai: <b>' + (res.synced || 0) + ' item terkirim</b>, '
+            + (res.failed || 0) + ' gagal, ' + (res.remaining || 0) + ' tersisa di queue.');
+        }
+      } else {
+        let errMsg = '❌ ' + (r?.error || 'Gagal');
+        if (r?.reason === 'disabled' || (r?.result?.reason === 'disabled')) {
+          errMsg = '⚠️ Sync belum diaktifkan. Isi URL + Token dulu, lalu klik toggle "Aktifkan sync".';
+        } else if (r?.error === 'NETWORK_ERROR') {
+          errMsg = '❌ Network error. Cek: URL benar, Apps Script sudah di-deploy, koneksi internet aktif.';
+        }
+        _showGDriveResult(B, false, errMsg);
+      }
+      renderGDrivePage(B);
     } catch (e) {
-      resultEl.innerHTML = '<span style="color:var(--red)">⚠ ' + esc(e.message) + '</span>';
+      _showGDriveResult(B, false, '❌ Error: ' + e.message);
     } finally {
       btn.textContent = orig;
       btn.disabled = false;
     }
   });
 
-  $('#asClearErr')?.addEventListener('click', async () => {
-    await saveSettings({ appsScriptLastSentError: null });
-    await refreshVault();
-    renderAppsScriptPage(B);
+  // Full backup
+  $('#rfGdFullBackup').addEventListener('click', async () => {
+    const btn = $('#rfGdFullBackup');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Mengupload...';
+    btn.disabled = true;
+    // v3.10.1 (Issue 1 fix): Tampilkan progress yang informatif
+    _showGDriveResult(B, true, '⏳ Memulai full backup... mohon tunggu, proses ini bisa 30-60 detik tergantung jumlah item.');
+    try {
+      // v3.10.1 (Issue 1 fix): Auto-enable sync kalau URL+token sudah diisi
+      // tapi master switch belum ON. User jelas mau sync kalau klik Full Backup.
+      const s = currentVault?.settings || {};
+      if (s.gdriveWebAppUrl && s.gdriveAuthToken && !s.gdriveSyncEnabled) {
+        await saveSettings({ gdriveSyncEnabled: true });
+        toast('💡 Sync otomatis diaktifkan (URL+token sudah diisi)');
+      }
+      const r = await browser.runtime.sendMessage({ type: 'GDRIVE_FULL_BACKUP' });
+      if (r?.ok) {
+        const s = r.stats || {};
+        _showGDriveResult(B, true,
+          '✅ Full backup sukses! Items: ' + (s.items || 0) + ', Bundles: ' + (s.bundles || 0) + ', '
+          + 'Notes: ' + (s.notes || 0) + ', Toppings: ' + (s.toppings || 0) + ', '
+          + 'Habits: ' + (s.habits || 0) + ', Settings: ' + (s.settings || 0));
+      } else {
+        // v3.10.1 (Issue 1 fix): Tampilkan error detail + saran yang actionable
+        let errMsg = '❌ ' + (r?.error || 'Gagal');
+        if (r?.reason === 'disabled') {
+          errMsg = '⚠️ Sync belum diaktifkan. Klik toggle "Aktifkan sync" di atas dulu, atau isi URL + Token.';
+        } else if (r?.error === 'NO_URL' || r?.error === 'NO_TOKEN') {
+          errMsg = '⚠️ URL Web App atau Token belum diisi. Scroll ke section "Konfigurasi" di atas.';
+        } else if (r?.error === 'HTTP_401' || r?.error === 'UNAUTHORIZED') {
+          errMsg = '❌ Token tidak cocok.<br><span style="font-size:11px">💡 Pastikan token di addon SAMA PERSIS dengan <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda. Periksa juga apakah Code.gs sudah di-deploy ulang setelah token diubah.</span>';
+        } else if (r?.error === 'HTTP_404') {
+          errMsg = '❌ URL Web App tidak ditemukan (404).<br><span style="font-size:11px">💡 Periksa: (1) URL diakhiri <code>/exec</code> bukan <code>/dev</code>, (2) Apps Script sudah di-deploy sebagai Web app.</span>';
+        } else if (r?.error === 'HTTP_500') {
+          errMsg = '❌ Server error (500).<br><span style="font-size:11px">💡 Cek Execution log di Apps Script editor (View → Execution log). Kemungkinan: SPREADSHEET_ID salah, atau sheet belum dibuat (Run <code>setup</code> di Apps Script).</span>';
+        } else if (r?.error === 'PAYLOAD_TOO_LARGE') {
+          errMsg = '❌ Data terlalu besar.<br><span style="font-size:11px">' + esc(r?.detail || '') + '</span>';
+        } else if (r?.error === 'TIMEOUT') {
+          errMsg = '❌ Timeout (90 detik).<br><span style="font-size:11px">💡 Server Apps Script lambat. Coba lagi, atau kurangi jumlah item.</span>';
+        } else if (r?.error === 'NETWORK_ERROR') {
+          errMsg = '❌ Network error.<br><span style="font-size:11px">💡 Cek koneksi internet. Kalau persisten, mungkin URL Web App salah atau Apps Script belum di-deploy.</span>';
+        } else if (r?.detail) {
+          errMsg += '<br><span style="font-size:11px;color:var(--muted)">' + esc(r.detail) + '</span>';
+        }
+        _showGDriveResult(B, false, errMsg);
+      }
+      renderGDrivePage(B);
+    } catch (e) {
+      _showGDriveResult(B, false, '❌ Error: ' + e.message + '<br><span style="font-size:11px">Buka console (F12 → Console) untuk detail. Kemungkinan: background script crash, atau pesan tidak terkirim.</span>');
+    } finally {
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
+  });
+
+  // Clear queue
+  $('#rfGdClearQueue').addEventListener('click', async () => {
+    if (!confirm('Yakin reset queue sync? Item yang belum terkirim akan dibuang.')) return;
+    try {
+      await browser.runtime.sendMessage({ type: 'GDRIVE_CLEAR_QUEUE' });
+      toast('🗑 Queue direset');
+      renderGDrivePage(B);
+    } catch (e) { toast('Error: ' + e.message, false); }
   });
 }
 
-// v3.7: Halaman Backup — UI lengkap dengan export/import/info langsung
+function _showGDriveResult(B, ok, msg) {
+  const card = $('#rfGdResultCard');
+  const el = $('#rfGdResult');
+  if (!card || !el) return;
+  card.style.display = '';
+  el.innerHTML = (ok ? '✓ ' : '✕ ') + msg;
+  el.style.color = ok ? 'var(--green)' : 'var(--red)';
+}
+
 async function renderBackupPage(B) {
   const s = currentVault?.settings || {};
   const vault = currentVault || { items: [], bundles: [] };
@@ -2877,6 +2996,8 @@ async function renderBackupPage(B) {
   } catch (e) {}
 
   const autoBackupOn = s.autoBackupEnabled !== false;
+  // v3.8.1 (Issue #6): Cek apakah GDrive sync aktif — jika ya, tampilkan shortcut di backup page
+  const gdriveOn = !!(s.gdriveSyncEnabled && s.gdriveWebAppUrl && s.gdriveAuthToken);
 
   B.innerHTML =
     '<div class="card" style="background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border:none">'
@@ -2885,11 +3006,15 @@ async function renderBackupPage(B) {
     + '<div style="font-size:11px;opacity:.85">Backup terakhir: ' + esc(lastBackupInfo) + ' · ' + esc(lastBackupSize) + '</div>'
     + '</div>'
 
-    + '<div class="card"><h3>📦 Ekspor vault</h3>'
-    + '<div class="hintbox" style="margin-bottom:10px">Simpan vault Anda ke file. File <b>.rfvault</b> terenkripsi AES-GCM (butuh passphrase untuk restore). File <b>.json</b> plain text (tidak dienkripsi).</div>'
+    // v3.8.1 (Issue #7): SATU card "Buat Backup" — gabung Export JSON + Backup Sekarang (sebelumnya 2 tombol mubazir)
+    + '<div class="card"><h3>💾 Buat Backup</h3>'
+    + '<div class="hintbox" style="margin-bottom:10px">Backup lokal otomatis tersimpan ke <code>Downloads/RecallFox/</code>. File <b>.rfvault</b> terenkripsi AES-GCM (butuh passphrase untuk restore).</div>'
     + '<div class="btn-row" style="flex-direction:column;gap:6px">'
-    +   '<button class="btn btn-p" id="rfExpEnc" style="width:100%">🔒 Export .rfvault terenkripsi</button>'
-    +   '<button class="btn btn-g" id="rfExpJson" style="width:100%">📄 Export .json (tanpa enkripsi)</button>'
+    +   '<button class="btn btn-p" id="rfBackupNow" style="width:100%">⚡ Backup sekarang (plain JSON)</button>'
+    +   '<button class="btn btn-g" id="rfExpEnc" style="width:100%">🔒 Export .rfvault terenkripsi</button>'
+    + (gdriveOn
+        ?   '<button class="btn btn-g" id="rfBackupGDrive" style="width:100%;background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#fff">☁️ Full Backup ke Google Drive</button>'
+        :   '<button class="btn btn-g" id="rfGoGDrive" style="width:100%;opacity:0.7">☁️ Setup GDrive Sync dulu →</button>')
     + '</div></div>'
 
     + '<div class="card"><h3>📥 Import vault</h3>'
@@ -2904,8 +3029,7 @@ async function renderBackupPage(B) {
     + '<div class="krow" style="padding:8px 0">'
     +   '<div><b>Backup otomatis harian</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Simpan ke Downloads/RecallFox/ setiap hari saat addon aktif.</div></div>'
     +   '<button class="ks-toggle' + (autoBackupOn ? ' on' : '') + '" id="rfAutoBackupToggle" aria-label="Toggle auto-backup"><i></i></button>'
-    + '</div>'
-    + '<button class="btn btn-g" id="rfBackupNow" style="width:100%;margin-top:6px">⚡ Backup sekarang</button></div>'
+    + '</div></div>'
 
     + '<div class="card"><h3>🔧 Pengaturan lanjutan</h3>'
     + '<div class="hintbox" style="margin-bottom:10px">Atur jadwal auto-backup, lokasi folder, enkripsi default, dll di halaman pengaturan.</div>'
@@ -2914,7 +3038,28 @@ async function renderBackupPage(B) {
     + '<p class="hintbox" style="margin:10px 3px">💡 <b>Tip:</b> Backup .rfvault terenkripsi aman untuk disimpan di cloud (Google Drive, Dropbox). Passphrase tidak bisa dikembalikan jika lupa — simpan baik-baik.</p>';
 
   // === Bind events ===
-  // Export terenkripsi
+  // v3.8.1 (Issue #7): Hapus tombol "Export .json (plain)" yang redundant dengan "Backup sekarang"
+  // — keduanya sama-sama plain JSON, beda folder tujuan saja. Sekarang hanya "Backup sekarang"
+  // yang pakai folder RecallFox/ + tombol "Export .rfvault terenkripsi" untuk file terenkripsi.
+
+  // Backup now (plain JSON ke Downloads/RecallFox/)
+  $('#rfBackupNow').addEventListener('click', async () => {
+    try {
+      toast('⏳ Backup berjalan...');
+      const res = await browser.runtime.sendMessage({ type: 'MANUAL_BACKUP_NOW' });
+      if (res?.ok) {
+        toast('✓ Backup tersimpan ke Downloads/RecallFox/'
+              + (gdriveOn && s.gdriveAutoBackupOnLocalBackup ? ' + terkirim ke GDrive' : ''));
+        renderBackupPage(B);
+      } else {
+        toast('⚠ Gagal: ' + (res?.error || ''), false);
+      }
+    } catch (e) {
+      toast('⚠ Gagal: ' + e.message, false);
+    }
+  });
+
+  // Export terenkripsi (.rfvault)
   $('#rfExpEnc').addEventListener('click', async () => {
     try {
       const passphrase = prompt('Masukkan passphrase untuk enkripsi backup (min. 8 karakter):');
@@ -2923,10 +3068,9 @@ async function renderBackupPage(B) {
         if (!confirm('Passphrase kurang dari 8 karakter. Lanjut? (Tidak disarankan)')) return;
       }
       toast('🔒 Membuat backup terenkripsi...');
-      // Pakai background untuk export (lebih reliable)
       const res = await browser.runtime.sendMessage({ type: 'EXPORT_BACKUP', encrypted: true, passphrase });
       if (res?.ok) {
-        toast('✓ Backup tersimpan ke Downloads');
+        toast('✓ Backup .rfvault tersimpan ke Downloads');
       } else {
         toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
       }
@@ -2935,20 +3079,26 @@ async function renderBackupPage(B) {
     }
   });
 
-  // Export plain JSON
-  $('#rfExpJson').addEventListener('click', async () => {
-    try {
-      toast('📄 Membuat backup JSON...');
-      const res = await browser.runtime.sendMessage({ type: 'EXPORT_BACKUP', encrypted: false });
-      if (res?.ok) {
-        toast('✓ Backup JSON tersimpan ke Downloads');
-      } else {
-        toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
+  // v3.8.1 (Issue #6): Tombol Full Backup ke GDrive (jika GDrive aktif)
+  if (gdriveOn) {
+    $('#rfBackupGDrive')?.addEventListener('click', async () => {
+      try {
+        toast('⏳ Mengirim full backup ke Google Drive...');
+        const res = await browser.runtime.sendMessage({ type: 'GDRIVE_FULL_BACKUP' });
+        if (res?.ok) {
+          const s = res.stats || {};
+          toast('✓ GDrive backup sukses · ' + (s.items || 0) + ' item, ' + (s.notes || 0) + ' catatan, ' + (s.settings || 0) + ' settings');
+        } else {
+          toast('⚠ Gagal GDrive: ' + (res?.error || ''), false);
+        }
+      } catch (e) {
+        toast('⚠ Error: ' + e.message, false);
       }
-    } catch (e) {
-      toast('⚠ Gagal export: ' + e.message, false);
-    }
-  });
+    });
+  } else {
+    // Tombol "Setup GDrive Sync dulu →" pindah ke tool gdrive
+    $('#rfGoGDrive')?.addEventListener('click', () => toolPage('gdrive'));
+  }
 
   // Import file
   $('#rfImportFile').addEventListener('change', async (e) => {
@@ -2957,7 +3107,6 @@ async function renderBackupPage(B) {
     const resultEl = $('#rfImportResult');
     resultEl.innerHTML = '⏳ Mengimpor...';
     try {
-      // Baca file sebagai text
       const text = await file.text();
       let passphrase = null;
       if (file.name.endsWith('.rfvault')) {
@@ -2968,7 +3117,6 @@ async function renderBackupPage(B) {
           return;
         }
       }
-      // Kirim ke background untuk proses
       const res = await browser.runtime.sendMessage({
         type: 'IMPORT_BACKUP',
         text,
@@ -2976,8 +3124,7 @@ async function renderBackupPage(B) {
         filename: file.name
       });
       if (res?.ok) {
-        const extras = Array.isArray(res.extras) && res.extras.length ? ' + ' + res.extras.join(', ') : '';
-        resultEl.innerHTML = '<span style="color:var(--green)">✓ Berhasil: ' + (res.added || 0) + ' item baru, ' + (res.skipped || 0) + ' di-skip' + extras + '</span>';
+        resultEl.innerHTML = '<span style="color:var(--green)">✓ Berhasil: ' + (res.added || 0) + ' item baru, ' + (res.skipped || 0) + ' di-skip</span>';
         toast('✓ Import selesai');
         await refreshVault();
       } else {
@@ -2999,22 +3146,6 @@ async function renderBackupPage(B) {
     await refreshVault();
     renderBackupPage(B);
     toast(newOn ? '✓ Auto-backup aktif' : 'Auto-backup dimatikan');
-  });
-
-  // Backup now
-  $('#rfBackupNow').addEventListener('click', async () => {
-    try {
-      toast('⏳ Backup berjalan...');
-      const res = await browser.runtime.sendMessage({ type: 'MANUAL_BACKUP_NOW' });
-      if (res?.ok) {
-        toast('✓ Backup tersimpan ke Downloads/RecallFox/');
-        renderBackupPage(B);  // refresh untuk update info
-      } else {
-        toast('⚠ Gagal: ' + (res?.error || ''), false);
-      }
-    } catch (e) {
-      toast('⚠ Gagal: ' + e.message, false);
-    }
   });
 
   // Buka settings
@@ -3452,10 +3583,11 @@ async function renderKontrolSitusPage(B) {
       +       '<div><b>🚫 Blokir YouTube Shorts</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Sembunyikan semua Short dari feed YouTube & cegah navigasi ke /shorts/. Tidak mengubah jenis konten lain.</div></div>'
       +       '<button class="ks-toggle' + (s.contentGuardBlockShorts === true ? ' on' : '') + '" id="ksBlockShortsToggle" aria-label="Toggle Block Shorts"><i></i></button>'
       +     '</div>'
-      // v3.7.2 (Issue 6): Toggle individu — YouTube Kids Only
+      // v3.7.2 (Issue 6): Toggle individu — Mode Anak (filter, no redirect)
+      // v3.10.0 (Issue 2): Ubah dari redirect youtubekids.com → filter di youtube.com biasa
       +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>👶 YouTube Kids Only</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Redirect semua youtube.com ke youtubekids.com. Konten hanya yang sudah tervalidasi aman untuk anak.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardYoutubeKidsOnly === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle YouTube Kids Only"><i></i></button>'
+      +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, tapi sembunyikan video non-ramah-anak. Hanya video edukasi/kartun/lagu anak yang tampil. Shorts juga di-hide.</div></div>'
+      +       '<button class="ks-toggle' + (s.contentGuardKidModeFilter === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle Mode Anak"><i></i></button>'
       +     '</div>'
       +   '</div>'
       +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Matikan panel mengambang supaya anak tidak bisa toggle-off Guardian dari halaman. Kontrol tetap bisa diakses lewat popup RecallFox (hanya Anda yang tahu).</p>'
@@ -3513,14 +3645,13 @@ async function renderKontrolSitusPage(B) {
     // v3.7.2 (Issue 6): Toggle individu — YouTube Kids Only
     const kidsOnlyBtn = $('#ksKidsOnlyToggle');
     if (kidsOnlyBtn) kidsOnlyBtn.addEventListener('click', async () => {
-      const newOn = !(s.contentGuardYoutubeKidsOnly === true);
-      await saveSettings({
-        contentGuardEnabled: true,
-        contentGuardYoutubeKidsOnly: newOn
-      });
+      // v3.10.0 (Issue 2): Mode Anak pakai contentGuardKidModeFilter (no redirect)
+      const newOn = !(s.contentGuardKidModeFilter === true);
+      const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
+      const finalOn = r?.enabled ?? newOn;
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast(newOn ? '👶 YouTube → Kids redirect aktif' : 'YouTube Kids redirect dimatikan');
+      toast(finalOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak' : 'Mode Anak dimatikan');
     });
 
     // Add rule buttons (open same sheet)
@@ -3933,6 +4064,8 @@ async function init() {
 
   bindEvents();
   renderVault();
+  // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
+  try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
 
   // Width responsive for sidebar
   if (document.body.classList.contains('rf-sidebar-body')) {
@@ -3981,6 +4114,14 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
+  // v3.9.0 (Issue 7): Batch mode untuk notes
+  $('#noteBatchBtn').addEventListener('click', toggleNotesBatchMode);
+  const batchArchiveBtn = $('#notesBatchArchive');
+  const batchDeleteBtn = $('#notesBatchDelete');
+  const batchCancelBtn = $('#notesBatchCancel');
+  if (batchArchiveBtn) batchArchiveBtn.addEventListener('click', () => notesBatchAction('archive'));
+  if (batchDeleteBtn) batchDeleteBtn.addEventListener('click', () => notesBatchAction('delete'));
+  if (batchCancelBtn) batchCancelBtn.addEventListener('click', exitNotesBatchMode);
 
   // Tab bar
   $('#tabHome').addEventListener('click', () => setView('home'));
@@ -3988,27 +4129,10 @@ function bindEvents() {
   $('#tabTools').addEventListener('click', () => setView('tools'));
 
   // Search / command bar
-  $('#search').addEventListener('input', e => {
-    currentQuery = e.target.value;
-    // v3.11.0 (Issue 4): Toggle X clear button visibility
-    const clearBtn = $('#searchClear');
-    if (clearBtn) clearBtn.style.display = currentQuery ? 'grid' : 'none';
-    renderSearch();
-  });
+  $('#search').addEventListener('input', e => { currentQuery = e.target.value; renderSearch(); });
   $('#search').addEventListener('keydown', e => {
     if (e.key === 'Escape') { clearSearch(); e.target.blur(); }
   });
-  // v3.11.0 (Issue 4): X clear button — klik untuk hapus teks + fokus balik ke search
-  const searchClearBtn = $('#searchClear');
-  if (searchClearBtn) {
-    searchClearBtn.addEventListener('click', () => {
-      clearSearch();
-      // Reset visibility
-      searchClearBtn.style.display = 'none';
-      // Fokus balik ke search box supaya user bisa langsung ketik lagi
-      setTimeout(() => $('#search')?.focus(), 50);
-    });
-  }
   document.addEventListener('keydown', e => {
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     if ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && !inField) {
@@ -4054,6 +4178,134 @@ if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChang
       renderNotes();
     }
   });
+}
+
+// ============================================================================
+// v3.9.0 (Issue 7): Batch mode untuk notes — select multiple + bulk delete/archive
+// ============================================================================
+let notesBatchMode = false;
+const notesBatchSelected = new Set();
+
+function toggleNotesBatchMode() {
+  notesBatchMode = !notesBatchMode;
+  notesBatchSelected.clear();
+  const bar = $('#notesBatchBar');
+  if (bar) bar.style.display = notesBatchMode ? 'flex' : 'none';
+  if (!notesBatchMode) {
+    // Exit mode — uncheck all
+    document.querySelectorAll('.note-batch-check').forEach(c => c.checked = false);
+  }
+  renderNotes();
+  toast(notesBatchMode ? '☑️ Mode batch aktif — klik note untuk pilih' : 'Mode batch dimatikan');
+}
+
+function exitNotesBatchMode() {
+  if (!notesBatchMode) return;
+  toggleNotesBatchMode();
+}
+
+function updateNotesBatchCount() {
+  const countEl = $('#notesBatchCount');
+  if (countEl) countEl.textContent = notesBatchSelected.size + ' dipilih';
+}
+
+async function notesBatchAction(action) {
+  if (notesBatchSelected.size === 0) {
+    toast('Pilih minimal 1 note dulu');
+    return;
+  }
+  const ids = Array.from(notesBatchSelected);
+  const verb = action === 'delete' ? 'hapus' : 'arsipkan';
+  if (!confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} ${ids.length} catatan?`)) return;
+
+  for (const id of ids) {
+    try {
+      if (action === 'delete') {
+        await deleteNote(id);
+      } else if (action === 'archive') {
+        const n = currentNotes.find(x => x.id === id);
+        if (n) await updateNote(id, { archived: !n.archived, updatedAt: new Date().toISOString() });
+      }
+    } catch (e) {
+      console.warn('Batch action failed for note', id, e.message);
+    }
+  }
+  toast(`✓ ${ids.length} catatan di${action === 'delete' ? 'hapus' : 'arsipkan'}`);
+  notesBatchSelected.clear();
+  notesBatchMode = false;
+  const bar = $('#notesBatchBar');
+  if (bar) bar.style.display = 'none';
+  await renderNotes();
+}
+
+// ============================================================================
+// v3.9.0 (Issue 5): Sidebar auto-close after N minutes of idle
+// ============================================================================
+// Only active in sidebar mode (body.rf-sidebar-body). Tracks user activity
+// (mousemove, keydown, click, scroll, touchstart, input). After N minutes idle,
+// closes sidebar via browser.sidebarAction.close() or window.close() fallback.
+function initSidebarAutoClose() {
+  if (!document.body.classList.contains('rf-sidebar-body')) return;  // popup mode: skip
+  let idleTimer = null;
+  let lastActivity = Date.now();
+  const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart', 'input'];
+
+  async function checkAndSchedule() {
+    try {
+      const s = await getVault().then(v => v.settings || {});
+      const minutes = Number(s.sidebarAutoCloseMinutes) || 0;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (minutes <= 0) return;
+      const idleMs = minutes * 60 * 1000;
+      const elapsed = Date.now() - lastActivity;
+      const remaining = Math.max(0, idleMs - elapsed);
+      idleTimer = setTimeout(async () => {
+        const idle = Date.now() - lastActivity;
+        if (idle >= idleMs - 5000) {  // allow 5s slack
+          console.log(`[RecallFox] Sidebar auto-close after ${minutes}min idle`);
+          try {
+            if (browser.sidebarAction && browser.sidebarAction.close) {
+              await browser.sidebarAction.close();
+            } else {
+              window.close();
+            }
+          } catch (e) {
+            console.warn('[RecallFox] Sidebar close failed:', e.message);
+          }
+        } else {
+          checkAndSchedule();
+        }
+      }, remaining);
+    } catch (e) {
+      console.warn('[RecallFox] Sidebar auto-close check failed:', e.message);
+    }
+  }
+
+  function onActivity() {
+    lastActivity = Date.now();
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+      checkAndSchedule();
+    }
+  }
+
+  ACTIVITY_EVENTS.forEach(ev => {
+    document.addEventListener(ev, onActivity, { passive: true, capture: true });
+  });
+
+  setTimeout(checkAndSchedule, 2000);
+
+  if (browser.storage && browser.storage.onChanged) {
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.recallfox_vault) {
+        const newVault = changes.recallfox_vault.newValue;
+        if (newVault?.settings?.sidebarAutoCloseMinutes !== undefined) {
+          checkAndSchedule();
+        }
+      }
+    });
+  }
 }
 
 init().catch(e => console.error('[RecallFox] init failed:', e));

@@ -798,48 +798,6 @@
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
     }
-    // v3.8.0 (Issue 4): GET_PAGE_CONTEXT — fallback kalau browser.scripting.executeScript
-    // diblokir CSP halaman. overlay.js ada di semua http(s) page jadi ini reachable.
-    if (msg.type === 'GET_PAGE_CONTEXT') {
-      try {
-        const getMeta = (sel) => {
-          const el = document.querySelector(sel);
-          return el ? (el.content || el.getAttribute('content') || '').trim() : '';
-        };
-        const trunc = (s, n) => s ? s.slice(0, n) : '';
-        let mainEl = document.querySelector('main') || document.querySelector('article');
-        if (!mainEl) {
-          mainEl = document.querySelector('[role="main"]') ||
-                   document.querySelector('.content') ||
-                   document.querySelector('.article-body') ||
-                   document.querySelector('.post-content');
-        }
-        const rawText = (mainEl || document.body).innerText || '';
-        const cleanText = rawText.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
-        const h1 = document.querySelector('h1');
-        const navLinks = Array.from(document.querySelectorAll('nav a, header nav a'))
-          .slice(0, 10)
-          .map(a => ({ text: (a.innerText || '').trim().slice(0, 60), href: a.href }))
-          .filter(l => l.text && l.href);
-        return Promise.resolve({
-          ok: true,
-          title: trunc(document.title || '', 300),
-          url: location.href,
-          description: trunc(
-            getMeta('meta[name="description"]') ||
-            getMeta('meta[property="og:description"]') ||
-            getMeta('meta[name="twitter:description"]'),
-            500
-          ),
-          text: trunc(cleanText, 8000),
-          h1: trunc(h1 ? h1.innerText.trim() : '', 200),
-          navLinks,
-          extractedAt: new Date().toISOString()
-        });
-      } catch (e) {
-        return Promise.resolve({ ok: false, error: e.message });
-      }
-    }
   });
 
   // Reposition FAB on window resize (keep it on-screen)
