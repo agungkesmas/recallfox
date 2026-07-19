@@ -56,6 +56,27 @@
     return (b / 1024 / 1024).toFixed(2) + ' MB';
   }
 
+  // v3.11.4: Inject content/annotate.js on-demand.
+  // annotate.js is too heavy to load on every page; we only inject when user
+  // clicks "Anotasi" in the preview modal.
+  async function _injectAnnotateScript() {
+    if (typeof window.__RecallFoxAnnotate__ === 'function') return;
+    try {
+      await browser.runtime.sendMessage({ type: 'INJECT_ANNOTATE_SCRIPT' });
+      // Wait for global to be available (max 5s)
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && typeof window.__RecallFoxAnnotate__ !== 'function') {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (typeof window.__RecallFoxAnnotate__ !== 'function') {
+        throw new Error('annotate.js failed to load');
+      }
+    } catch (e) {
+      console.warn('[RecallFox/Overlay] Failed to inject annotate.js:', e);
+      throw e;
+    }
+  }
+
   function loadPos() {
     try {
       const raw = localStorage.getItem(POS_KEY);
@@ -630,6 +651,10 @@
             </button>
           </div>
           <div class="rf-capture-modal-actions-secondary">
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="annotate">
+              <span class="rf-cap-btn-icon">✏️</span>
+              <span>Anotasi</span>
+            </button>
             <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy">
               <span class="rf-cap-btn-icon">📋</span>
               <span>Salin</span>
@@ -714,6 +739,41 @@
         if (res?.ok) showStatus(`✓ ${ext.toUpperCase()} tersimpan ke folder Downloads`);
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
 
+      } else if (action === 'annotate') {
+        // v3.11.4: Buka editor anotasi (canvas-based).
+        // Inject annotate.js on-demand, lalu panggil __RecallFoxAnnotate__.
+        showStatus('Membuka editor anotasi…');
+        try {
+          // Inject annotate.js if not yet loaded
+          if (typeof window.__RecallFoxAnnotate__ !== 'function') {
+            await _injectAnnotateScript();
+          }
+          // Hide preview modal while editor is open (but don't close it)
+          modalEl.style.display = 'none';
+          const result = await window.__RecallFoxAnnotate__(lastCapture.dataUrl);
+          if (result && !result.cancelled && result.dataUrl) {
+            // Replace lastCapture.dataUrl dengan versi annotated
+            lastCapture.dataUrl = result.dataUrl;
+            // Recompute bytes (PNG size approx)
+            try {
+              const blob = await (await fetch(result.dataUrl)).blob();
+              lastCapture.bytes = blob.size;
+            } catch (e) {}
+            // Update preview image
+            const previewImg = modalEl.querySelector('.rf-capture-modal-preview img');
+            if (previewImg) previewImg.src = result.dataUrl;
+            // Update size display
+            const sizeEl = modalEl.querySelector('.rf-capture-modal-info-size');
+            if (sizeEl) sizeEl.textContent = '💾 ' + fmtBytes(lastCapture.bytes);
+            showStatus('✓ Anotasi diterapkan — siap disimpan');
+          } else {
+            showStatus('Anotasi dibatalkan');
+          }
+          modalEl.style.display = '';
+        } catch (e) {
+          showStatus('✗ Anotasi error: ' + e.message, true);
+          modalEl.style.display = '';
+        }
       } else if (action === 'copy') {
         showStatus('Menyalin ke clipboard…');
         try {

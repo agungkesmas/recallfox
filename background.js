@@ -1772,6 +1772,22 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const dataUrl = await getScreenshotBlob(msg.id);
     return { ok: true, dataUrl };
   }
+  if (msg.type === 'INJECT_ANNOTATE_SCRIPT') {
+    // v3.11.4: Inject content/annotate.js into the active tab on-demand.
+    // Called by overlay.js when user clicks "Anotasi" in capture preview modal.
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        files: ['content/annotate.js']
+      });
+      return { ok: true };
+    } catch (e) {
+      console.warn('[RecallFox] inject annotate.js failed:', e);
+      return { ok: false, error: e.message };
+    }
+  }
   if (msg.type === 'DOWNLOAD_SCREENSHOT') {
     // Save full image to user's Downloads folder via browser.downloads API
     const { getScreenshotBlob } = await import('./lib/storage.js');
