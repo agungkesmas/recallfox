@@ -27,27 +27,10 @@
     </div>
   </div>
 
-  <!-- Quick-actions bar — v3.11.2: Tombol "Menu" (kotak merah) dihilangkan
-       karena redundan dengan tombol "Baru" di vault view dan tiles row.
-       Sisa 4 tombol: Prompt, Catatan, Link, Shot. -->
-  <div class="quick-actions" id="quickActions">
-    <button class="qa-btn" id="qaNewPrompt" title="Simpan prompt baru">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/></svg>
-      <span>Prompt</span>
-    </button>
-    <button class="qa-btn" id="qaNewNote" title="Buat catatan baru">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
-      <span>Catatan</span>
-    </button>
-    <button class="qa-btn" id="qaNewLink" title="Simpan link tab aktif">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      <span>Link</span>
-    </button>
-    <button class="qa-btn" id="qaQuickShot" title="Tangkap halaman">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M7 3v2M17 21v-2"/></svg>
-      <span>Shot</span>
-    </button>
-  </div>
+  <!-- v3.11.3 (Issue dari Google Doc): Quick-actions bar dihapus — user bilang
+       "kotak ijo di hilangkan saja biar lega" dan "tombol itu juga mubazir
+       yang 4 tombol di atas jadwal sholat". Tiles row di bawah sudah cover
+       semua aksi yang sama (Prompt, Catatan, Link, Shot, Bundle, Snapshot). -->
 
   <!-- Status strip -->
   <div class="strip" id="strip">

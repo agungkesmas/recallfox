@@ -46,60 +46,9 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   display:flex;
 }
 
-/* ============================================================
-   v3.11.1 (Issue 2 fix): Quick Actions bar — pengganti search bar
-   v3.11.2: 4 tombol saja (Prompt, Catatan, Link, Shot) — Menu button dihapus.
-   - flex-wrap:wrap supaya tombol wrap ke baris berikutnya saat sidebar sempit
-   - Saat sangat sempit, icon-only (label di-hide via w-xs)
-   ============================================================ */
-.quick-actions{
-  display:flex;
-  flex-wrap:wrap;            /* v3.11.2: FIX wrap logic — tombol wrap bila tidak muat */
-  align-items:center;
-  gap:6px;
-  margin:2px 10px 8px;
-  padding:6px;
-  background:var(--surface);
-  border:1px solid var(--border);
-  border-radius:var(--r-md);
-  flex:none;
-}
-.qa-btn{
-  flex:1 1 auto;             /* v3.11.2: allow grow+shrink+wrap basis auto */
-  min-width:60px;            /* v3.11.2: minimum width sebelum wrap */
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:5px;
-  padding:7px 6px;
-  border-radius:8px;
-  background:transparent;
-  color:var(--text-2);
-  font-size:11px;
-  font-weight:650;
-  cursor:pointer;
-  transition:.15s;
-  overflow:hidden;
-  white-space:nowrap;
-}
-.qa-btn svg{
-  width:14px;
-  height:14px;
-  color:var(--primary);
-  flex:none;
-}
-.qa-btn span{
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.qa-btn:hover{
-  background:var(--primary-soft);
-  color:var(--primary);
-  transform:translateY(-1px);
-}
-.qa-btn:active{
-  transform:translateY(0) scale(.96);
-}
+/* v3.11.3: Quick-actions bar & qa-btn styles DIHAPUS — user request dari Google Doc:
+   "kotak ijo di hilangkan saja biar lega" + "tombol itu juga mubazir yang 4 tombol
+   di atas jadwal sholat". Tiles row sudah cover semua aksi yang sama. */
 
 /* ============================================================
    v3.11.2 (Issue dari Google Doc): Notes bar — 1-row dengan flex-wrap
@@ -250,21 +199,7 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:13px;
 }
 
-/* Quick-actions di w-sm: label bisa tetap tampil, gap lebih kecil */
-.popup.w-sm .quick-actions{
-  gap:4px;
-  padding:5px 5px;
-  margin:2px 8px 6px;
-}
-.popup.w-sm .qa-btn{
-  padding:6px 3px;
-  font-size:10.5px;
-  gap:3px;
-}
-.popup.w-sm .qa-btn svg{
-  width:13px;
-  height:13px;
-}
+/* v3.11.3: Quick-actions rules di w-sm DIHAPUS — quick-actions bar sudah dihapus. */
 
 /* Tiles: lebih kompak */
 .popup.w-sm .tiles{
@@ -417,26 +352,7 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:12px;
 }
 
-/* Quick-actions di w-xs: ICON-ONLY, label di-hide. v3.11.2: min-width:0 supaya wrap lebih cepat */
-.popup.w-xs .quick-actions{
-  gap:3px;
-  padding:4px;
-  margin:2px 6px 5px;
-}
-.popup.w-xs .qa-btn{
-  padding:8px 4px;
-  gap:0;
-  font-size:0;
-  min-width:0;
-  flex:1 1 40px;  /* v3.11.2: wrap ke 2 baris (2x2) bila sempit */
-}
-.popup.w-xs .qa-btn span{
-  display:none; /* label di-hide, icon-only */
-}
-.popup.w-xs .qa-btn svg{
-  width:14px;
-  height:14px;
-}
+/* v3.11.3: Quick-actions rules di w-xs DIHAPUS — quick-actions bar sudah dihapus. */
 
 /* Tiles di w-xs: icon-only, 3 kolom. v3.11.2: gunakan display:inline-flex untuk anak-anak */
 .popup.w-xs .tiles{
@@ -590,20 +506,7 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:11px;
 }
 
-/* Quick-actions di w-xxs: minimal, 2x2 grid */
-.popup.w-xxs .quick-actions{
-  padding:3px;
-  gap:2px;
-  margin:2px 4px 4px;
-}
-.popup.w-xxs .qa-btn{
-  padding:6px 2px;
-  flex:1 1 35px;  /* v3.11.2: wrap ke 2x2 di w-xxs */
-}
-.popup.w-xxs .qa-btn svg{
-  width:13px;
-  height:13px;
-}
+/* v3.11.3: Quick-actions rules di w-xxs DIHAPUS — quick-actions bar sudah dihapus. */
 
 /* Tab bar di w-xxs: padding super kecil */
 .popup.w-xxs .tabbar{
@@ -665,7 +568,7 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   -webkit-line-clamp:2;
 }
 
-/* Hide addbtn di w-xxs (sudah ada quick-actions) */
+/* v3.11.3: Hide addbtn label di w-xxs (icon-only) supaya tidak tabrakan */
 .popup.w-xxs .vault-hd .addbtn .lbl,
 .popup.w-xxs .addbtn{
   font-size:0;

@@ -2073,10 +2073,10 @@ function setView(v) {
   $('#toolsView').classList.toggle('hide', v !== 'tools');
   const homeOnly = (v === 'home');
   // v3.11.1: cmdWrap (search bar) sudah dihapus — ganti dengan quickActions
+  // v3.11.3: quickActions juga sudah dihapus — biar lega (user request).
+  // Sekarang cuma tiles + strip yang toggle di home view.
   const cmdWrap = $('#cmdWrap');
   if (cmdWrap) cmdWrap.style.display = homeOnly ? 'flex' : 'none';
-  const quickActions = $('#quickActions');
-  if (quickActions) quickActions.style.display = homeOnly ? 'flex' : 'none';
   document.querySelector('.tiles').style.display = homeOnly ? 'grid' : 'none';
   document.querySelector('.strip').style.display = homeOnly ? '' : 'none';
   $('#page').classList.remove('in');
@@ -2548,14 +2548,14 @@ async function renderHabitsPage(B) {
 
     // Settings drawer
     + '<details class="habit-setting"><summary>⚙ Atur kebiasaan dan jadwal</summary><div class="habit-config">'
-    +   '<div class="habit-row"><div><b>Target ngaji</b><span>Ukuran paling sederhana: halaman</span></div><select id="quranTargetSel">'
+    +   '<div class="habit-config-row"><div><b>Target ngaji</b><span>Ukuran paling sederhana: halaman</span></div><select id="quranTargetSel">'
     +     [1,2,4].map(n => '<option value="' + n + '"' + (n === qTarget ? ' selected' : '') + '>' + n + ' halaman / hari</option>').join('')
     +   '</select></div>'
-    +   '<div class="habit-row"><div><b>Waktu ngaji</b><span>Hanya sebagai pengingat, bukan batas</span></div><input id="quranTimeInput" type="time" value="' + esc(s.quranReminderTime || '18:15') + '"></div>'
-    +   '<div class="habit-row"><div><b>Jenis olahraga</b><span>Pilih aktivitas favorit</span></div><select id="sportTypeSel">'
+    +   '<div class="habit-config-row"><div><b>Waktu ngaji</b><span>Hanya sebagai pengingat, bukan batas</span></div><input id="quranTimeInput" type="time" value="' + esc(s.quranReminderTime || '18:15') + '"></div>'
+    +   '<div class="habit-config-row"><div><b>Jenis olahraga</b><span>Pilih aktivitas favorit</span></div><select id="sportTypeSel">'
     +     ['Jalan cepat', 'Lari', 'Bersepeda', 'Latihan kekuatan', 'Peregangan / yoga'].map(n => '<option>' + n + '</option>').join('')
     +   '</select></div>'
-    +   '<div class="habit-row"><div><b>Target olahraga</b><span>Durasi per sesi</span></div><select id="sportTargetSel">'
+    +   '<div class="habit-config-row"><div><b>Target olahraga</b><span>Durasi per sesi</span></div><select id="sportTargetSel">'
     +     [20,30,45,60].map(n => '<option value="' + n + '"' + (n === eTarget ? ' selected' : '') + '>' + n + ' menit</option>').join('')
     +   '</select></div>'
     +   '<div class="habit-save"><button class="habit-action main" id="saveHabitPlan">Simpan rencana</button></div>'
@@ -4544,15 +4544,17 @@ function bindEvents() {
   }
   // v3.11.1: Quick-actions bar (pengganti search bar di sidebar)
   // v3.11.2: Tombol "Menu" (qaMoreBtn) dihapus — redundan dengan tombol "Baru" di vault view.
-  // Sisa 4 tombol cepat: Prompt, Catatan, Link, Shot.
-  const qaPrompt = $('#qaNewPrompt');
-  if (qaPrompt) qaPrompt.addEventListener('click', savePromptSheet);
-  const qaNote = $('#qaNewNote');
-  if (qaNote) qaNote.addEventListener('click', () => { setView('notes'); newNote(); });
-  const qaLink = $('#qaNewLink');
-  if (qaLink) qaLink.addEventListener('click', saveLinkSheet);
-  const qaShot = $('#qaQuickShot');
-  if (qaShot) qaShot.addEventListener('click', () => doShot());
+  // v3.11.3: Seluruh quick-actions bar dihapus — user bilang "mubazir yang 4 tombol
+  //          di atas jadwal sholat". Tiles row sudah cover semua aksi yang sama.
+  // Binding di-comment out (tidak dihapus) untuk dokumentasi sejarah.
+  // const qaPrompt = $('#qaNewPrompt');
+  // if (qaPrompt) qaPrompt.addEventListener('click', savePromptSheet);
+  // const qaNote = $('#qaNewNote');
+  // if (qaNote) qaNote.addEventListener('click', () => { setView('notes'); newNote(); });
+  // const qaLink = $('#qaNewLink');
+  // if (qaLink) qaLink.addEventListener('click', saveLinkSheet);
+  // const qaShot = $('#qaQuickShot');
+  // if (qaShot) qaShot.addEventListener('click', () => doShot());
 
   document.addEventListener('keydown', e => {
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
