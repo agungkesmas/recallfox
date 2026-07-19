@@ -2360,19 +2360,90 @@ const TOOLS = [
   ['volume', 'Penguat Volume', 'Hingga 600% per tab', ICONS.vol],
   ['kontrol', 'Kontrol Situs', 'Blocker + filter konten', ICONS.shield],
   ['aimanage', 'Kelola Situs AI', 'Pin/hide/tambah situs', ICONS.spark],  // v3.11.1 (Issue 4)
+  // v3.11.2 (Issue 1): Pomodoro + Music player — pengganti "kotak merah"
+  ['pomodoro', 'Pomodoro + Musik', 'Timer fokus + playlist YouTube', ICONS.zap || '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg>'],
+  // v3.11.2 (Issue 3): Kid-safe Sites — pengganti "kotak ijo"
+  ['kidsafe', 'Situs Ramah Anak', 'Game + video edukasi anak', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 7v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V7l-8-5z"/></svg>'],
   ['cache', 'Bersihkan Cache', '9 tipe data · konfirmasi', ICONS.trash, 'warn'],
   ['askai', 'Tanya AI', 'Tanya soal teks terseleksi', ICONS.spark],
   ['gdrive', 'Sync GDrive', 'Apps Script Spreadsheet', ICONS.cloud || '☁️'],   // v3.8.1 Issue #1+#2
   ['backup', 'Backup', 'Ekspor terenkripsi AES + GDrive', ICONS.archive],
   ['keys', 'Pintasan', 'Semua shortcut', ICONS.kb]
 ];
+// v3.11.2 (Issue 3): Default tool order (used when no custom order set)
+const DEFAULT_TOOL_ORDER = TOOLS.map(t => t[0]);
+
+async function getEffectiveTools() {
+  // v3.11.2 (Issue 3): Apply custom tool order if set
+  const order = currentVault?.settings?.toolOrder || [];
+  if (!Array.isArray(order) || order.length === 0) return TOOLS;
+  // Build map of tool id → tool def
+  const map = new Map(TOOLS.map(t => [t[0], t]));
+  const ordered = [];
+  for (const id of order) {
+    if (map.has(id)) {
+      ordered.push(map.get(id));
+      map.delete(id);
+    }
+  }
+  // Append any tools not in custom order (e.g., new tools added in update)
+  for (const t of map.values()) ordered.push(t);
+  return ordered;
+}
+
 function renderTools() {
-  $('#toolgrid').innerHTML = TOOLS.map(t => '<button class="tool' + (t[4] ? ' ' + t[4] : '') + '" data-tool="' + t[0] + '"><div class="tool-ic">' + t[3] + '</div><div><div class="tool-n">' + t[1] + '</div><div class="tool-d">' + t[2] + '</div></div></button>').join('');
-  $$('#toolgrid .tool').forEach(t => t.addEventListener('click', () => toolPage(t.dataset.tool)));
+  // v3.11.2 (Issue 3): Use effective order + add drag handle for reorder
+  getEffectiveTools().then(effectiveTools => {
+    $('#toolgrid').innerHTML = effectiveTools.map(t => '<button class="tool' + (t[4] ? ' ' + t[4] : '') + '" data-tool="' + t[0] + '" draggable="true"><div class="tool-drag-handle" title="Tarik untuk urutan" draggable="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div><div class="tool-ic">' + t[3] + '</div><div><div class="tool-n">' + t[1] + '</div><div class="tool-d">' + t[2] + '</div></div></button>').join('');
+    $$('#toolgrid .tool').forEach(t => {
+      t.addEventListener('click', (e) => {
+        // Jangan trigger click kalau yang diklik adalah drag-handle
+        if (e.target.closest('.tool-drag-handle')) return;
+        toolPage(t.dataset.tool);
+      });
+      // v3.11.2 (Issue 3): Drag-drop reorder
+      t.addEventListener('dragstart', (e) => {
+        t.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', t.dataset.tool);
+      });
+      t.addEventListener('dragend', () => {
+        t.classList.remove('dragging');
+        $$('#toolgrid .tool').forEach(el => el.classList.remove('drag-over'));
+      });
+      t.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        t.classList.add('drag-over');
+      });
+      t.addEventListener('dragleave', () => {
+        t.classList.remove('drag-over');
+      });
+      t.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        t.classList.remove('drag-over');
+        const draggedId = e.dataTransfer.getData('text/plain');
+        const targetId = t.dataset.tool;
+        if (draggedId === targetId) return;
+        // Reorder
+        const currentOrder = currentVault?.settings?.toolOrder || DEFAULT_TOOL_ORDER;
+        const idx = currentOrder.indexOf(draggedId);
+        const targetIdx = currentOrder.indexOf(targetId);
+        if (idx < 0 || targetIdx < 0) return;
+        const newOrder = [...currentOrder];
+        newOrder.splice(idx, 1);
+        newOrder.splice(targetIdx, 0, draggedId);
+        await saveSettings({ toolOrder: newOrder });
+        await refreshVault();
+        renderTools();
+        toast('↕ Urutan alat diperbarui');
+      });
+    });
+  });
 }
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI', pomodoro: '⏱️ Pomodoro + Musik', kidsafe: '🧒 Situs Ramah Anak' };
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -2384,6 +2455,8 @@ function toolPage(k) {
   else if (k === 'keys') renderKeysPage(B);
   else if (k === 'kontrol') renderKontrolSitusPage(B);
   else if (k === 'aimanage') renderAiManagePage(B);  // v3.11.1 (Issue 4)
+  else if (k === 'pomodoro') renderPomodoroPage(B);   // v3.11.2 (Issue 1)
+  else if (k === 'kidsafe') renderKidSafePage(B);     // v3.11.2 (Issue 3)
   else renderToolStubPage(B, k, names[k]);
 }
 function renderShalatPage(B) {
@@ -2856,6 +2929,555 @@ function renderKeysPage(B) {
     + '</div></div>'
     + '<div class="hintbox">💡 <b>Screenshot area</b> paling berguna untuk ambil cuplikan UI saat troubleshooting atau membuat dokumentasi. Bisa diulang beberapa kali untuk beberapa contoh berbeda.</div>';
 }
+
+// ============================================================
+// v3.11.2 (Issue 1): Pomodoro + Music Player page
+// ============================================================
+let pomodoroInterval = null;
+let currentPomodoroState = null;
+let currentMusicPlaylists = null;
+
+async function renderPomodoroPage(B) {
+  const { getPomodoroState, formatTime } = await import('../lib/pomodoro.js');
+  const state = await getPomodoroState();
+  currentPomodoroState = state;
+
+  const phaseLabel = {
+    idle: 'Siap mulai',
+    work: '🎯 Fokus',
+    short_break: '☕ Istirahat pendek',
+    long_break: '🛋 Istirahat panjang'
+  }[state.phase] || state.phase;
+
+  const phaseClass = state.phase === 'work' ? '' : (state.phase === 'idle' ? '' : 'break-phase');
+  const runningClass = state.running ? 'running' : '';
+
+  B.innerHTML =
+    '<div class="pomodoro-page">'
+    + '<div class="pomodoro-card">'
+    +   '<div class="pomodoro-phase">' + phaseLabel + '</div>'
+    +   '<div class="pomodoro-time" id="pomTime">' + formatTime(state.remainingSec) + '</div>'
+    +   '<div class="pomodoro-stats">'
+    +     '<span>Sesi: <b>' + (state.completedWorks || 0) + '</b></span>'
+    +     '<span>Total fokus: <b>' + formatTime(state.totalFocusSec || 0) + '</b></span>'
+    +   '</div>'
+    +   '<div class="pomodoro-actions">'
+    +     '<button class="btn-pom-play" id="pomPlay">' + (state.running ? '⏸ Pause' : '▶ Play') + '</button>'
+    +     '<button class="btn-pom-secondary" id="pomReset">↺ Reset</button>'
+    +     '<button class="btn-pom-secondary" id="pomSkip">⏭ Skip</button>'
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="card"><h3>⚙ Pengaturan</h3>'
+    + '<div class="pomodoro-settings">'
+    +   '<div class="form-field"><label>Work (menit)</label><input type="number" id="pomWork" min="1" max="120" value="' + state.workMinutes + '"></div>'
+    +   '<div class="form-field"><label>Short break (menit)</label><input type="number" id="pomShort" min="1" max="60" value="' + state.shortBreakMinutes + '"></div>'
+    +   '<div class="form-field"><label>Long break (menit)</label><input type="number" id="pomLong" min="1" max="60" value="' + state.longBreakMinutes + '"></div>'
+    +   '<div class="form-field"><label>Long break interval</label><input type="number" id="pomInterval" min="2" max="10" value="' + state.longBreakInterval + '"></div>'
+    + '</div>'
+    + '<div class="krow" style="padding:8px 0">'
+    +   '<div><b>Auto-start next</b><div style="font-size:10.5px;color:var(--muted)">Otomatis mulai phase berikutnya tanpa klik Play</div></div>'
+    +   '<button class="ks-toggle' + (state.autoStartNext ? ' on' : '') + '" id="pomAutoStart" aria-label="Toggle"><i></i></button>'
+    + '</div>'
+    + '<div class="krow" style="padding:8px 0;border-top:1px solid var(--border)">'
+    +   '<div><b>Notifikasi</b><div style="font-size:10.5px;color:var(--muted)">Tampilkan notifikasi browser saat phase selesai</div></div>'
+    +   '<button class="ks-toggle' + (state.notifyOnComplete ? ' on' : '') + '" id="pomNotify" aria-label="Toggle"><i></i></button>'
+    + '</div></div>'
+
+    + '<div class="music-card">'
+    +   '<h3>🎵 Music Player (YouTube)</h3>'
+    +   '<div class="music-input-row">'
+    +     '<input id="musicUrl" type="text" placeholder="Paste URL YouTube video / playlist..." />'
+    +     '<button id="musicAdd">Tambah</button>'
+    +   '</div>'
+    +   '<div class="music-embed" id="musicEmbed">🎵 Pilih playlist di bawah atau paste URL di atas untuk mulai</div>'
+    +   '<div class="music-list-section">'
+    +     '<h4>📌 Pinned</h4>'
+    +     '<div class="music-list" id="musicPinned"></div>'
+    +   '</div>'
+    +   '<div class="music-list-section">'
+    +     '<h4>🕒 Recent</h4>'
+    +     '<div class="music-list" id="musicRecent"></div>'
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="hintbox">💡 Tips: paste URL YouTube playlist (mis. <code>youtube.com/playlist?list=PLxxxx</code>) untuk musik latar fokus. Pomodoro tetap berjalan walau popup ditutup — kembali lagi untuk lihat progress.</div>'
+    + '</div>';
+
+  // Render music playlists
+  await renderMusicPlaylists();
+
+  // Pomodoro interval (jalankan timer kalau running)
+  if (pomodoroInterval) clearInterval(pomodoroInterval);
+  if (state.running) {
+    pomodoroInterval = setInterval(async () => {
+      const { tickPomodoro, formatTime } = await import('../lib/pomodoro.js');
+      const next = await tickPomodoro();
+      currentPomodoroState = next;
+      const timeEl = document.getElementById('pomTime');
+      if (timeEl) timeEl.textContent = formatTime(next.remainingSec);
+      else {
+        // Page berpindah — stop interval
+        clearInterval(pomodoroInterval);
+        pomodoroInterval = null;
+      }
+    }, 1000);
+  }
+
+  // Bind actions
+  $('#pomPlay')?.addEventListener('click', async () => {
+    const { startPomodoro, pausePomodoro, formatTime } = await import('../lib/pomodoro.js');
+    if (currentPomodoroState.running) {
+      currentPomodoroState = await pausePomodoro();
+      if (pomodoroInterval) { clearInterval(pomodoroInterval); pomodoroInterval = null; }
+      $('#pomPlay').textContent = '▶ Play';
+    } else {
+      currentPomodoroState = await startPomodoro();
+      $('#pomPlay').textContent = '⏸ Pause';
+      // Start interval
+      if (pomodoroInterval) clearInterval(pomodoroInterval);
+      pomodoroInterval = setInterval(async () => {
+        const { tickPomodoro, formatTime } = await import('../lib/pomodoro.js');
+        const next = await tickPomodoro();
+        currentPomodoroState = next;
+        const timeEl = document.getElementById('pomTime');
+        if (timeEl) {
+          timeEl.textContent = formatTime(next.remainingSec);
+          // Update play button kalau phase berubah
+          const phaseLabel = { idle: 'Siap mulai', work: '🎯 Fokus', short_break: '☕ Istirahat pendek', long_break: '🛋 Istirahat panjang' }[next.phase];
+          const phaseEl = document.querySelector('.pomodoro-phase');
+          if (phaseEl) phaseEl.textContent = phaseLabel;
+        } else {
+          clearInterval(pomodoroInterval);
+          pomodoroInterval = null;
+        }
+      }, 1000);
+    }
+    const timeEl = document.getElementById('pomTime');
+    if (timeEl) timeEl.textContent = formatTime(currentPomodoroState.remainingSec);
+  });
+
+  $('#pomReset')?.addEventListener('click', async () => {
+    const { resetPomodoro, formatTime } = await import('../lib/pomodoro.js');
+    if (pomodoroInterval) { clearInterval(pomodoroInterval); pomodoroInterval = null; }
+    currentPomodoroState = await resetPomodoro();
+    const timeEl = document.getElementById('pomTime');
+    if (timeEl) {
+      timeEl.textContent = formatTime(currentPomodoroState.remainingSec);
+      $('#pomPlay').textContent = '▶ Play';
+      const phaseEl = document.querySelector('.pomodoro-phase');
+      if (phaseEl) phaseEl.textContent = 'Siap mulai';
+    }
+    toast('Pomodoro direset');
+  });
+
+  $('#pomSkip')?.addEventListener('click', async () => {
+    const { skipPhase, formatTime } = await import('../lib/pomodoro.js');
+    currentPomodoroState = await skipPhase();
+    const timeEl = document.getElementById('pomTime');
+    if (timeEl) {
+      timeEl.textContent = formatTime(currentPomodoroState.remainingSec);
+      const phaseLabel = { idle: 'Siap mulai', work: '🎯 Fokus', short_break: '☕ Istirahat pendek', long_break: '🛋 Istirahat panjang' }[currentPomodoroState.phase];
+      const phaseEl = document.querySelector('.pomodoro-phase');
+      if (phaseEl) phaseEl.textContent = phaseLabel;
+    }
+    toast('⏭ Phase dilewati');
+  });
+
+  // Settings inputs
+  ['pomWork', 'pomShort', 'pomLong', 'pomInterval'].forEach(id => {
+    $('#' + id)?.addEventListener('change', async (e) => {
+      const { updatePomodoroSettings } = await import('../lib/pomodoro.js');
+      const val = parseInt(e.target.value, 10);
+      if (val < 1) return;
+      const patch = {
+        pomWork: 'workMinutes',
+        pomShort: 'shortBreakMinutes',
+        pomLong: 'longBreakMinutes',
+        pomInterval: 'longBreakInterval'
+      }[id];
+      await updatePomodoroSettings({ [patch]: val });
+      toast('Pengaturan pomodoro disimpan');
+    });
+  });
+
+  // Toggles
+  $('#pomAutoStart')?.addEventListener('click', async () => {
+    const { updatePomodoroSettings } = await import('../lib/pomodoro.js');
+    const newVal = !currentPomodoroState.autoStartNext;
+    await updatePomodoroSettings({ autoStartNext: newVal });
+    currentPomodoroState.autoStartNext = newVal;
+    $('#pomAutoStart').classList.toggle('on', newVal);
+  });
+  $('#pomNotify')?.addEventListener('click', async () => {
+    const { updatePomodoroSettings } = await import('../lib/pomodoro.js');
+    const newVal = !currentPomodoroState.notifyOnComplete;
+    await updatePomodoroSettings({ notifyOnComplete: newVal });
+    currentPomodoroState.notifyOnComplete = newVal;
+    $('#pomNotify').classList.toggle('on', newVal);
+  });
+
+  // Music player
+  $('#musicAdd')?.addEventListener('click', async () => {
+    const url = ($('#musicUrl').value || '').trim();
+    if (!url) { toast('Paste URL YouTube dulu', false); return; }
+    const { addMusicPlaylist, buildYouTubeEmbedUrl } = await import('../lib/pomodoro.js');
+    if (!buildYouTubeEmbedUrl(url)) { toast('URL YouTube tidak valid', false); return; }
+    await addMusicPlaylist(url, url.slice(0, 60));
+    $('#musicUrl').value = '';
+    await renderMusicPlaylists();
+    // Auto-play
+    playMusic(url);
+    toast('🎵 Playlist ditambahkan');
+  });
+
+  $('#musicUrl')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#musicAdd')?.click();
+  });
+}
+
+async function renderMusicPlaylists() {
+  const { getMusicPlaylists, buildYouTubeEmbedUrl, pinMusicPlaylist, unpinMusicPlaylist, deleteMusicPlaylist } = await import('../lib/pomodoro.js');
+  const all = await getMusicPlaylists();
+  currentMusicPlaylists = all;
+
+  const renderList = (items, isPinned) => {
+    if (!items || !items.length) return '<div class="music-empty">' + (isPinned ? 'Belum ada playlist pinned' : 'Belum ada recent') + '</div>';
+    return items.map(p => '<div class="music-item" data-url="' + esc(p.url) + '">'
+      + '<span style="font-size:14px">🎵</span>'
+      + '<span class="music-item-title" title="' + escAttr(p.url) + '">' + esc(p.title) + '</span>'
+      + '<div class="music-item-actions">'
+      +   '<button data-act="play" title="Putar">▶</button>'
+      +   (isPinned ? '<button data-act="unpin" title="Unpin">📌</button>' : '<button data-act="pin" title="Pin">📍</button>')
+      +   '<button data-act="del" title="Hapus">🗑</button>'
+      + '</div></div>'
+    ).join('');
+  };
+
+  const pinnedEl = document.getElementById('musicPinned');
+  const recentEl = document.getElementById('musicRecent');
+  if (pinnedEl) {
+    pinnedEl.innerHTML = renderList(all.pinned, true);
+    pinnedEl.querySelectorAll('.music-item').forEach(el => {
+      el.querySelectorAll('button').forEach(btn => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        const url = el.dataset.url;
+        if (act === 'play') playMusic(url);
+        else if (act === 'unpin') { await unpinMusicPlaylist(url); await renderMusicPlaylists(); toast('Unpinned'); }
+        else if (act === 'del') { await deleteMusicPlaylist(url); await renderMusicPlaylists(); toast('Dihapus'); }
+      }));
+      el.addEventListener('click', () => playMusic(el.dataset.url));
+    });
+  }
+  if (recentEl) {
+    recentEl.innerHTML = renderList(all.recents, false);
+    recentEl.querySelectorAll('.music-item').forEach(el => {
+      el.querySelectorAll('button').forEach(btn => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        const url = el.dataset.url;
+        if (act === 'play') playMusic(url);
+        else if (act === 'pin') { await pinMusicPlaylist(url); await renderMusicPlaylists(); toast('📌 Pinned'); }
+        else if (act === 'del') { await deleteMusicPlaylist(url); await renderMusicPlaylists(); toast('Dihapus'); }
+      }));
+      el.addEventListener('click', () => playMusic(el.dataset.url));
+    });
+  }
+}
+
+async function playMusic(url) {
+  const { buildYouTubeEmbedUrl, addMusicPlaylist } = await import('../lib/pomodoro.js');
+  const embedUrl = buildYouTubeEmbedUrl(url);
+  if (!embedUrl) { toast('URL YouTube tidak valid', false); return; }
+  const embed = document.getElementById('musicEmbed');
+  if (embed) {
+    embed.innerHTML = '<iframe src="' + embedUrl + '" allow="autoplay; encrypted-media" allowfullscreen></iframe>';
+  }
+  // Add to recents (jika belum ada)
+  await addMusicPlaylist(url, url.slice(0, 60));
+  await renderMusicPlaylists();
+}
+
+// ============================================================
+// v3.11.2 (Issue 3): Kid-safe Sites page
+// ============================================================
+async function renderKidSafePage(B) {
+  const { getEffectiveKidSafeSites, addCustomSite, toggleHideSite, togglePinSite, deleteSite, resetKidSafeSites, DEFAULT_KIDSAFE_SITES } = await import('../lib/kidsafe-sites.js');
+  let sites = await getEffectiveKidSafeSites();
+
+  // Filter state
+  let filterCategory = 'all';
+  let filterLang = 'all';
+  let showHidden = false;
+
+  function render() {
+    const filtered = sites.filter(s => {
+      if (filterCategory !== 'all' && s.category !== filterCategory) return false;
+      if (filterLang !== 'all' && s.lang !== filterLang) return false;
+      if (!showHidden && s.hidden) return false;
+      return true;
+    });
+
+    const CATEGORY_LABELS = { game: '🎮 Game', video: '📺 Video', learn: '📚 Belajar', read: '📖 Baca' };
+
+    B.innerHTML =
+      '<div class="kidsafe-page">'
+      + '<div class="card" style="background:linear-gradient(135deg,#065f46,#047857);color:#ecfdf5;border:none">'
+      +   '<div style="font-size:11px;opacity:.85">🧒 Situs Ramah Anak</div>'
+      +   '<div style="font-size:14px;font-weight:700;margin:4px 0">' + sites.length + ' situs terkurasi</div>'
+      +   '<div style="font-size:10.5px;opacity:.85">Gratis · Edukasi · Aman untuk anak</div>'
+      + '</div>'
+
+      + '<div class="kidsafe-filter-row">'
+      +   '<select id="ksFilterCat"><option value="all">Semua kategori</option>' + Object.entries(CATEGORY_LABELS).map(([k, v]) => '<option value="' + k + '"' + (filterCategory === k ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>'
+      +   '<select id="ksFilterLang"><option value="all"' + (filterLang === 'all' ? ' selected' : '') + '>Semua bahasa</option><option value="id"' + (filterLang === 'id' ? ' selected' : '') + '>🇮🇩 Indonesia</option><option value="en"' + (filterLang === 'en' ? ' selected' : '') + '>🇬🇧 English</option></select>'
+      +   '<button class="btn btn-g" id="ksToggleHidden" style="font-size:11px;padding:4px 10px">' + (showHidden ? '🙈 Sembunyikan' : '👁 Tampilkan') + ' tersembunyi</button>'
+      + '</div>'
+
+      + '<div class="kidsafe-grid">' + filtered.map(s => {
+          const cls = (s.hidden ? 'hidden-site' : '') + (s.pinned ? ' pinned-site' : '');
+          return '<div class="kidsafe-card ' + cls + '" data-url="' + esc(s.url) + '">'
+            + '<div class="kidsafe-card-top">'
+            +   '<div class="kidsafe-card-name">' + esc(s.name) + '</div>'
+            +   '<span class="kidsafe-card-cat ' + s.category + '">' + (CATEGORY_LABELS[s.category] || s.category) + '</span>'
+            + '</div>'
+            + (s.description ? '<div class="kidsafe-card-desc">' + esc(s.description) + '</div>' : '')
+            + '<div class="kidsafe-card-meta">'
+            +   '<span class="lang">' + s.lang.toUpperCase() + '</span>'
+            +   (s.noLogin ? '<span class="nologin">✓ Tanpa login</span>' : '<span>⚠ Perlu login</span>')
+            +   (s.pinned ? '<span>📌</span>' : '')
+            + '</div>'
+            + '<div class="kidsafe-card-actions">'
+            +   '<button data-act="open">🔗 Buka</button>'
+            +   '<button data-act="pin">' + (s.pinned ? '📍 Unpin' : '📌 Pin') + '</button>'
+            +   '<button data-act="hide">' + (s.hidden ? '👁 Tampilkan' : '🙈 Sembunyikan') + '</button>'
+            +   '<button data-act="del" class="danger">🗑</button>'
+            + '</div></div>';
+        }).join('') + '</div>'
+
+      + '<div class="kidsafe-add-form">'
+      +   '<h3>➕ Tambah situs custom</h3>'
+      +   '<div class="form-row">'
+      +     '<input id="ksAddName" placeholder="Nama situs" />'
+      +     '<select id="ksAddLang"><option value="id">🇮🇩 ID</option><option value="en">🇬🇧 EN</option></select>'
+      +     '<select id="ksAddCat"><option value="game">🎮 Game</option><option value="video">📺 Video</option><option value="learn">📚 Belajar</option><option value="read">📖 Baca</option></select>'
+      +   '</div>'
+      +   '<input id="ksAddUrl" placeholder="https://..." style="margin-top:6px" />'
+      +   '<input id="ksAddDesc" placeholder="Deskripsi singkat (opsional)" style="margin-top:6px" />'
+      +   '<button class="btn btn-p" id="ksAddBtn" style="margin-top:6px">Tambah Situs</button>'
+      + '</div>'
+
+      + '<div class="hintbox" style="display:flex;gap:8px;align-items:center">'
+      +   '<span style="flex:1">💡 ' + (sites.length === DEFAULT_KIDSAFE_SITES.length ? 'Daftar default belum diubah.' : 'Daftar sudah dikustomisasi.') + '</span>'
+      +   '<button class="btn btn-g" id="ksReset" style="font-size:10.5px;padding:4px 8px">Reset ke default</button>'
+      + '</div>'
+      + '</div>';
+
+    // Bind events
+    B.querySelectorAll('.kidsafe-card').forEach(card => {
+      card.querySelectorAll('button[data-act]').forEach(btn => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        const url = card.dataset.url;
+        const site = sites.find(s => s.url === url);
+        if (!site) return;
+        if (act === 'open') {
+          browser.tabs.create({ url });
+        } else if (act === 'pin') {
+          sites = await togglePinSite(site.id);
+          render();
+          toast(site.pinned ? '📍 Unpinned' : '📌 Pinned');
+        } else if (act === 'hide') {
+          sites = await toggleHideSite(site.id);
+          render();
+          toast(site.hidden ? '👁 Ditampilkan' : '🙈 Disembunyikan');
+        } else if (act === 'del') {
+          if (confirm('Hapus "' + site.name + '"?')) {
+            sites = await deleteSite(site.id);
+            render();
+            toast('Situs dihapus');
+          }
+        }
+      }));
+      // Click card body → open
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        browser.tabs.create({ url: card.dataset.url });
+      });
+    });
+
+    // Filter events
+    $('#ksFilterCat')?.addEventListener('change', (e) => { filterCategory = e.target.value; render(); });
+    $('#ksFilterLang')?.addEventListener('change', (e) => { filterLang = e.target.value; render(); });
+    $('#ksToggleHidden')?.addEventListener('click', () => { showHidden = !showHidden; render(); });
+
+    // Add custom
+    $('#ksAddBtn')?.addEventListener('click', async () => {
+      const name = ($('#ksAddName').value || '').trim();
+      const url = ($('#ksAddUrl').value || '').trim();
+      const lang = $('#ksAddLang').value;
+      const category = $('#ksAddCat').value;
+      const description = ($('#ksAddDesc').value || '').trim();
+      if (!name || !url) { toast('Nama dan URL wajib', false); return; }
+      if (!/^https?:\/\//.test(url)) { toast('URL harus mulai dengan http:// atau https://', false); return; }
+      try {
+        sites = await addCustomSite({ name, url, lang, category, description });
+        render();
+        toast('✓ Situs ditambahkan');
+      } catch (e) { toast('Gagal: ' + e.message, false); }
+    });
+
+    // Reset
+    $('#ksReset')?.addEventListener('click', async () => {
+      if (confirm('Reset daftar ke default? Semua perubahan (add/delete/hide/pin) akan hilang.')) {
+        sites = await resetKidSafeSites();
+        render();
+        toast('Daftar direset');
+      }
+    });
+  }
+
+  render();
+}
+
+// ============================================================
+// v3.11.2 (Issue 2): Quiz gate modal — kuis matematika untuk off mode
+// ============================================================
+let pendingModeToggle = null; // { type: 'kidmode'|'profanity', action: 'off' }
+
+function openQuizGate(onSuccess) {
+  pendingModeToggle = { onSuccess };
+  // Generate random math question (cukup sulit untuk anak kecil, mudah untuk dewasa)
+  const a = Math.floor(Math.random() * 50) + 10;  // 10-59
+  const b = Math.floor(Math.random() * 50) + 10;  // 10-59
+  const ops = ['+', '-', '×'];
+  const op = ops[Math.floor(Math.random() * ops.length)];
+  let answer;
+  let questionStr;
+  if (op === '+') {
+    answer = a + b;
+    questionStr = a + ' + ' + b + ' = ?';
+  } else if (op === '-') {
+    // Pastikan positif
+    const [big, small] = a > b ? [a, b] : [b, a];
+    answer = big - small;
+    questionStr = big + ' − ' + small + ' = ?';
+  } else {
+    // Perkalian kecil supaya tidak terlalu sulit
+    const x = Math.floor(Math.random() * 9) + 2;  // 2-10
+    const y = Math.floor(Math.random() * 9) + 2;  // 2-10
+    answer = x * y;
+    questionStr = x + ' × ' + y + ' = ?';
+  }
+  pendingModeToggle.answer = answer;
+
+  $('#quizQuestion').textContent = questionStr;
+  $('#quizAnswer').value = '';
+  $('#quizError').style.display = 'none';
+  $('#quizAnswer').classList.remove('wrong');
+  $('#quizOverlay').style.display = 'flex';
+  setTimeout(() => $('#quizAnswer')?.focus(), 100);
+}
+
+function closeQuizGate() {
+  $('#quizOverlay').style.display = 'none';
+  pendingModeToggle = null;
+}
+
+async function submitQuiz() {
+  if (!pendingModeToggle) { closeQuizGate(); return; }
+  const userAns = parseInt($('#quizAnswer').value, 10);
+  if (isNaN(userAns)) {
+    $('#quizError').textContent = 'Isi jawaban angka dulu';
+    $('#quizError').style.display = '';
+    $('#quizAnswer').classList.add('wrong');
+    setTimeout(() => $('#quizAnswer').classList.remove('wrong'), 300);
+    return;
+  }
+  if (userAns === pendingModeToggle.answer) {
+    // Correct — execute pending toggle
+    const cb = pendingModeToggle.onSuccess;
+    closeQuizGate();
+    if (cb) await cb();
+  } else {
+    $('#quizError').textContent = '❌ Jawaban salah. Coba lagi atau batal.';
+    $('#quizError').style.display = '';
+    $('#quizAnswer').classList.add('wrong');
+    setTimeout(() => $('#quizAnswer').classList.remove('wrong'), 300);
+    $('#quizAnswer').select();
+  }
+}
+
+// ============================================================
+// v3.11.2 (Issue 3): Hide tiles support + tabbar drag-drop
+// ============================================================
+function applyHideTiles() {
+  const s = currentVault?.settings || {};
+  const tiles = document.querySelector('.tiles');
+  if (tiles) tiles.classList.toggle('hidden-tiles', !!s.hideHeroTiles);
+}
+
+async function applyTabOrder() {
+  const s = currentVault?.settings || {};
+  const order = s.tabOrder || [];
+  if (!Array.isArray(order) || order.length === 0) return; // default order
+  const tabbar = document.querySelector('.tabbar');
+  if (!tabbar) return;
+  const tabMap = {
+    home: document.getElementById('tabHome'),
+    notes: document.getElementById('tabNotes'),
+    tools: document.getElementById('tabTools')
+  };
+  // Reorder DOM
+  for (const id of order) {
+    if (tabMap[id]) tabbar.appendChild(tabMap[id]);
+  }
+}
+
+function setupTabDragDrop() {
+  const tabs = ['tabHome', 'tabNotes', 'tabTools'];
+  tabs.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', (e) => {
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      tabs.forEach(t => document.getElementById(t)?.classList.remove('drag-over'));
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const targetId = id;
+      if (draggedId === targetId) return;
+      // Get current order
+      const currentOrder = currentVault?.settings?.tabOrder || ['home', 'notes', 'tools'];
+      const idx = currentOrder.indexOf(draggedId.replace('tab', '').toLowerCase());
+      const targetIdx = currentOrder.indexOf(targetId.replace('tab', '').toLowerCase());
+      if (idx < 0 || targetIdx < 0) return;
+      const newOrder = [...currentOrder];
+      newOrder.splice(idx, 1);
+      newOrder.splice(targetIdx, 0, draggedId.replace('tab', '').toLowerCase());
+      await saveSettings({ tabOrder: newOrder });
+      await refreshVault();
+      applyTabOrder();
+      toast('↕ Urutan tab diperbarui');
+    });
+  });
+}
+
 function renderToolStubPage(B, k, name) {
   // v3.7: Halaman stub sekarang punya UI yang lebih kaya untuk Backup & Tanya AI
   if (k === 'backup') {
@@ -3969,6 +4591,18 @@ async function renderKontrolSitusPage(B) {
       +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, tapi sembunyikan video non-ramah-anak. Hanya video edukasi/kartun/lagu anak yang tampil. Shorts juga di-hide.</div></div>'
       +       '<button class="ks-toggle' + (s.contentGuardKidModeFilter === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle Mode Anak"><i></i></button>'
       +     '</div>'
+      // v3.11.2 (Issue 2): NEW — Profanity filter mode (ganti logika "mode anak" jadi nuclear profanity)
+      // User minta: "mode anak (filter konten) itu logikanya diganti menjadi seperti 'nuclear mode'
+      // tapi memblokir kata kata tidak sopan seperti anjir, cok, dsb."
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
+      +       '<div><b>🤬 Filter Kata Kasar (Nuclear)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Blokir kata kasar Indonesia (anjir, cok, bangsat, kontol, dll.) di SEMUA halaman web. Kata kasar di-mask dengan ***. Anak tidak bisa sembarang off — perlu jawab kuis matematika.</div></div>'
+      +       '<button class="ks-toggle' + (s.contentGuardProfanityMode === true ? ' on' : '') + '" id="ksProfanityToggle" aria-label="Toggle Profanity Filter"><i></i></button>'
+      +     '</div>'
+      +     (s.contentGuardProfanityMode === true ? (
+          '<div class="krow" style="padding:6px 0 0 24px;font-size:11px;color:var(--text-2)">' +
+          '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ksProfanityMask" ' + (s.contentGuardProfanityMask !== false ? 'checked' : '') + ' style="accent-color:var(--primary)" /> Mask kata kasar dengan *** (vs hide elemen)</label>' +
+          '</div>'
+        ) : '')
       +   '</div>'
       +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Matikan panel mengambang supaya anak tidak bisa toggle-off Guardian dari halaman. Kontrol tetap bisa diakses lewat popup RecallFox (hanya Anda yang tahu).</p>'
       + '</div>'
@@ -3995,10 +4629,25 @@ async function renderKontrolSitusPage(B) {
     });
 
     // v3.7.2 (Issue 6): Mode Anak — 1 klik toggle (YouTube Kids + Block Shorts sekaligus)
+    // v3.11.2 (Issue 2): Quiz gate saat MEMATIKAN mode (supaya anak ga bisa sembarang off)
     const kidModeBtn = $('#ksKidModeToggle');
     if (kidModeBtn) kidModeBtn.addEventListener('click', async () => {
       const newOn = !(s.contentGuardYoutubeKidsOnly === true);
-      // Pastikan contentGuardEnabled tetap on agar redirect jalan
+      if (!newOn && s.contentGuardQuizGate !== false) {
+        // Mematikan — perlu quiz gate
+        openQuizGate(async () => {
+          await saveSettings({
+            contentGuardEnabled: true,
+            contentGuardYoutubeKidsOnly: false,
+            contentGuardBlockShorts: false
+          });
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Mode Anak dimatikan');
+        });
+        return;
+      }
+      // Menyalakan — langsung
       await saveSettings({
         contentGuardEnabled: true,
         contentGuardYoutubeKidsOnly: newOn,
@@ -4023,15 +4672,82 @@ async function renderKontrolSitusPage(B) {
     });
 
     // v3.7.2 (Issue 6): Toggle individu — YouTube Kids Only
+    // v3.11.2 (Issue 2): Quiz gate saat MEMATIKAN
     const kidsOnlyBtn = $('#ksKidsOnlyToggle');
     if (kidsOnlyBtn) kidsOnlyBtn.addEventListener('click', async () => {
-      // v3.10.0 (Issue 2): Mode Anak pakai contentGuardKidModeFilter (no redirect)
       const newOn = !(s.contentGuardKidModeFilter === true);
+      if (!newOn && s.contentGuardQuizGate !== false) {
+        // Mematikan — perlu quiz gate
+        openQuizGate(async () => {
+          const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: false });
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Mode Anak dimatikan');
+        });
+        return;
+      }
+      // Menyalakan — langsung
       const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
       const finalOn = r?.enabled ?? newOn;
       await refreshVault();
       renderKontrolSitusPage(B);
       toast(finalOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak' : 'Mode Anak dimatikan');
+    });
+
+    // v3.11.2 (Issue 2): Profanity filter mode toggle (with quiz gate for off)
+    const profanityBtn = $('#ksProfanityToggle');
+    if (profanityBtn) profanityBtn.addEventListener('click', async () => {
+      const newOn = !(s.contentGuardProfanityMode === true);
+      if (!newOn && s.contentGuardQuizGate !== false) {
+        // Mematikan — perlu quiz gate
+        openQuizGate(async () => {
+          await saveSettings({
+            contentGuardEnabled: true,
+            contentGuardProfanityMode: false
+          });
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          // Broadcast to content scripts to stop filtering
+          try {
+            const tabs = await browser.tabs.query({});
+            for (const t of tabs) {
+              browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+            }
+          } catch (e) {}
+          toast('🤬 Filter kata kasar dimatikan');
+        });
+        return;
+      }
+      // Menyalakan — langsung
+      await saveSettings({
+        contentGuardEnabled: true,
+        contentGuardProfanityMode: newOn
+      });
+      await refreshVault();
+      renderKontrolSitusPage(B);
+      // Broadcast to content scripts
+      try {
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) {
+          browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        }
+      } catch (e) {}
+      toast(newOn ? '🤬 Filter Kata Kasar AKTIF — kata kasar di-mask di semua halaman' : 'Filter kata kasar dimatikan');
+    });
+
+    // v3.11.2 (Issue 2): Profanity mask option
+    const profanityMaskChk = $('#ksProfanityMask');
+    if (profanityMaskChk) profanityMaskChk.addEventListener('change', async (e) => {
+      await saveSettings({ contentGuardProfanityMask: e.target.checked });
+      await refreshVault();
+      // Broadcast
+      try {
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) {
+          browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        }
+      } catch (e) {}
+      toast(e.target.checked ? 'Kata kasar di-mask ***' : 'Kata kasar di-hide elemen');
     });
 
     // Add rule buttons (open same sheet)
@@ -4442,7 +5158,18 @@ async function init() {
   renderTools();
   await renderNotes();
 
+  // v3.11.2 (Issue 3): Apply hide-tiles + tab order
+  try { applyHideTiles(); } catch (e) {}
+  try { await applyTabOrder(); } catch (e) {}
+
   bindEvents();
+
+  // v3.11.2 (Issue 2): Bind quiz modal events
+  try { bindQuizModalEvents(); } catch (e) { console.warn('quiz modal bind failed:', e); }
+
+  // v3.11.2 (Issue 3): Setup tab drag-drop
+  try { setupTabDragDrop(); } catch (e) {}
+
   renderVault();
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
@@ -4465,6 +5192,21 @@ async function init() {
 
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
+}
+
+// v3.11.2 (Issue 2): Quiz modal event bindings
+function bindQuizModalEvents() {
+  $('#quizClose')?.addEventListener('click', closeQuizGate);
+  $('#quizCancel')?.addEventListener('click', closeQuizGate);
+  $('#quizSubmit')?.addEventListener('click', submitQuiz);
+  $('#quizAnswer')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitQuiz(); }
+    if (e.key === 'Escape') closeQuizGate();
+  });
+  // Click outside modal to close
+  $('#quizOverlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'quizOverlay') closeQuizGate();
+  });
 }
 
 function bindEvents() {

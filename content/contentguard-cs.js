@@ -1441,9 +1441,104 @@
           if (isYouTube) hideYouTubeNegative();
           if (isX) hideXNegative();
         }
+        // v3.11.2 (Issue 2): Profanity filter — apply/remove di SEMUA halaman
+        applyProfanityFilter();
       });
       return false;
     }
+
+    // v3.11.2 (Issue 2): Profanity filter — import & apply
+    // Berjalan di SEMUA halaman web (bukan cuma YouTube/X) karena profanity bisa muncul
+    // di komentar, judul, deskripsi, chat, dll.
+    let profanityObserver = null;
+    async function applyProfanityFilter() {
+      try {
+        const settings = await loadSettings();
+        const profanityOn = settings?.contentGuardProfanityMode === true;
+        // Hentikan observer lama
+        if (profanityObserver) {
+          profanityObserver.disconnect();
+          profanityObserver = null;
+        }
+        // Unmask elemen yang sudah di-mask (kalau mode off)
+        document.querySelectorAll('[data-rf-prof-masked="1"]').forEach(el => {
+          const orig = el.dataset.rfProfOrig;
+          if (orig) {
+            el.textContent = orig;
+            delete el.dataset.rfProfOrig;
+          }
+          delete el.dataset.rfProfMasked;
+        });
+        if (!profanityOn) return;
+        // Import profanity module
+        const { containsProfanity, maskProfanity } = await import(browser.runtime.getURL('lib/profanity.js'));
+        // Scan text nodes
+        const scanNode = (node) => {
+          if (!node || node.nodeType !== Node.TEXT_NODE) return;
+          const text = node.textContent;
+          if (!text || text.trim().length < 3) return;
+          if (!containsProfanity(text)) return;
+          // Mask
+          const masked = maskProfanity(text);
+          if (masked !== text) {
+            // Save original + apply mask
+            const parent = node.parentElement;
+            if (parent && !parent.dataset.rfProfMasked) {
+              parent.dataset.rfProfMasked = '1';
+              parent.dataset.rfProfOrig = text;
+              parent.textContent = masked;
+            }
+          }
+        };
+        const scanAll = () => {
+          // Walk text nodes di body
+          const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: (n) => {
+                // Skip script, style, textarea, input
+                const p = n.parentElement;
+                if (!p) return NodeFilter.FILTER_REJECT;
+                const tag = p.tagName;
+                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEXTAREA' || tag === 'INPUT') {
+                  return NodeFilter.FILTER_REJECT;
+                }
+                if (p.dataset.rfProfMasked) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            }
+          );
+          const nodes = [];
+          let cur;
+          while ((cur = walker.nextNode())) nodes.push(cur);
+          for (const n of nodes) scanNode(n);
+        };
+        // Initial scan
+        scanAll();
+        // Observe DOM changes
+        profanityObserver = new MutationObserver((mutations) => {
+          for (const m of mutations) {
+            for (const node of m.addedNodes) {
+              if (node.nodeType === Node.TEXT_NODE) {
+                scanNode(node);
+              } else if (node.nodeType === Node.ELEMENT_NODE && !node.dataset?.rfProfMasked) {
+                // Scan descendants
+                const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                let cur;
+                while ((cur = walker.nextNode())) scanNode(cur);
+              }
+            }
+          }
+        });
+        profanityObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+      } catch (e) {
+        console.warn('[RecallFox] Profanity filter error:', e.message);
+      }
+    }
+
+    // v3.11.2 (Issue 2): Run profanity filter on load (kalau enabled)
+    applyProfanityFilter();
 
     if (msg?.type === 'CG_RESCAN_NOW') {
       // Reset hidden flags lalu re-scan

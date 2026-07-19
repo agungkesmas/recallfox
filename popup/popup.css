@@ -85,10 +85,12 @@ body.rf-sidebar-body .popup{
 
 /* Status strip */
 .strip{margin:0 12px 10px;flex:none}
-.strip-bar{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 10px;font-size:11px;color:var(--text-2);cursor:pointer;transition:.15s;user-select:none}
+/* v3.11.2 (Issue 1/2): FIX wrap — sebelumnya strip-bar bisa overflow di narrow width,
+   menyebabkan cell collide. Sekarang pakai flex-wrap + min-width:0 supaya cell bisa shrink. */
+.strip-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 10px;font-size:11px;color:var(--text-2);cursor:pointer;transition:.15s;user-select:none;min-width:0}
 .strip-bar:hover{border-color:var(--border-strong);background:var(--surface-2)}
-.strip-cell{display:flex;align-items:center;gap:5px;white-space:nowrap;min-width:0}
-.strip-cell b{color:var(--text);font-weight:600}
+.strip-cell{display:flex;align-items:center;gap:5px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.strip-cell b{color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis}
 .strip-sep{width:1px;height:12px;background:var(--border);flex:none}
 .strip-chev{margin-left:auto;color:var(--muted);transition:.2s;flex:none}
 .strip.open .strip-chev{transform:rotate(180deg)}
@@ -657,4 +659,127 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
   .ks-primary{margin-top:12px;display:inline-block}
   .ks-form-row{grid-template-columns:1fr}
 }
+
+/* ============================================================
+   v3.11.2 (Issue 1): Pomodoro + Music Player
+   ============================================================ */
+.pomodoro-page{padding:14px;display:flex;flex-direction:column;gap:12px}
+.pomodoro-card{background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border-radius:var(--r-lg);padding:20px;text-align:center;box-shadow:var(--sh-md)}
+.pomodoro-phase{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.85;margin-bottom:8px}
+.pomodoro-time{font-size:56px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:-.02em}
+.pomodoro-stats{font-size:11px;opacity:.85;margin-top:10px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+.pomodoro-stats span b{font-weight:700;color:#fbbf24}
+.pomodoro-actions{display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.pomodoro-actions button{min-width:60px;padding:8px 14px;border-radius:var(--r-full);font-size:12px;font-weight:700;border:none;cursor:pointer;transition:.15s}
+.pomodoro-actions .btn-pom-play{background:#fff;color:#1e3a8a}
+.pomodoro-actions .btn-pom-play:hover{background:#e0e7ff;transform:translateY(-1px)}
+.pomodoro-actions .btn-pom-secondary{background:rgba(255,255,255,.18);color:#fff}
+.pomodoro-actions .btn-pom-secondary:hover{background:rgba(255,255,255,.28)}
+.pomodoro-settings{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.pomodoro-settings .form-field{margin:0}
+.pomodoro-settings label{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+.pomodoro-settings input{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;padding:6px 8px;outline:none}
+.pomodoro-settings input:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+/* Music player */
+.music-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px}
+.music-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;font-weight:700}
+.music-input-row{display:flex;gap:6px;margin-bottom:10px}
+.music-input-row input{flex:1;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font:inherit;font-size:12px;padding:7px 10px;outline:none}
+.music-input-row input:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.music-input-row button{padding:7px 14px;background:var(--primary);color:#fff;border:none;border-radius:8px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.music-input-row button:hover{background:var(--primary-hover)}
+.music-embed{aspect-ratio:16/9;background:var(--surface-2);border-radius:8px;overflow:hidden;margin-bottom:10px;display:grid;place-items:center;color:var(--muted);font-size:11px}
+.music-embed iframe{width:100%;height:100%;border:none}
+.music-list-section{margin-top:10px}
+.music-list-section h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px;font-weight:700}
+.music-list{display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto}
+.music-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;background:var(--surface-2);cursor:pointer;transition:.12s}
+.music-item:hover{border-color:var(--border-strong);background:var(--surface)}
+.music-item-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.music-item-actions{display:flex;gap:3px}
+.music-item-actions button{width:22px;height:22px;border-radius:5px;border:none;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center;padding:0;transition:.12s}
+.music-item-actions button:hover{background:var(--surface);color:var(--primary)}
+.music-item-actions button svg{width:12px;height:12px}
+.music-empty{padding:12px;text-align:center;color:var(--muted);font-size:11px}
+
+/* ============================================================
+   v3.11.2 (Issue 3): Kid-safe Sites page
+   ============================================================ */
+.kidsafe-page{padding:14px;display:flex;flex-direction:column;gap:10px}
+.kidsafe-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kidsafe-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:10px;display:flex;flex-direction:column;gap:6px;transition:.15s;cursor:pointer;text-decoration:none;color:inherit}
+.kidsafe-card:hover{border-color:var(--primary);background:var(--primary-soft);transform:translateY(-1px);box-shadow:var(--sh-sm)}
+.kidsafe-card.hidden-site{opacity:.45;text-decoration:line-through}
+.kidsafe-card.pinned-site{border-left:3px solid var(--amber)}
+.kidsafe-card-top{display:flex;align-items:center;gap:6px}
+.kidsafe-card-name{font-size:12px;font-weight:700;color:var(--text);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kidsafe-card-cat{font-size:9.5px;padding:2px 6px;border-radius:5px;font-weight:700;text-transform:uppercase;background:var(--surface-2);color:var(--muted)}
+.kidsafe-card-cat.game{background:#dbeafe;color:#1e40af}
+.kidsafe-card-cat.video{background:#fce7f3;color:#9d174d}
+.kidsafe-card-cat.learn{background:#d1fae5;color:#065f46}
+.kidsafe-card-cat.read{background:#fef3c7;color:#92400e}
+.kidsafe-card-desc{font-size:10.5px;color:var(--muted);line-height:1.4}
+.kidsafe-card-meta{display:flex;gap:6px;font-size:9.5px;color:var(--muted);align-items:center}
+.kidsafe-card-meta .lang{padding:1px 5px;border-radius:4px;background:var(--surface-2);font-weight:600;text-transform:uppercase}
+.kidsafe-card-meta .nologin{color:var(--green);font-weight:600}
+.kidsafe-card-actions{display:flex;gap:4px;margin-top:4px}
+.kidsafe-card-actions button{flex:1;padding:4px 6px;font-size:10px;font-weight:600;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-2);cursor:pointer;transition:.12s}
+.kidsafe-card-actions button:hover{background:var(--surface-2);border-color:var(--border-strong)}
+.kidsafe-card-actions button.danger:hover{background:var(--danger-soft);color:var(--danger);border-color:var(--danger)}
+.kidsafe-add-form{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px;display:flex;flex-direction:column;gap:6px}
+.kidsafe-add-form h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
+.kidsafe-add-form .form-row{display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px}
+.kidsafe-add-form input,.kidsafe-add-form select{border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;background:var(--surface-2);color:var(--text)}
+.kidsafe-add-form input:focus,.kidsafe-add-form select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.kidsafe-filter-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.kidsafe-filter-row select{flex:1;min-width:80px;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font:inherit;font-size:11px;background:var(--surface);color:var(--text)}
+
+/* ============================================================
+   v3.11.2 (Issue 3): Drag-drop reorder for tools + tabs
+   ============================================================ */
+.tool.dragging{opacity:.5;border-style:dashed;border-color:var(--primary)}
+.tool.drag-over{border-color:var(--primary);background:var(--primary-soft);transform:scale(1.02)}
+.tool-drag-handle{cursor:grab;flex:none;color:var(--muted);display:grid;place-items:center;width:18px;height:18px}
+.tool-drag-handle:active{cursor:grabbing}
+.tool-drag-handle svg{width:12px;height:12px}
+.tabbtn.dragging{opacity:.5}
+.tabbtn.drag-over{background:var(--primary-soft);outline:2px dashed var(--primary)}
+
+/* ============================================================
+   v3.11.2 (Issue 2): Quiz gate modal (matematika untuk off mode)
+   ============================================================ */
+.quiz-modal{max-width:340px;text-align:center}
+.quiz-modal .modal-header h3{color:var(--amber)}
+.quiz-question{font-size:24px;font-weight:750;text-align:center;padding:20px 0;background:var(--surface-2);border-radius:8px;margin:10px 0}
+.quiz-input{width:100%;border:2px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:24px;font-weight:700;text-align:center;padding:10px;outline:none;transition:.15s}
+.quiz-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+.quiz-input.wrong{border-color:var(--danger);animation:shake .3s}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.quiz-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+.quiz-error{font-size:11px;color:var(--danger);margin-top:8px;font-weight:600}
+
+/* ============================================================
+   v3.11.2 (Issue 1): Pomodoro mini widget in strip
+   ============================================================ */
+.pomodoro-strip-cell{display:flex;align-items:center;gap:5px;background:var(--primary-soft);color:var(--primary);padding:2px 8px;border-radius:var(--r-full);font-weight:700;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.pomodoro-strip-cell.running{background:var(--green-soft);color:var(--green);animation:pulse 2s infinite}
+.pomodoro-strip-cell.break-phase{background:var(--amber-soft);color:var(--amber)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+/* ============================================================
+   v3.11.2 (Issue 3): Hidden tiles support
+   ============================================================ */
+.tiles.hidden-tiles{display:none}
+
+/* ============================================================
+   v3.11.2 (Issue 2): Profanity filter mode toggle UI
+   ============================================================ */
+.ks-prof-card{background:linear-gradient(135deg,#7c2d12,#9a3412);color:#fff7ed;border-radius:var(--r-md);padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:.15s;border:1px solid transparent}
+.ks-prof-card:hover{transform:translateY(-1px);box-shadow:var(--sh-sm)}
+.ks-prof-card.on{background:linear-gradient(135deg,#065f46,#047857);color:#ecfdf5}
+.ks-prof-icon{font-size:22px;flex:none}
+.ks-prof-main{flex:1;min-width:0}
+.ks-prof-title{font-size:12.5px;font-weight:700}
+.ks-prof-desc{font-size:10.5px;opacity:.85;margin-top:1px;line-height:1.4}
+.ks-prof-card .ks-toggle{flex:none}
 

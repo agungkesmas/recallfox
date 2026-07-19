@@ -258,6 +258,29 @@
 
 <input type="file" id="screenshotFileInput" accept="image/*" style="display:none" />
 
+<!-- v3.11.2 (Issue 2): Quiz gate modal — kuis matematika untuk mematikan mode anak/profanity -->
+<div id="quizOverlay" class="modal-overlay" style="display:none;">
+  <div class="modal quiz-modal">
+    <div class="modal-header">
+      <h3>🔐 Verifikasi Dewasa</h3>
+      <button id="quizClose" class="modal-close" title="Batal">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--text-2);line-height:1.5;margin-bottom:8px">Untuk mematikan mode ini, jawab pertanyaan matematika berikut (supaya anak-anak tidak bisa sembarang off):</div>
+      <div class="quiz-question" id="quizQuestion">— + — = ?</div>
+      <input type="number" class="quiz-input" id="quizAnswer" placeholder="?" autocomplete="off" />
+      <div class="quiz-hint" id="quizHint">Hint: jumlahkan kedua angka di atas</div>
+      <div class="quiz-error" id="quizError" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="quizCancel" class="btn btn-g">Batal</button>
+      <button id="quizSubmit" class="btn btn-p">Verifikasi</button>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="popup.js"></script>
 </body>
 </html>

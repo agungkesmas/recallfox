@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.11.1",
+  "version": "3.11.2",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/recallfox/recallfox",
@@ -181,7 +181,10 @@
         "contentguard/takeover.js",
         "contentguard/blocked.html",
         "contentguard/blocked.css",
-        "contentguard/blocked.js"
+        "contentguard/blocked.js",
+        "lib/profanity.js",
+        "lib/pomodoro.js",
+        "lib/kidsafe-sites.js"
       ],
       "matches": [
         "<all_urls>"
