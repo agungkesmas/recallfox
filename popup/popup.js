@@ -930,10 +930,19 @@ function openBundleEditorSheet(bundleId) {
 
     function renderList() {
       let html = '';
-      // Items
-      const filtered = activeFilter === 'all' || activeFilter === 'note'
-        ? allCandidates
-        : allCandidates.filter(it => it.type === activeFilter);
+      // v3.11.2-fix (Sesi 3): FIX bug filter "Catatan" — saat user klik chip "Catatan",
+      // JANGAN tampilkan item apapun, hanya notes yang tampil di bawah.
+      // Sebelumnya: kondisi `activeFilter === 'all' || activeFilter === 'note'` masih
+      // menampilkan SEMUA item saat filter='note'. User feedback: "ketika filter per
+      // type diklik catatan, itu tidak terfilter, semuanya muncul harusnya catatan doang."
+      let filtered;
+      if (activeFilter === 'all') {
+        filtered = allCandidates;
+      } else if (activeFilter === 'note') {
+        filtered = []; // hanya notes yang tampil di bawah
+      } else {
+        filtered = allCandidates.filter(it => it.type === activeFilter);
+      }
       for (const it of filtered) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedSet.has(it.id) ? ' checked' : '';
@@ -1608,10 +1617,16 @@ function saveBundleSheet() {
 
     function renderList() {
       let html = '';
-      // Items (filter sesuai activeFilter, "all" = tampilkan semua)
-      const filteredItems = activeFilter === 'all' || activeFilter === 'note'
-        ? itemCandidates
-        : itemCandidates.filter(it => it.type === activeFilter);
+      // v3.11.2-fix (Sesi 3): FIX bug filter "Catatan" — saat user klik chip "Catatan",
+      // JANGAN tampilkan item apapun, hanya notes yang tampil di bawah.
+      let filteredItems;
+      if (activeFilter === 'all') {
+        filteredItems = itemCandidates;
+      } else if (activeFilter === 'note') {
+        filteredItems = []; // hanya notes yang tampil di bawah
+      } else {
+        filteredItems = itemCandidates.filter(it => it.type === activeFilter);
+      }
       for (const it of filteredItems) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedItems.has(it.id) ? ' checked' : '';
@@ -2370,10 +2385,13 @@ const TOOLS = [
   ['backup', 'Backup', 'Ekspor terenkripsi AES + GDrive', ICONS.archive],
   ['keys', 'Pintasan', 'Semua shortcut', ICONS.kb]
 ];
-// v3.11.2 (Issue 3): Default tool order (used when no custom order set)
+// v3.11.2 (Issue 3) + v3.11.2-fix (Sesi 3): Default tool order (used when no custom order set).
+// v3.11.2-fix: RENAME dari `getEffectiveTools` ke `getOrderedToolbarTools` untuk avoid
+// konflik dengan import `getEffectiveTools` dari lib/ai-tools.js (line 23). Sebelumnya,
+// deklarasi lokal menimpa import → JS_SYNTAX_ERROR di web-ext lint → addon gagal load.
 const DEFAULT_TOOL_ORDER = TOOLS.map(t => t[0]);
 
-async function getEffectiveTools() {
+async function getOrderedToolbarTools() {
   // v3.11.2 (Issue 3): Apply custom tool order if set
   const order = currentVault?.settings?.toolOrder || [];
   if (!Array.isArray(order) || order.length === 0) return TOOLS;
@@ -2392,8 +2410,9 @@ async function getEffectiveTools() {
 }
 
 function renderTools() {
-  // v3.11.2 (Issue 3): Use effective order + add drag handle for reorder
-  getEffectiveTools().then(effectiveTools => {
+  // v3.11.2 (Issue 3) + v3.11.2-fix (Sesi 3): Use effective order + add drag handle for reorder.
+  // V3.11.2-fix: pakai getOrderedToolbarTools (bukan getEffectiveTools yang konflik dengan import).
+  getOrderedToolbarTools().then(effectiveTools => {
     $('#toolgrid').innerHTML = effectiveTools.map(t => '<button class="tool' + (t[4] ? ' ' + t[4] : '') + '" data-tool="' + t[0] + '" draggable="true"><div class="tool-drag-handle" title="Tarik untuk urutan" draggable="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></div><div class="tool-ic">' + t[3] + '</div><div><div class="tool-n">' + t[1] + '</div><div class="tool-d">' + t[2] + '</div></div></button>').join('');
     $$('#toolgrid .tool').forEach(t => {
       t.addEventListener('click', (e) => {
@@ -4470,18 +4489,15 @@ async function renderKontrolSitusPage(B) {
 
       // Home view
       + '<div class="ks-view' + (activeTab === 'home' ? ' active' : '') + '" id="ksViewHome">'
-      // v3.7.2 (Issue 6): Kartu Mode Anak — 1 klik untuk amankan laptop saat dipinjam anak.
-      // Mengaktifkan: contentGuardYoutubeKidsOnly + contentGuardBlockShorts.
-      +   '<div class="card" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;margin-bottom:12px">'
-      +     '<div style="display:flex;align-items:center;gap:12px">'
-      +       '<div style="font-size:32px">👶</div>'
-      +       '<div style="flex:1">'
-      +         '<div style="font-size:14px;font-weight:700">Mode Anak</div>'
-      +         '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">Arahkan semua YouTube ke YouTube Kids & blokir YouTube Shorts. Aktifkan saat laptop dipinjam anak — 1 klik.</div>'
-      +       '</div>'
-      +       '<button class="ks-toggle' + (s.contentGuardYoutubeKidsOnly === true ? ' on' : '') + '" id="ksKidModeToggle" aria-label="Toggle Mode Anak" style="flex:none"><i></i></button>'
-      +     '</div>'
-      +   '</div>'
+      // v3.11.2-fix (Sesi 3): Kartu "Mode Anak" lama (redirect youtubekids) DIHAPUS.
+      // User feedback Sesi 1: "mode anak memaksa masuk ke youtube kids ya, hilangkan saja ya
+      // karena ribet, diganti dengan konten islami anak atau positif lainnya yang paling
+      // terkenal di youtube, yang lainnya block sementara jika di on kan."
+      // V3.11.2 tidak menghapus kartu ini (regression). Fix sekarang: hapus total.
+      // Mode Anak sekarang 100% pakai contentGuardKidModeFilter (filter di youtube.com
+      // biasa, hide non-kid content) — toggle ada di tab "Pengaturan" dengan desc jelas.
+      // V3.11.2-fix juga: tambah link/info ke "Filter Kata Kasar (Nuclear)" yang
+      // adalah pengganti logika "mode anak (filter konten)" sesuai request Sesi 2.
       +   '<div class="ks-intro">'
       +     '<div><h2>Hapus elemen yang mengganggu</h2><p>Tutup komentar, iklan, rekomendasi, dan elemen UI yang tidak perlu di situs mana pun.</p></div>'
       +     '<button class="ks-primary" id="ksAddRule">+ Aturan baru</button>'
@@ -4628,34 +4644,30 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🛡 Kontrol Situs diaktifkan' : 'Kontrol Situs dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Mode Anak — 1 klik toggle (YouTube Kids + Block Shorts sekaligus)
-    // v3.11.2 (Issue 2): Quiz gate saat MEMATIKAN mode (supaya anak ga bisa sembarang off)
+    // v3.7.2 (Issue 6) → v3.11.2-fix (Sesi 3): Kartu "Mode Anak" (redirect youtubekids) dihapus.
+    // Tombol ksKidModeToggle tidak ada lagi di DOM. Handler ini di-skip otomatis kalau
+    // elemen tidak ditemukan (defensive — tidak error). Sengaja tidak dihapus total agar
+    // tidak break jika user masih punya cache HTML lama.
+    // V3.11.2-fix: Alihkan ke filter mode (tidak redirect) supaya behavior konsisten
+    // dengan toggle "Mode Anak (Filter Konten)" di tab Pengaturan.
     const kidModeBtn = $('#ksKidModeToggle');
     if (kidModeBtn) kidModeBtn.addEventListener('click', async () => {
-      const newOn = !(s.contentGuardYoutubeKidsOnly === true);
+      const newOn = !(s.contentGuardKidModeFilter === true);
       if (!newOn && s.contentGuardQuizGate !== false) {
-        // Mematikan — perlu quiz gate
+        // Mematikan — perlu quiz gate (v3.11.2 Issue 2)
         openQuizGate(async () => {
-          await saveSettings({
-            contentGuardEnabled: true,
-            contentGuardYoutubeKidsOnly: false,
-            contentGuardBlockShorts: false
-          });
+          const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: false });
           await refreshVault();
           renderKontrolSitusPage(B);
           toast('Mode Anak dimatikan');
         });
         return;
       }
-      // Menyalakan — langsung
-      await saveSettings({
-        contentGuardEnabled: true,
-        contentGuardYoutubeKidsOnly: newOn,
-        contentGuardBlockShorts: newOn
-      });
+      // Menyalakan — langsung (pakai filter mode, bukan redirect)
+      const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast(newOn ? '👶 Mode Anak AKTIF — YouTube → Kids, Shorts diblokir' : 'Mode Anak dimatikan');
+      toast(newOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak + islami' : 'Mode Anak dimatikan');
     });
 
     // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja

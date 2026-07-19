@@ -1447,10 +1447,33 @@
       return false;
     }
 
-    // v3.11.2 (Issue 2): Profanity filter — import & apply
-    // Berjalan di SEMUA halaman web (bukan cuma YouTube/X) karena profanity bisa muncul
-    // di komentar, judul, deskripsi, chat, dll.
+    // v3.11.2 (Issue 2) + v3.11.2-fix (Sesi 3): Profanity filter — import & apply
+    // v3.11.2-fix: REWRITE untuk fix 3 bug kritis:
+    //   1. parent.textContent = masked → HAPUS semua children element (break UI permanen).
+    //      Fix: langsung set nodeValue di text node, TIDAK menyentuh parent.
+    //   2. MutationObserver dengan subtree:true + characterData:true di document.body
+    //      → trigger callback untuk SETIAP perubahan DOM → performance terrible,
+    //      bisa freeze browser di YouTube dengan React re-render.
+    //      Fix: subtree:true tanpa characterData, debounce 250ms, hanya scan addedNodes.
+    //   3. Auto-run saat content script load → overhead di setiap halaman YouTube/X.
+    //      Fix: hanya apply saat pesan CG_SETTINGS_UPDATED diterima + mode ON.
+    // Catatan: content script ini hanya loaded di YouTube/X/Twitter (lihat manifest.json),
+    // jadi "SEMUA halaman web" di comment lama misleading.
     let profanityObserver = null;
+    let profanityCache = null; // cached import { containsProfanity, maskProfanity }
+    let profanityDebounceTimer = null;
+
+    async function getProfanityFns() {
+      if (profanityCache) return profanityCache;
+      try {
+        profanityCache = await import(browser.runtime.getURL('lib/profanity.js'));
+        return profanityCache;
+      } catch (e) {
+        console.warn('[RecallFox] Profanity module load failed:', e.message);
+        return null;
+      }
+    }
+
     async function applyProfanityFilter() {
       try {
         const settings = await loadSettings();
@@ -1460,34 +1483,45 @@
           profanityObserver.disconnect();
           profanityObserver = null;
         }
-        // Unmask elemen yang sudah di-mask (kalau mode off)
+        // Unmask text nodes yang sudah di-mask (kalau mode off)
         document.querySelectorAll('[data-rf-prof-masked="1"]').forEach(el => {
+          // Cari semua text node di dalam el yang punya dataset.rfProfOrig
+          // dan restore. Karena kita simpan orig di dataset el (parent), kita
+          // restore dengan mencari text node pertama yang punya marker.
           const orig = el.dataset.rfProfOrig;
-          if (orig) {
-            el.textContent = orig;
+          if (orig !== undefined) {
+            // v3.11.2-fix: Cari text node child pertama, set nodeValue ke orig.
+            // JANGAN pakai textContent (akan hapus children element lain).
+            const firstText = el.firstChild;
+            if (firstText && firstText.nodeType === Node.TEXT_NODE) {
+              firstText.nodeValue = orig;
+            }
             delete el.dataset.rfProfOrig;
           }
           delete el.dataset.rfProfMasked;
         });
         if (!profanityOn) return;
         // Import profanity module
-        const { containsProfanity, maskProfanity } = await import(browser.runtime.getURL('lib/profanity.js'));
-        // Scan text nodes
+        const fns = await getProfanityFns();
+        if (!fns) return;
+        const { containsProfanity, maskProfanity } = fns;
+        // v3.11.2-fix: Scan text node — langsung manipulasi nodeValue, BUKAN parent.textContent
         const scanNode = (node) => {
           if (!node || node.nodeType !== Node.TEXT_NODE) return;
+          // Skip kalau parent sudah di-mask (anti double-mask)
+          const parent = node.parentElement;
+          if (!parent || parent.dataset.rfProfMasked === '1') return;
           const text = node.textContent;
           if (!text || text.trim().length < 3) return;
           if (!containsProfanity(text)) return;
           // Mask
           const masked = maskProfanity(text);
           if (masked !== text) {
-            // Save original + apply mask
-            const parent = node.parentElement;
-            if (parent && !parent.dataset.rfProfMasked) {
-              parent.dataset.rfProfMasked = '1';
-              parent.dataset.rfProfOrig = text;
-              parent.textContent = masked;
-            }
+            // v3.11.2-fix: Simpan original di dataset parent, tapi SET nodeValue di text node.
+            // JANGAN pakai parent.textContent = masked (itu hapus children element!).
+            parent.dataset.rfProfMasked = '1';
+            parent.dataset.rfProfOrig = text;
+            node.nodeValue = masked;
           }
         };
         const scanAll = () => {
@@ -1504,7 +1538,8 @@
                 if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEXTAREA' || tag === 'INPUT') {
                   return NodeFilter.FILTER_REJECT;
                 }
-                if (p.dataset.rfProfMasked) return NodeFilter.FILTER_REJECT;
+                if (p.dataset.rfProfMasked === '1') return NodeFilter.FILTER_REJECT;
+                if (p.isContentEditable) return NodeFilter.FILTER_REJECT;
                 return NodeFilter.FILTER_ACCEPT;
               }
             }
@@ -1512,33 +1547,60 @@
           const nodes = [];
           let cur;
           while ((cur = walker.nextNode())) nodes.push(cur);
-          for (const n of nodes) scanNode(n);
+          // v3.11.2-fix: Batch scan dengan requestAnimationFrame untuk avoid blocking
+          // dalam halaman dengan ribuan text node (mis. YouTube search results).
+          const scanBatch = (startIdx) => {
+            const endIdx = Math.min(startIdx + 50, nodes.length);
+            for (let i = startIdx; i < endIdx; i++) scanNode(nodes[i]);
+            if (endIdx < nodes.length) {
+              requestAnimationFrame(() => scanBatch(endIdx));
+            }
+          };
+          scanBatch(0);
         };
-        // Initial scan
-        scanAll();
-        // Observe DOM changes
+        // Initial scan (debounced supaya tidak trigger di tengah load halaman)
+        if (profanityDebounceTimer) clearTimeout(profanityDebounceTimer);
+        profanityDebounceTimer = setTimeout(scanAll, 300);
+        // v3.11.2-fix: Observe DOM changes — HANYA childList + subtree (BUKAN characterData).
+        // characterData trigger untuk setiap text change → infinite loop karena kita
+        // sendiri mengubah nodeValue (yang trigger characterData lagi).
+        // Debounce 250ms untuk batch multiple mutations.
+        let pendingNodes = [];
+        const flushPending = () => {
+          profanityDebounceTimer = null;
+          const toScan = pendingNodes;
+          pendingNodes = [];
+          for (const node of toScan) {
+            if (node.nodeType === Node.TEXT_NODE) {
+              scanNode(node);
+            } else if (node.nodeType === Node.ELEMENT_NODE && !node.dataset?.rfProfMasked) {
+              const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+              let cur;
+              while ((cur = walker.nextNode())) scanNode(cur);
+            }
+          }
+        };
         profanityObserver = new MutationObserver((mutations) => {
           for (const m of mutations) {
             for (const node of m.addedNodes) {
-              if (node.nodeType === Node.TEXT_NODE) {
-                scanNode(node);
-              } else if (node.nodeType === Node.ELEMENT_NODE && !node.dataset?.rfProfMasked) {
-                // Scan descendants
-                const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-                let cur;
-                while ((cur = walker.nextNode())) scanNode(cur);
-              }
+              pendingNodes.push(node);
             }
           }
+          if (pendingNodes.length > 0 && !profanityDebounceTimer) {
+            profanityDebounceTimer = setTimeout(flushPending, 250);
+          }
         });
-        profanityObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+        profanityObserver.observe(document.body, { childList: true, subtree: true });
       } catch (e) {
         console.warn('[RecallFox] Profanity filter error:', e.message);
       }
     }
 
-    // v3.11.2 (Issue 2): Run profanity filter on load (kalau enabled)
-    applyProfanityFilter();
+    // v3.11.2-fix (Sesi 3): JANGAN auto-run applyProfanityFilter saat content script load.
+    // Sebelumnya: applyProfanityFilter() dipanggil tanpa cek mode → overhead di setiap
+    // halaman YouTube/X bahkan saat profanity OFF. Sekarang: hanya apply saat pesan
+    // CG_SETTINGS_UPDATED diterima (sudah ada di handler di atas).
+    // applyProfanityFilter() — REMOVED, hanya dipanggil dari CG_SETTINGS_UPDATED handler.
 
     if (msg?.type === 'CG_RESCAN_NOW') {
       // Reset hidden flags lalu re-scan

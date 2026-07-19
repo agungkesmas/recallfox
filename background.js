@@ -2518,40 +2518,26 @@ async function checkContentGuard(tabId, url, tab) {
   const s = await getSettings();
   if (s.contentGuardEnabled === false) return;
 
-  // ===== v3.7.2 (Issue 6): Mode Anak — YouTube Kids Only =====
-  // DIPASANG SEBELUM anti-loop guard karena loop-safe:
-  // target redirect (youtubekids.com) dicek via isAlreadyKids, tidak akan redirect ulang.
+  // ===== v3.11.2-fix (Sesi 3): Mode Anak — REDIRECT YOUTUBEKIDS DIHAPUS =====
+  // Sebelumnya (v3.7.2 → v3.11.2): contentGuardYoutubeKidsOnly=true → redirect youtube.com
+  // ke youtubekids.com. User feedback Sesi 1: "ribet, hilangkan saja, diganti dengan konten
+  // islami anak atau positif lainnya yang paling terkenal, yang lainnya block sementara."
+  // V3.10.3 (fix saya) sudah hapus, tapi v3.11.0/1/2 base dari v3.10.2 → regression muncul lagi.
+  // V3.11.2-fix: hapus redirect block + one-time migration.
+  // Mode Anak sekarang 100% pakai contentGuardKidModeFilter (filter di youtube.com biasa,
+  // hide non-kid content). Lihat content/contentguard-cs.js → hideNonKidContent().
   if (s.contentGuardYoutubeKidsOnly === true) {
+    // One-time migration: paksa false permanen supaya redirect tidak pernah jalan lagi.
     try {
-      const u = new URL(url);
-      const host = u.hostname.toLowerCase();
-      const isYoutubeMain = host === 'youtube.com' ||
-                            host === 'www.youtube.com' ||
-                            host === 'm.youtube.com' ||
-                            host.endsWith('.youtube.com') ||
-                            host === 'youtube-nocookie.com' ||
-                            host.endsWith('.youtube-nocookie.com');
-      const isAlreadyKids = host === 'youtubekids.com' || host.endsWith('.youtubekids.com');
-      if (isYoutubeMain && !isAlreadyKids) {
-        const kidsUrl = 'https://www.youtubekids.com';
-        console.log('[RecallFox/CG] Kid Mode: redirect youtube.com → youtubekids.com');
-        // Tidak pakai redirectWithNotify anti-loop counter — pakai direct update + optional notif
-        try { await browser.tabs.update(tabId, { url: kidsUrl }); }
-        catch (e) { console.warn('[RecallFox/CG] Kid Mode tab update failed:', e.message); return; }
-        if (s.contentGuardNotifyOnBlock !== false) {
-          try {
-            await browser.notifications.create({
-              type: 'basic',
-              title: '👶 Mode Anak Aktif',
-              message: 'Navigasi YouTube dialihkan ke YouTube Kids.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
-              priority: 1
-            });
-          } catch (e) {}
-        }
-        return;
+      await saveSettings({ contentGuardYoutubeKidsOnly: false });
+      // Aktifkan filter mode sebagai pengganti supaya user tidak kehilangan proteksi.
+      if (s.contentGuardKidModeFilter !== true) {
+        await saveSettings({ contentGuardKidModeFilter: true, contentGuardBlockShorts: true });
       }
-    } catch (e) { /* URL parse error — skip */ }
+      console.log('[RecallFox/CG] v3.11.2-fix migration: YoutubeKidsOnly=true → KidModeFilter=true (no redirect)');
+    } catch (e) {
+      console.warn('[RecallFox/CG] v3.11.2-fix migration failed:', e.message);
+    }
   }
 
   // ===== v3.7.2 (Issue 6): Block YouTube Shorts navigation =====
