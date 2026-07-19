@@ -78,6 +78,10 @@ body.rf-sidebar-body .popup{
 .cmd input{flex:1;min-width:0;border:none;outline:none;background:none;color:var(--text);font-size:13px;height:100%}
 .cmd input::placeholder{color:var(--muted)}
 .cmd .hint{display:flex;gap:3px;flex:none}
+/* v3.11.0 (Issue 4): X clear button di search box */
+.search-clear{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;flex:none;padding:0;transition:.12s}
+.search-clear:hover{background:var(--surface-2);color:var(--text)}
+.search-clear svg{width:13px;height:13px}
 
 /* Status strip */
 .strip{margin:0 12px 10px;flex:none}
@@ -161,6 +165,9 @@ body.rf-sidebar-body .popup{
 .item-ic.t-context{background:var(--violet-soft);color:var(--violet)}
 .item-ic.t-snapshot{background:var(--green-soft);color:var(--green)}
 .item-ic.t-screenshot{background:var(--amber-soft);color:var(--amber)}
+.item-ic.t-link{background:#dbeafe;color:#1e40af}
+.item-ic.t-bundle{background:#f3e8ff;color:#7c3aed}
+.item-ic.t-note{background:#fef3c7;color:#92400e}
 .item-main{flex:1;min-width:0}
 .item-title{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
 .item-title .fav{color:var(--amber);font-size:11px}
@@ -323,8 +330,26 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
 .pickrow{display:flex;align-items:center;gap:9px;padding:8px 11px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)}
 .pickrow:last-child{border-bottom:none}
 .pickrow:hover{background:var(--surface-2)}
+.pickrow.on{background:var(--primary-soft)}
 .pickrow input{accent-color:var(--primary);width:15px;height:15px;flex:none}
-.pickrow .pt-type{font-size:10px;color:var(--muted);margin-left:auto;flex:none}
+.pickrow-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pickrow .pt-type{font-size:10px;color:var(--muted);margin-left:auto;flex:none;padding:2px 7px;border-radius:6px;font-weight:600;background:var(--surface-2)}
+/* v3.8.0 (Issue 5): Type badge pakai warna — sebelumnya teks abu-abu saja. */
+.pickrow .pt-type.t-prompt{background:var(--primary-soft);color:var(--primary)}
+.pickrow .pt-type.t-context{background:var(--violet-soft);color:var(--violet)}
+.pickrow .pt-type.t-snapshot{background:var(--green-soft);color:var(--green)}
+.pickrow .pt-type.t-screenshot{background:var(--amber-soft);color:var(--amber)}
+.pickrow .pt-type.t-link{background:#dbeafe;color:#1e40af}
+.pickrow .pt-type.t-note{background:#fef3c7;color:#92400e}
+/* Bundle filter chips */
+.bf-chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 8px}
+.bf-chip{font-size:10.5px;padding:4px 9px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;transition:.12s;font-weight:600}
+.bf-chip:hover{border-color:var(--border-strong);color:var(--text-2)}
+.bf-chip.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+/* Functional sheet members list */
+.fs-member{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border)}
+.fs-member:last-child{border-bottom:none}
+.fs-member-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px}
 .snap-preview{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--text-2);line-height:1.5;max-height:96px;overflow:hidden;position:relative}
 .snap-preview::after{content:"";position:absolute;left:0;right:0;bottom:0;height:28px;background:linear-gradient(transparent,var(--surface-2))}
 

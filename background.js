@@ -20,8 +20,7 @@ import {
   getUserBlocklist,
   addUserBlocklistEntry,
   removeUserBlocklistEntry,
-  clearUserBlocklist,
-  exportAllScreenshotBlobs
+  clearUserBlocklist
 } from './lib/storage.js';
 // v3.7: Import untuk backup handlers
 import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js';
@@ -784,7 +783,54 @@ async function triggerScreenshot(tab, mode) {
 
   browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
 
+  // v3.11.0 (Issue 2): Auto-upload screenshot ke Google Drive kalau Apps Script Sync aktif.
+  // Tidak blocking — jalankan di background supaya capture UX tetap cepat.
+  uploadScreenshotToDriveIfEnabled(newItem).catch(err => {
+    console.warn('[RecallFox] Auto-upload screenshot to Drive failed:', err.message);
+  });
+
   return { ok: true, id: newItem.id };
+}
+
+// v3.11.0 (Issue 2): Helper — upload screenshot ke Drive kalau user enable fitur.
+// Tidak throw — failure di-log saja, screenshot tetap tersimpan di vault lokal.
+async function uploadScreenshotToDriveIfEnabled(item) {
+  if (!item || !item.id) return;
+  const settings = await getSettings();
+  if (!settings.appsScriptSyncEnabled) return;
+  if (settings.appsScriptUploadScreenshots === false) return;
+  if (!settings.appsScriptUrl || !settings.appsScriptToken) return;
+
+  console.log('[RecallFox] Auto-uploading screenshot to Drive:', item.id);
+  try {
+    const { pushScreenshotToDrive } = await import('./lib/appsscript-sync.js');
+    const result = await pushScreenshotToDrive(item);
+    if (result.ok && result.driveFileUrl) {
+      // Simpan driveFileUrl + driveFileId ke item
+      const { updateItem } = await import('./lib/storage.js');
+      await updateItem(item.id, {
+        driveFileUrl: result.driveFileUrl,
+        driveFileId: result.driveFileId,
+        driveUploadedAt: new Date().toISOString()
+      });
+      console.log('[RecallFox] Screenshot uploaded to Drive:', result.driveFileUrl);
+      // Trigger sync supaya sheet ScreenshotMeta update dengan link baru
+      try {
+        const { scheduleAutoAppsScriptSync } = await import('./lib/appsscript-sync.js');
+        scheduleAutoAppsScriptSync();
+      } catch (e) {}
+      // Notify UI
+      browser.runtime.sendMessage({
+        type: 'SCREENSHOT_DRIVE_UPLOADED',
+        id: item.id,
+        driveFileUrl: result.driveFileUrl
+      }).catch(() => {});
+    } else {
+      console.warn('[RecallFox] Screenshot Drive upload failed:', result.error);
+    }
+  } catch (e) {
+    console.warn('[RecallFox] Screenshot Drive upload exception:', e.message);
+  }
 }
 
 // Save a captured image to the vault (called from modal "Save to Vault" button)
@@ -821,6 +867,12 @@ async function saveCaptureToVault(payload) {
   });
 
   browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+
+  // v3.11.0 (Issue 2): Auto-upload ke Drive kalau enabled (sama seperti triggerScreenshot)
+  uploadScreenshotToDriveIfEnabled(newItem).catch(err => {
+    console.warn('[RecallFox] Auto-upload screenshot to Drive failed:', err.message);
+  });
+
   return { ok: true, id: newItem.id };
 }
 
@@ -1119,6 +1171,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       }
       syncTimer = null;
     }, 2000);
+    // v3.8.0 (Issue 1+6): Jika Apps Script auto-sync aktif, jadwalkan juga
+    try {
+      const settings = await getSettings();
+      if (settings.appsScriptSyncEnabled && settings.appsScriptAutoSync) {
+        const { scheduleAutoAppsScriptSync } = await import('./lib/appsscript-sync.js');
+        scheduleAutoAppsScriptSync();
+      }
+    } catch (e) { /* silent — jangan ganggu Firefox Sync */ }
     return false;
   }
   if (msg.type === 'SYNC_NOW') {
@@ -1274,11 +1334,13 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   }
 
   // v3.7: EXPORT_BACKUP — export vault ke file (.json atau .rfvault terenkripsi)
+  // v3.8.0 (Issue 6): UNIFIED payload — pakai buildBackupPayload() dari autobackup.js
+  // supaya export dari popup & settings SAMA dengan auto-backup & Apps Script sync.
+  // Sebelumnya: hanya kirim {vault, screenshotBlobs} → kehilangan notes/habits/chat/volume.
   if (msg.type === 'EXPORT_BACKUP') {
     try {
-      const vault = await getVault();
-      const shotBlobs = await exportAllScreenshotBlobs();
-      const payload = { vault, screenshotBlobs: shotBlobs };
+      const { buildBackupPayload } = await import('./lib/autobackup.js');
+      const payload = await buildBackupPayload();
       const json = JSON.stringify(payload, null, 2);
       let content = json;
       let ext = 'json';
@@ -1301,7 +1363,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       // Update lastBackupAt
       await saveSettings({ lastBackupAt: new Date().toISOString(), lastBackupSize: content.length });
-      return { ok: true, filename, size: content.length };
+      return { ok: true, filename, size: content.length, meta: payload.meta };
     } catch (e) {
       console.error('[RecallFox] EXPORT_BACKUP error:', e);
       return { ok: false, error: e.message };
@@ -1309,6 +1371,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   }
 
   // v3.7: IMPORT_BACKUP — import vault dari file backup
+  // v3.8.0 (Issue 6): Fix restore data v4 (notes/habits/chat/volume) yang sebelumnya di-skip.
   if (msg.type === 'IMPORT_BACKUP') {
     try {
       const text = msg.text || '';
@@ -1351,9 +1414,41 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
           console.warn('[RecallFox] Import item gagal:', item.id, e.message);
         }
       }
-      // Jangan import bundles otomatis (bisa conflict) — info saja
-      console.log('[RecallFox] Import selesai: ' + added + ' added, ' + skipped + ' skipped');
-      return { ok: true, added, skipped };
+      // Restore screenshot blobs
+      if (parsed.screenshotBlobs && typeof parsed.screenshotBlobs === 'object') {
+        try {
+          const { importScreenshotBlobs } = await import('./lib/storage.js');
+          await importScreenshotBlobs(parsed.screenshotBlobs);
+        } catch (e) { console.warn('[RecallFox] Import screenshot blobs gagal:', e.message); }
+      }
+      // v3.8.0: Restore data v4 yang sebelumnya di-skip
+      const restoredExtras = [];
+      if (Array.isArray(parsed.notes) && parsed.notes.length) {
+        try {
+          await browser.storage.local.set({ recallfox_notes: parsed.notes });
+          restoredExtras.push(parsed.notes.length + ' catatan');
+        } catch (e) { console.warn('[RecallFox] Import notes gagal:', e.message); }
+      }
+      if (parsed.habits) {
+        try {
+          await browser.storage.local.set({ recallfox_habits: parsed.habits });
+          restoredExtras.push('habits');
+        } catch (e) { console.warn('[RecallFox] Import habits gagal:', e.message); }
+      }
+      if (parsed.assistantChat) {
+        try {
+          await browser.storage.local.set({ recallfox_assistant_chat: parsed.assistantChat });
+          restoredExtras.push('chat');
+        } catch (e) { console.warn('[RecallFox] Import chat gagal:', e.message); }
+      }
+      if (parsed.volumeSettings) {
+        try {
+          await browser.storage.local.set({ recallfox_volume_settings: parsed.volumeSettings });
+          restoredExtras.push('volume');
+        } catch (e) { console.warn('[RecallFox] Import volume gagal:', e.message); }
+      }
+      console.log('[RecallFox] Import selesai: ' + added + ' added, ' + skipped + ' skipped, extras: ' + restoredExtras.join(', '));
+      return { ok: true, added, skipped, extras: restoredExtras };
     } catch (e) {
       console.error('[RecallFox] IMPORT_BACKUP error:', e);
       return { ok: false, error: e.message };
@@ -1368,6 +1463,276 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       return result || { ok: true };
     } catch (e) {
       console.error('[RecallFox] MANUAL_BACKUP_NOW error:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // ============================================================
+  // v3.8.0 (Log Troubleshooting Sesi 1) — Issue 1 + 2 + 6:
+  // Apps Script Sync handlers.
+  // ============================================================
+
+  if (msg.type === 'SYNC_TO_APPSSCRIPT') {
+    try {
+      const { pushToAppsScript } = await import('./lib/appsscript-sync.js');
+      const result = await pushToAppsScript({ silent: false });
+      return result;
+    } catch (e) {
+      console.error('[RecallFox] SYNC_TO_APPSSCRIPT error:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  if (msg.type === 'TEST_APPSSCRIPT') {
+    try {
+      const { testAppsScriptConnection } = await import('./lib/appsscript-sync.js');
+      const result = await testAppsScriptConnection();
+      return result;
+    } catch (e) {
+      console.error('[RecallFox] TEST_APPSSCRIPT error:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  if (msg.type === 'GET_APPSSCRIPT_STATUS') {
+    try {
+      const { getAppsScriptStatus } = await import('./lib/appsscript-sync.js');
+      return { ok: true, status: await getAppsScriptStatus() };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // ============================================================
+  // v3.8.0 — Issue 4: GET_PAGE_CONTEXT
+  // ------------------------------------------------------------
+  // Dikirim dari popup "Ambil dari halaman aktif" untuk ekstrak
+  // judul + URL + meta + main content dari halaman aktif.
+  // Implementasi: pakai browser.scripting.executeScript (lebih reliable
+  // daripada tabs.sendMessage yang butuh content script ready).
+  // ============================================================
+  if (msg.type === 'GET_PAGE_CONTEXT') {
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      if (!tab.url || !/^https?:\/\//.test(tab.url)) {
+        // Untuk halaman non-http (about:, moz-extension:) — return title+url saja
+        return {
+          ok: true,
+          partial: true,
+          title: tab.title || '',
+          url: tab.url || '',
+          description: '',
+          text: '',
+          note: 'Halaman non-http — hanya judul & URL yang bisa diambil'
+        };
+      }
+
+      // Inject function ekstraksi ke halaman aktif
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          // Helper aman: ambil meta description
+          const getMeta = (sel) => {
+            const el = document.querySelector(sel);
+            return el ? (el.content || el.getAttribute('content') || '').trim() : '';
+          };
+          // Helper: truncate text supaya tidak meledak
+          const trunc = (s, n) => s ? s.slice(0, n) : '';
+
+          const title = document.title || '';
+          const url = location.href;
+          const description =
+            getMeta('meta[name="description"]') ||
+            getMeta('meta[property="og:description"]') ||
+            getMeta('meta[name="twitter:description"]') ||
+            '';
+
+          // Ekstrak main content: prioritas <main>, <article>, fallback body
+          let mainEl = document.querySelector('main') || document.querySelector('article');
+          if (!mainEl) {
+            // Fallback: cari div dengan class mengandung "content" atau "article"
+            mainEl = document.querySelector('[role="main"]') ||
+                     document.querySelector('.content') ||
+                     document.querySelector('.article-body') ||
+                     document.querySelector('.post-content');
+          }
+          // Untuk Source: simpan selector yang dipakai supaya user tahu dari mana konten diambil
+          const sourceSelector = mainEl ? (mainEl.tagName.toLowerCase() + (mainEl.id ? '#' + mainEl.id : '') + (mainEl.className ? '.' + String(mainEl.className).split(/\s+/)[0] : '')) : 'body';
+
+          // innerText lebih bersih dari textContent (menghormati visibility CSS)
+          const rawText = (mainEl || document.body).innerText || '';
+          // Bersihkan whitespace berlebih + batasi ~8000 char (cukup untuk context AI)
+          const cleanText = rawText.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+          const text = trunc(cleanText, 8000);
+
+          // Ambil juga heading utama (h1 pertama) sebagai konteks struktural
+          const h1 = document.querySelector('h1');
+          const h1Text = h1 ? h1.innerText.trim() : '';
+
+          // Ambil beberapa link dari nav/menu utama (opsional, membantu konteks)
+          const navLinks = Array.from(document.querySelectorAll('nav a, header nav a'))
+            .slice(0, 10)
+            .map(a => ({ text: (a.innerText || '').trim().slice(0, 60), href: a.href }))
+            .filter(l => l.text && l.href);
+
+          return {
+            title: trunc(title, 300),
+            url,
+            description: trunc(description, 500),
+            text,
+            h1: trunc(h1Text, 200),
+            sourceSelector,
+            navLinks,
+            extractedAt: new Date().toISOString()
+          };
+        }
+      });
+
+      if (!results || !results[0]) {
+        return { ok: false, error: 'Ekstraksi gagal — script injection kembali kosong' };
+      }
+      const ctx = results[0].result;
+      if (!ctx || !ctx.url) {
+        return { ok: false, error: 'Halaman tidak merespons ekstraksi' };
+      }
+      // Sukses
+      return { ok: true, ...ctx };
+    } catch (e) {
+      console.warn('[RecallFox] GET_PAGE_CONTEXT error:', e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // ============================================================
+  // v3.8.0 — Issue 4: SUMMARIZE_TEXT (AI summarize untuk konteks halaman)
+  // Dipanggil dari popup saat user klik "Ringkas dengan AI".
+  // ============================================================
+  if (msg.type === 'SUMMARIZE_TEXT') {
+    try {
+      const text = (msg.text || '').trim();
+      if (!text) return { ok: false, error: 'empty_text' };
+      // Truncate text supaya tidak meledak token — 12000 char ≈ 3000 token
+      const truncated = text.slice(0, 12000);
+      const { chatWithFallback, isAssistantConfigured, buildSystemPrompt } = await import('./lib/assistant.js');
+      const configured = await isAssistantConfigured();
+      if (!configured) {
+        return { ok: false, error: 'AI belum dikonfigurasi. Buka Settings → AI Assistant untuk set API key (Groq gratis).' };
+      }
+      const systemPrompt = 'Kamu asisten RecallFox. Tugas: ringkas halaman web yang diambil user menjadi ringkasan padat (maks 200 kata) + 3-5 keyword utama + klasifikasi tipe halaman (artikel/dokumentasi/produk/blog/dll). Format output:\n\nRINGKASAN:\n<ringkasan>\n\nKEYWORD:\n- keyword1\n- keyword2\n\nTIPE: <tipe>';
+      const userPrompt = 'Judul: ' + (msg.title || '(tidak ada)') + '\nURL: ' + (msg.url || '(tidak ada)') + '\n\nKonten halaman:\n---\n' + truncated + '\n---\n\nRingkas dan klasifikasikan.';
+      const summary = await chatWithFallback([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]);
+      return { ok: true, summary };
+    } catch (e) {
+      console.warn('[RecallFox] SUMMARIZE_TEXT error:', e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // ============================================================
+  // v3.8.0 — Issue 3: SAVE_UPLOAD_TO_VAULT
+  // Simpan screenshot dari upload/paste manual ke vault.
+  // ============================================================
+  if (msg.type === 'SAVE_UPLOAD_TO_VAULT') {
+    try {
+      const dataUrl = (msg.dataUrl || '').trim();
+      if (!dataUrl) return { ok: false, error: 'empty_data_url' };
+      if (!/^data:image\//i.test(dataUrl)) {
+        return { ok: false, error: 'Format harus data:image/...' };
+      }
+      const title = (msg.title || 'Uploaded screenshot').slice(0, 200);
+      const tags = Array.isArray(msg.tags) ? msg.tags : [];
+      const sourceUrl = (msg.sourceUrl || '').trim();
+
+      // Decode metadata dari dataUrl untuk width/height/bytes
+      let width = 0, height = 0, format = 'png', bytes = 0;
+      try {
+        const fmtMatch = dataUrl.match(/^data:image\/(\w+);base64,/);
+        if (fmtMatch) format = fmtMatch[1] === 'jpeg' ? 'jpeg' : 'png';
+        const base64 = dataUrl.split(',')[1] || '';
+        bytes = Math.floor(base64.length * 0.75);
+      } catch (e) {}
+
+      // Generate thumbnail via OffscreenCanvas (di background worker)
+      let thumbnail = '';
+      try {
+        // Pakai createImageBitmap untuk decode + OffscreenCanvas untuk resize
+        const blob = await (await fetch(dataUrl)).blob();
+        const bitmap = await createImageBitmap(blob);
+        width = bitmap.width;
+        height = bitmap.height;
+        const maxThumb = 200;
+        const scale = Math.min(1, maxThumb / Math.max(width, height));
+        const tw = Math.round(width * scale);
+        const th = Math.round(height * scale);
+        const canvas = new OffscreenCanvas(tw, th);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0, tw, th);
+        const thumbBlob = await canvas.convertToBlob({ type: 'image/png' });
+        const reader = new FileReader();
+        thumbnail = await new Promise(resolve => {
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(thumbBlob);
+        });
+        bitmap.close();
+      } catch (e) {
+        console.warn('[RecallFox] Thumbnail generation failed:', e.message);
+      }
+
+      // Tambah ke vault via storage.js addItem
+      const item = await addItem({
+        type: 'screenshot',
+        title,
+        tags,
+        body: 'Uploaded manually · ' + new Date().toLocaleString('id-ID'),
+        screenshotMode: 'upload',
+        screenshotWidth: width,
+        screenshotHeight: height,
+        screenshotFormat: format,
+        screenshotBytes: bytes,
+        thumbnailDataUrl: thumbnail,
+        screenshotDataUrl: dataUrl,
+        source: sourceUrl ? { url: sourceUrl, title: title, capturedAt: new Date().toISOString() } : null
+      });
+
+      console.log('[RecallFox] Screenshot uploaded to vault:', item.id, width + 'x' + height);
+
+      // v3.11.0 (Issue 2): Upload ke Drive juga untuk screenshot yang di-upload manual
+      uploadScreenshotToDriveIfEnabled(item).catch(err => {
+        console.warn('[RecallFox] Manual upload screenshot to Drive failed:', err.message);
+      });
+
+      return { ok: true, id: item.id };
+    } catch (e) {
+      console.error('[RecallFox] SAVE_UPLOAD_TO_VAULT error:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // v3.11.0 (Issue 2): UPLOAD_SCREENSHOT_TO_DRIVE — manual trigger dari popup
+  // (user klik "Upload ke Drive" di functional sheet screenshot).
+  if (msg.type === 'UPLOAD_SCREENSHOT_TO_DRIVE') {
+    try {
+      if (!msg.id) return { ok: false, error: 'missing_id' };
+      const vault = await getVault();
+      const item = vault.items.find(i => i.id === msg.id);
+      if (!item) return { ok: false, error: 'item_not_found' };
+      if (item.type !== 'screenshot') return { ok: false, error: 'not_screenshot' };
+      // Re-use helper (synchronously — manual trigger harus blocking supaya user dapat feedback)
+      await uploadScreenshotToDriveIfEnabled(item);
+      // Re-read item untuk dapat driveFileUrl yang baru
+      const updated = await getVault();
+      const newItem = updated.items.find(i => i.id === msg.id);
+      return {
+        ok: true,
+        driveFileUrl: newItem?.driveFileUrl || '',
+        driveFileId: newItem?.driveFileId || ''
+      };
+    } catch (e) {
+      console.error('[RecallFox] UPLOAD_SCREENSHOT_TO_DRIVE error:', e);
       return { ok: false, error: e.message };
     }
   }

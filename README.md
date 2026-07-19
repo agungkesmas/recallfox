@@ -3,12 +3,12 @@
 > **Firefox addon all-in-one untuk produktivitas AI + kehidupan Muslim Indonesia.**
 > Vault prompt & konteks, screenshot FireShot-style, Content Guardian, waktu shalat Muhammadiyah, tracker ngaji & olahraga, volume booster, dan masih banyak lagi — semua lokal-first, tanpa server, tanpa telemetry.
 
-**Versi:** 3.7.2 · **Manifest:** V3 · **Browser:** Firefox 115+ · **Lisensi:** MIT
+**Versi:** 3.11.0 · **Manifest:** V3 · **Browser:** Firefox 115+ · **Lisensi:** MIT
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Firefox](https://img.shields.io/badge/Firefox-115%2B-FF7139?logo=Firefox&logoColor=white)](https://www.mozilla.org/firefox/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-blueviolet)](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json)
-[![Version](https://img.shields.io/badge/version-3.7.2-success)](#)
+[![Version](https://img.shields.io/badge/version-3.11.0-success)](#)
 
 ---
 
@@ -312,6 +312,39 @@ recallfox/
 | `sync_chunk_<N>` | sync | 90KB chunk vault JSON |
 
 **Sync limit**: Firefox Sync 100KB/key → RecallFox chunk di 90KB (safety) + SHA-256 hash verification.
+
+---
+
+## 🆕 Changelog v3.11.0
+
+4 issue baru dari Log_Troubleshooting Sesi lanjutan (18 Juli 2026) — semua selesai:
+
+| # | Issue | Solusi |
+|---|---|---|
+| 1 | "Tombol full backup ke Google Drive tidak bekerja. Padahal test koneksi berhasil." | **Root cause**: `Content-Type: application/json` memicu CORS preflight (OPTIONS request) yang diblokir Apps Script Web App. GET (test koneksi) tidak kena preflight → itu sebabnya ping sukses. **Fix**: ganti ke `text/plain;charset=utf-8` (simple request, no preflight) + tambah `?action=sync&alt=json` query param. Plus: strip `vault.settings` (berisi `appsScriptToken`!) + `thumbnailDataUrl` dari payload. Timeout 30s → 60s. Header Authorization handle case-insensitive. Apps Script guard empty rows sebelum `setValues()`. |
+| 2 | "Screenshot yang diambil menggunakan fitur 'Shot' tidak tersave di Drive... bisa engga sih setiap screenshot tu bisa disave di Drive?" | **NEW feature**: setiap screenshot yang di-capture (via `triggerScreenshot`, `saveCaptureToVault`, `SAVE_UPLOAD_TO_VAULT`) OTOMATIS di-upload ke folder "RecallFox Screenshots" di Google Drive user via Apps Script baru `handleScreenshotUpload`. File sharing: ANYONE_WITH_LINK. Link disimpan di item (`driveFileUrl`, `driveFileId`, `driveUploadedAt`) + di sheet `ScreenshotMeta` (kolom `driveFileUrl` dengan formula HYPERLINK). Setting toggle `appsScriptUploadScreenshots` (default ON). Manual trigger via tombol "☁ Upload ke Drive" di screenshot functional sheet. Apps Script harus re-deploy dengan scope `drive.file`. |
+| 3 | "Di menu buat bundle kolom 'filter per type' jadi hilang padahal tadinya ada, cek di 'edit bundle' itu ada. jadi tidak selaras" | **Root cause**: timing bug — `getNotesAsBundleCandidates()` dijalankan DI DALAM `openSheet` callback, menyebabkan sheet terbuka kosong sejenak (flash) sebelum chips ter-render. User mengira "filter per type hilang". Plus: inline-add buttons "+ Catatan baru" / "+ Prompt baru" hanya ada di Edit Bundle, tidak di Create Bundle. **Fix**: pindahkan promise ke LUAR openSheet (match pattern Edit Bundle) + tambah inline-add buttons ke Create Bundle supaya selaras. |
+| 4 | "Aku coba ketik github di fitur pencarian, tapi tidak ditemukan apapun... harusnya fitur cari ini bisa mencari teks di dalam • Prompt Konteks Link Bundle Snapshot Shot sampai arsip. di ujung kanan kotak harusnya ada tombol silang untuk menghapus semua teks" | **Root cause**: `searchableTextFor()` untuk bundle hanya mengambil **title** anggota, BUKAN `linkUrl`/`body`/`tags`/`source` anggota. User cari "github" tidak ketemu kalau github link ada di dalam bundle sebagai anggota. **Fix**: expand bundle member haystack — include title + body + linkUrl + linkTitle + tags + source.url + source.title + note title/body/group. Plus: tambah X clear button di ujung kanan search box (popup.html + sidebar.html + CSS `.search-clear` + JS toggle visibility). Tambah badge "📦 arsip" + "☁ Drive" di search results. |
+
+Lihat [CHANGELOG-v3.11.0.md](./CHANGELOG-v3.11.0.md) untuk detail lengkap.
+
+---
+
+## 🆕 Changelog v3.8.0
+
+7 issue dari Log Troubleshooting Sesi 1 (18 Juli 2026) — semua selesai:
+
+| # | Issue | Solusi |
+|---|---|---|
+| 1 | "Apps Script Sync (Web App Anda)" — user kirim prompt tapi spreadsheet kosong | Fitur **Apps Script Sync** dibangun dari nol: `lib/appsscript-sync.js` + handler `SYNC_TO_APPSSCRIPT`/`TEST_APPSSCRIPT` + UI di Settings & Tools. Apps Script server template di `apps-script/recallfox-sync.gs`. Verifikasi response `{ok:true, rowsAppended, totalRows}` supaya user tahu kalau spreadsheet benar-benar terisi. |
+| 2 | "Terkirim 1 tapi spreadsheet kosong" — tidak jelas kirim ke mana | Verifikasi response ketat di `pushToAppsScript()` — kalau Apps Script tidak return `{ok:true}`, RecallFox anggap gagal & simpan `appsScriptLastSentError`. Plus: tombol **Test Koneksi** (ping) sebelum kirim data. |
+| 3 | Media: tidak bisa input manual screenshot dari luar web | Tombol **📁 Upload gambar (manual)** di Add Item menu. Wire-up `#screenshotFileInput` (sebelumnya orphan) + global `paste` handler untuk tangkap gambar dari OS clipboard (Snipping Tool, screenshot macOS, dll.). Screenshot upload disimpan dengan metadata lengkap (width/height/format/bytes + thumbnail 200px). |
+| 4 | "Ambil dari halaman aktif" tidak berfungsi | Handler `GET_PAGE_CONTEXT` di `content/overlay.js` + `browser.scripting.executeScript` di background. Ekstrak title + URL + meta description + main content (`<main>`/`<article>`/fallback `body`) + H1 + nav links. Plus: tombol **🤖 Ringkas dengan AI** (Groq/Gemini) untuk ringkasan padat + keyword + klasifikasi tipe halaman. Whitelist field `contextPurpose` di `addItem()`. Simpan `source: {url, title, capturedAt}` dari modal. |
+| 5 | Bundle: catatan belum bisa masuk + tidak bisa tambah inline + tidak bisa sort/filter/warna | **Catatan jadi anggota bundle** via `getNotesAsBundleCandidates()` + `resolveBundleMembers()`. Bundle editor & create: **search box**, **filter chips per-tipe** (6 tipe), **type badge berwarna**, **inline add** (+ Catatan baru / + Prompt baru). Opsi **"save as prompt"** saat inline add prompt — default OFF. |
+| 6 | Backup & Apps Script redundan | **Unify payload**: `buildBackupPayload()` di `autobackup.js` sekarang exported & dipakai oleh EXPORT_BACKUP (popup + settings), auto-backup, dan Apps Script Sync. Sebelumnya EXPORT_BACKUP kehilangan notes/habits/chat/volume — sekarang sama. `handleImportFile()` juga diperbaiki: restore notes + habits + chat + volume yang sebelumnya di-skip. |
+| 7 | 2 kolom tombol inline mubazir (Salin+Sisipkan / Lihat+Download / Salin+Buka+Sisipkan) | **Satukan jadi 1 CTA "Buka ↵"** yang membuka **functional sheet** in-app. Untuk Screenshot: preview gambar + Salin/Download/Sisipkan/Edit/Arsip/Hapus. Untuk Bundle: daftar anggota + Salin semua/Sisipkan ke AI/Edit anggota/Arsip/Hapus. Untuk Link: URL display + Salin/Buka/Sisipkan/Edit. Untuk Prompt/Konteks: preview body + Sisipkan/Salin/+Lampiran/Edit/Tambah ke Bundle. |
+
+Lihat [CHANGELOG-v3.8.0.md](./CHANGELOG-v3.8.0.md) untuk detail lengkap.
 
 ---
 

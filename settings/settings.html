@@ -1107,6 +1107,117 @@
       </div>
     </section>
 
+    <!-- v3.8.0 (Issue 1+2+6): Apps Script Sync -->
+    <section class="rf-section">
+      <h2>📊 Apps Script Sync (Google Spreadsheet)</h2>
+      <p class="rf-section-desc">
+        Backup vault ke Google Spreadsheet via Apps Script Web App. Tidak seperti Firefox Sync
+        (yang sink antar device), Apps Script Sync menulis setiap item sebagai baris di spreadsheet
+        sehingga bisa dibaca / difilter / dianalisis langsung di Google Sheets.
+        <br><small style="color:#6b7280;">Lihat <code>apps-script/recallfox-sync.gs</code> di repo untuk kode server-nya.</small>
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan Apps Script Sync</div>
+          <div class="rf-row-desc">Master switch — kalau off, tombol kirim di bawah tidak aktif</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-appsscript-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">URL Apps Script Web App</div>
+          <div class="rf-row-desc">Format: <code>https://script.google.com/macros/s/.../exec</code></div>
+        </div>
+        <input type="url" id="rf-set-appsscript-url" placeholder="https://script.google.com/macros/s/AKfycb.../exec" style="flex:1;min-width:280px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Token (bearer)</div>
+          <div class="rf-row-desc">String rahasia — HARUS sama dengan <code>TOKEN</code> di Apps Script Anda. Lindungi dari orang lain.</div>
+        </div>
+        <input type="password" id="rf-set-appsscript-token" placeholder="token random 32 karakter" style="flex:1;min-width:280px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Payload yang dikirim</div>
+          <div class="rf-row-desc">Pilih data yang ingin di-backup ke spreadsheet</div>
+        </div>
+        <div class="rf-checkbox-group">
+          <label class="rf-checkbox"><input type="checkbox" id="rf-set-appsscript-inc-notes" checked /> Catatan</label>
+          <label class="rf-checkbox"><input type="checkbox" id="rf-set-appsscript-inc-shots" checked /> Screenshot (metadata)</label>
+          <label class="rf-checkbox"><input type="checkbox" id="rf-set-appsscript-inc-habits" checked /> Habits (ngaji+olahraga)</label>
+          <label class="rf-checkbox"><input type="checkbox" id="rf-set-appsscript-inc-chat" /> Chat AI (sensitif)</label>
+          <label class="rf-checkbox"><input type="checkbox" id="rf-set-appsscript-inc-volume" /> Volume settings</label>
+        </div>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Auto-sync (debounced 30s)</div>
+          <div class="rf-row-desc">Kirim otomatis tiap vault berubah — tidak perlu klik tombol</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-appsscript-auto" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- v3.11.0 (Issue 2): Auto-upload screenshot ke Google Drive -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">☁ Auto-upload screenshot ke Drive</div>
+          <div class="rf-row-desc">
+            Setiap screenshot yang di-capture via "Shot" OTOMATIS di-upload ke folder "RecallFox Screenshots" di Google Drive Anda.
+            Link file disimpan di vault + di kolom <code>driveFileUrl</code> sheet ScreenshotMeta.
+            <br><small style="color:#dc2626;">⚠ Prasyarat: Apps Script harus di-deploy ulang dengan scope <code>drive.file</code> (lihat header file <code>apps-script/recallfox-sync.gs</code> untuk petunjuk).</small>
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-appsscript-upload-shots" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Test koneksi</div>
+          <div class="rf-row-desc">Ping Apps Script tanpa mengirim data — verifikasi URL + token valid</div>
+        </div>
+        <button id="rf-set-appsscript-test" class="rf-btn rf-btn-secondary">🔌 Test Koneksi</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Kirim sekarang</div>
+          <div class="rf-row-desc">Backup lengkap ke spreadsheet — replace-all mode (snapshot terbaru)</div>
+        </div>
+        <button id="rf-set-appsscript-send" class="rf-btn rf-btn-primary">📤 Kirim Sekarang</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Status terakhir</div>
+          <div class="rf-row-desc" id="rf-set-appsscript-status">Belum pernah</div>
+        </div>
+        <div></div>
+      </div>
+
+      <div class="rf-row" id="rf-set-appsscript-error-row" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title" style="color:#dc2626;">⚠ Error terakhir</div>
+          <div class="rf-row-desc" id="rf-set-appsscript-error"></div>
+        </div>
+        <button id="rf-set-appsscript-clear-error" class="rf-btn rf-btn-secondary">Tutup</button>
+      </div>
+    </section>
+
     <!-- Backup -->
     <section class="rf-section">
       <h2>Backup Lokal</h2>

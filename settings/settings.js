@@ -5,7 +5,6 @@ import {
   getVault,
   saveSettings,
   getSettings,
-  exportAllScreenshotBlobs,
   importScreenshotBlobs
 } from '../lib/storage.js';
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../lib/crypto.js';
@@ -117,6 +116,22 @@ async function init() {
     setChk('rf-set-remember-tab', s.rememberLastTab !== false);
     setVal('rf-set-backup-interval', String(s.backupIntervalHours || 6));
   } catch (e) { console.warn('[RecallFox] settings: persistence section failed:', e); }
+
+  // === v3.8.0 (Issue 1+2+6): Apps Script Sync ===
+  try {
+    setChk('rf-set-appsscript-enabled', !!s.appsScriptSyncEnabled);
+    setVal('rf-set-appsscript-url', s.appsScriptUrl || '');
+    setVal('rf-set-appsscript-token', s.appsScriptToken || '');
+    setChk('rf-set-appsscript-inc-notes', s.appsScriptIncludeNotes !== false);
+    setChk('rf-set-appsscript-inc-shots', s.appsScriptIncludeScreenshots !== false);
+    setChk('rf-set-appsscript-inc-habits', s.appsScriptIncludeHabits !== false);
+    setChk('rf-set-appsscript-inc-chat', !!s.appsScriptIncludeChat);
+    setChk('rf-set-appsscript-inc-volume', !!s.appsScriptIncludeVolume);
+    setChk('rf-set-appsscript-auto', !!s.appsScriptAutoSync);
+    // v3.11.0 (Issue 2): Auto-upload screenshot toggle
+    setChk('rf-set-appsscript-upload-shots', s.appsScriptUploadScreenshots !== false);
+    await refreshAppsScriptStatus();
+  } catch (e) { console.warn('[RecallFox] settings: apps-script section failed:', e); }
 
   // === Clear Cache settings ===
   try {
@@ -1137,13 +1152,130 @@ function bindEvents() {
     document.getElementById('rf-set-import-file').click();
   });
   document.getElementById('rf-set-import-file').addEventListener('change', handleImportFile);
+
+  // ============================================================
+  // v3.8.0 (Issue 1+2+6): Apps Script Sync handlers
+  // ============================================================
+  document.getElementById('rf-set-appsscript-enabled')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptSyncEnabled: e.target.checked });
+    toast(e.target.checked ? 'Apps Script Sync aktif' : 'Apps Script Sync dimatikan');
+  });
+  document.getElementById('rf-set-appsscript-url')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptUrl: e.target.value.trim() });
+  });
+  document.getElementById('rf-set-appsscript-token')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptToken: e.target.value.trim() });
+  });
+  document.getElementById('rf-set-appsscript-inc-notes')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptIncludeNotes: e.target.checked });
+  });
+  document.getElementById('rf-set-appsscript-inc-shots')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptIncludeScreenshots: e.target.checked });
+  });
+  document.getElementById('rf-set-appsscript-inc-habits')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptIncludeHabits: e.target.checked });
+  });
+  document.getElementById('rf-set-appsscript-inc-chat')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptIncludeChat: e.target.checked });
+  });
+  document.getElementById('rf-set-appsscript-inc-volume')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptIncludeVolume: e.target.checked });
+  });
+  document.getElementById('rf-set-appsscript-auto')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptAutoSync: e.target.checked });
+    toast(e.target.checked ? 'Auto-sync aktif (debounced 30s)' : 'Auto-sync dimatikan');
+  });
+  // v3.11.0 (Issue 2): Auto-upload screenshot ke Drive toggle
+  document.getElementById('rf-set-appsscript-upload-shots')?.addEventListener('change', async (e) => {
+    await saveSettings({ appsScriptUploadScreenshots: e.target.checked });
+    toast(e.target.checked ? '☁ Auto-upload screenshot ke Drive aktif' : 'Auto-upload screenshot dimatikan');
+  });
+
+  document.getElementById('rf-set-appsscript-test')?.addEventListener('click', async () => {
+    const btn = document.getElementById('rf-set-appsscript-test');
+    const orig = btn.textContent;
+    btn.textContent = '🔌 Menguji...';
+    btn.disabled = true;
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'TEST_APPSSCRIPT' });
+      if (res?.ok) {
+        toast('✓ Koneksi OK · ' + (res.totalRows || 0) + ' baris di spreadsheet');
+        await refreshAppsScriptStatus();
+      } else {
+        toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
+      }
+    } catch (e) {
+      toast('⚠ Error: ' + e.message, false);
+    } finally {
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('rf-set-appsscript-send')?.addEventListener('click', async () => {
+    const btn = document.getElementById('rf-set-appsscript-send');
+    const orig = btn.textContent;
+    btn.textContent = '📤 Mengirim...';
+    btn.disabled = true;
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'SYNC_TO_APPSSCRIPT' });
+      if (res?.ok) {
+        toast('✓ Terkirim · ' + (res.totalRows || 0) + ' baris di spreadsheet');
+        await refreshAppsScriptStatus();
+      } else {
+        toast('⚠ Gagal: ' + (res?.error || 'unknown'), false);
+        await refreshAppsScriptStatus();
+      }
+    } catch (e) {
+      toast('⚠ Error: ' + e.message, false);
+    } finally {
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('rf-set-appsscript-clear-error')?.addEventListener('click', async () => {
+    await saveSettings({ appsScriptLastSentError: null });
+    await refreshAppsScriptStatus();
+  });
+}
+
+// v3.8.0 (Issue 1+2+6): Refresh Apps Script status display di settings
+async function refreshAppsScriptStatus() {
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'GET_APPSSCRIPT_STATUS' });
+    if (!res?.ok) return;
+    const st = res.status;
+    const statusEl = document.getElementById('rf-set-appsscript-status');
+    if (statusEl) {
+      if (st.lastSentAt) {
+        const d = new Date(st.lastSentAt);
+        const timeStr = d.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+        statusEl.innerHTML = '✓ Terakhir: <b>' + timeStr + '</b> · ' + (st.lastSentRows || 0) + ' baris' +
+          (st.autoSync ? ' · <span style="color:#10b981">auto-sync on</span>' : '');
+      } else {
+        statusEl.innerHTML = 'Belum pernah' + (st.enabled ? '' : ' · <i style="color:#9ca3af">fitur dimatikan</i>');
+      }
+    }
+    const errRow = document.getElementById('rf-set-appsscript-error-row');
+    const errEl = document.getElementById('rf-set-appsscript-error');
+    if (errRow && errEl) {
+      if (st.lastError) {
+        errRow.style.display = '';
+        errEl.textContent = st.lastError;
+      } else {
+        errRow.style.display = 'none';
+      }
+    }
+  } catch (e) { /* silent */ }
 }
 
 async function exportBackup(encrypted) {
-  const vault = await getVault();
-  // Also export screenshot blobs (stored separately in storage.local under rf_shot_<id>)
-  const shotBlobs = await exportAllScreenshotBlobs();
-  const payload = { vault, screenshotBlobs: shotBlobs };
+  // v3.8.0 (Issue 6): UNIFIED payload — pakai buildBackupPayload() dari autobackup.js
+  // supaya export dari popup & settings SAMA dengan auto-backup & Apps Script sync.
+  // Sebelumnya: hanya kirim {vault, screenshotBlobs} → kehilangan notes/habits/chat/volume.
+  const { buildBackupPayload } = await import('../lib/autobackup.js');
+  const payload = await buildBackupPayload();
   const json = JSON.stringify(payload, null, 2);
   let content = json;
   let ext = 'json';
@@ -1171,11 +1303,11 @@ async function exportBackup(encrypted) {
   a.remove();
   URL.revokeObjectURL(url);
 
-  await saveSettings({ lastBackupAt: new Date().toISOString() });
+  await saveSettings({ lastBackupAt: new Date().toISOString(), lastBackupSize: content.length });
   currentVault = await getVault();
   document.getElementById('rf-set-lastbackup').textContent =
     new Date(currentVault.settings.lastBackupAt).toLocaleString();
-  toast(encrypted ? 'Backup terenkripsi diekspor' : 'Backup diekspor');
+  toast(encrypted ? 'Backup terenkripsi diekspor · ' + (payload.meta?.vaultItemsCount || 0) + ' item + ' + (payload.meta?.notesCount || 0) + ' catatan' : 'Backup diekspor · ' + (payload.meta?.vaultItemsCount || 0) + ' item + ' + (payload.meta?.notesCount || 0) + ' catatan');
 }
 
 async function handleImportFile(e) {
@@ -1249,8 +1381,37 @@ async function handleImportFile(e) {
     await importScreenshotBlobs(importedShotBlobs);
   }
 
+  // v3.8.0 (Issue 6): Restore data v4 yang sebelumnya hilang (notes/habits/chat/volume).
+  // Sebelumnya handleImportFile hanya merge vault.items — catatan & data lain hilang.
+  const restoredExtras = [];
+  if (Array.isArray(parsed.notes) && parsed.notes.length) {
+    try {
+      await browser.storage.local.set({ recallfox_notes: parsed.notes });
+      restoredExtras.push(parsed.notes.length + ' catatan');
+    } catch (err) { console.warn('[RecallFox] Import notes gagal:', err.message); }
+  }
+  if (parsed.habits) {
+    try {
+      await browser.storage.local.set({ recallfox_habits: parsed.habits });
+      restoredExtras.push('habits');
+    } catch (err) { console.warn('[RecallFox] Import habits gagal:', err.message); }
+  }
+  if (parsed.assistantChat) {
+    try {
+      await browser.storage.local.set({ recallfox_assistant_chat: parsed.assistantChat });
+      restoredExtras.push('chat AI');
+    } catch (err) { console.warn('[RecallFox] Import chat gagal:', err.message); }
+  }
+  if (parsed.volumeSettings) {
+    try {
+      await browser.storage.local.set({ recallfox_volume_settings: parsed.volumeSettings });
+      restoredExtras.push('volume settings');
+    } catch (err) { console.warn('[RecallFox] Import volume gagal:', err.message); }
+  }
+
   renderStats();
-  toast('Backup diimpor');
+  const extrasMsg = restoredExtras.length ? ' + ' + restoredExtras.join(', ') : '';
+  toast('Backup diimpor' + extrasMsg);
   e.target.value = '';
 }
 
