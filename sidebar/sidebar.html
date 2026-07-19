@@ -27,15 +27,30 @@
     </div>
   </div>
 
-  <!-- Command bar -->
-  <div class="cmd" id="cmdWrap">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-    <input id="search" type="text" placeholder="Cari item atau ketik perintah…" autocomplete="off" spellcheck="false">
-    <!-- v3.10.2 (Issue 4 fix): Tombol clear (X) — tampil saat input tidak kosong -->
-    <button class="cmd-clear" id="searchClear" type="button" title="Hapus teks pencarian" aria-label="Hapus teks pencarian" style="display:none">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  <!-- Command bar — REMOVED v3.11.1 (Issue from catatan Google Doc):
+       "fitur pencarian hilangkan saja. karena tidak bermanfaat"
+       Diganti dengan quick-actions bar yang lebih berguna. -->
+  <div class="quick-actions" id="quickActions">
+    <button class="qa-btn" id="qaNewPrompt" title="Simpan prompt baru">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/></svg>
+      <span>Prompt</span>
     </button>
-    <span class="hint"><kbd>/</kbd><kbd>⌘K</kbd></span>
+    <button class="qa-btn" id="qaNewNote" title="Buat catatan baru">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+      <span>Catatan</span>
+    </button>
+    <button class="qa-btn" id="qaNewLink" title="Simpan link tab aktif">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      <span>Link</span>
+    </button>
+    <button class="qa-btn" id="qaQuickShot" title="Tangkap halaman">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M7 3v2M17 21v-2"/></svg>
+      <span>Shot</span>
+    </button>
+    <button class="qa-btn qa-btn-more" id="qaMoreBtn" title="Menu lengkap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+      <span>Menu</span>
+    </button>
   </div>
 
   <!-- Status strip -->
@@ -84,10 +99,25 @@
 
   <!-- View: Catatan (first-class) -->
   <div class="view hide" id="notesView">
-    <div class="notes-bar">
-      <span class="t">Catatan</span><span class="notes-hintbar">auto-save · lokal saja</span>
-      <button class="addbtn" id="noteBatchBtn" title="Mode batch: pilih multiple note untuk hapus/arsip sekaligus" style="margin-left:auto">☑️ Batch</button>
-      <button class="addbtn" id="noteAddBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Catatan Baru</button>
+    <!-- v3.11.1 (Issue 3 fix): Redesign notes-bar — kompak, no ruang kosong mubazir
+         - Title jadi compact pill, hint jadi inline kecil
+         - Buttons pakai icon-only di narrow, label di wide
+         - Wrap layout untuk narrow sidebar -->
+    <div class="notes-bar notes-bar-compact">
+      <div class="notes-bar-top">
+        <span class="notes-bar-t">📝 Catatan</span>
+        <span class="notes-bar-meta" id="notesCountMeta">0 catatan</span>
+      </div>
+      <div class="notes-bar-actions">
+        <button class="notes-action-btn" id="noteAddBtn" title="Tambah catatan baru">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span class="lbl">Baru</span>
+        </button>
+        <button class="notes-action-btn" id="noteBatchBtn" title="Mode batch: pilih multiple note untuk hapus/arsip sekaligus">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="3 14 7 18 11 14"/><polyline points="14 14 18 18 22 14"/></svg>
+          <span class="lbl">Batch</span>
+        </button>
+      </div>
     </div>
     <!-- v3.9.0 (Issue 7): Batch action bar (hidden by default, shown when batch mode active) -->
     <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:8px;font-size:11px">
@@ -102,7 +132,10 @@
   <!-- View: Alat -->
   <div class="view hide" id="toolsView">
     <div class="tools">
-      <div class="sec-label" style="padding-top:0">Semua alat — satu tempat, tidak menyesaki layar utama</div>
+      <div class="tools-header">
+        <span class="tools-h-t">🛠 Semua Alat</span>
+        <span class="tools-h-meta">10 alat tersedia</span>
+      </div>
       <div class="toolgrid" id="toolgrid"></div>
       <div class="hintbox">💡 Catatan naik kelas jadi tab sendiri (sering dipakai). Alat lain cukup 2 klik dari sini.</div>
     </div>

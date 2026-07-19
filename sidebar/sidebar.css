@@ -1,6 +1,7 @@
 /* ============================================================
-   sidebar.css — Sidebar-specific overrides
+   sidebar.css — Sidebar-specific overrides (v3.11.1)
    Sidebar uses popup.css as base + this file for full-viewport mode
+   + responsive collapse rules for narrow widths.
    ============================================================ */
 
 /* Sidebar body uses full viewport — drop the framed look */
@@ -43,4 +44,606 @@ body.rf-sidebar-body .tabbtn{
 body.rf-sidebar-body .popup.w-sm .strip-cell.fast,
 body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   display:flex;
+}
+
+/* ============================================================
+   v3.11.1 (Issue 2 fix): Quick Actions bar — pengganti search bar
+   - 5 tombol cepat: Prompt, Catatan, Link, Shot, Menu
+   - Wrap ke 2 baris saat narrow, icon-only saat sangat sempit
+   ============================================================ */
+.quick-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin:2px 10px 8px;
+  padding:0;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--r-md);
+  padding:6px 6px;
+  flex:none;
+}
+.qa-btn{
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  padding:7px 4px;
+  border-radius:8px;
+  background:transparent;
+  color:var(--text-2);
+  font-size:11px;
+  font-weight:650;
+  cursor:pointer;
+  transition:.15s;
+  min-width:0;
+  white-space:nowrap;
+  overflow:hidden;
+}
+.qa-btn svg{
+  width:14px;
+  height:14px;
+  color:var(--primary);
+  flex:none;
+}
+.qa-btn span{
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.qa-btn:hover{
+  background:var(--primary-soft);
+  color:var(--primary);
+  transform:translateY(-1px);
+}
+.qa-btn:active{
+  transform:translateY(0) scale(.96);
+}
+.qa-btn-more{
+  color:var(--text-2);
+}
+.qa-btn-more svg{
+  color:var(--text-2);
+}
+
+/* ============================================================
+   v3.11.1 (Issue 3 fix): Notes bar compact redesign
+   - Hapus ruang kosong mubazir
+   - 2 baris: atas (title + count), bawah (action buttons)
+   - Action buttons pakai icon + label (label sembunyi di narrow)
+   ============================================================ */
+.notes-bar-compact{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:8px 12px 8px !important;
+  flex:none;
+  border-bottom:1px solid var(--border);
+  background:var(--surface);
+}
+.notes-bar-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  min-width:0;
+}
+.notes-bar-t{
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.notes-bar-meta{
+  font-size:10.5px;
+  color:var(--muted);
+  white-space:nowrap;
+  flex:none;
+}
+.notes-bar-actions{
+  display:flex;
+  gap:6px;
+}
+.notes-action-btn{
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  padding:7px 8px;
+  border-radius:8px;
+  background:var(--primary-soft);
+  color:var(--primary);
+  font-size:11px;
+  font-weight:650;
+  cursor:pointer;
+  transition:.15s;
+  border:1px solid transparent;
+  min-width:0;
+}
+.notes-action-btn svg{
+  width:13px;
+  height:13px;
+  flex:none;
+}
+.notes-action-btn .lbl{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.notes-action-btn:hover{
+  background:var(--primary);
+  color:#fff;
+  border-color:var(--primary);
+}
+.notes-action-btn:active{
+  transform:scale(.97);
+}
+
+/* ============================================================
+   v3.11.1 (Issue 3 fix): Tools header compact
+   - Hapus sec-label yang panjang, ganti dengan compact header
+   ============================================================ */
+.tools-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:6px 4px 10px;
+  min-width:0;
+}
+.tools-h-t{
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tools-h-meta{
+  font-size:10.5px;
+  color:var(--muted);
+  white-space:nowrap;
+  flex:none;
+}
+
+/* ============================================================
+   v3.11.1 (Issue 2 fix): RESPONSIVE COLLAPSE RULES
+   - w-sm: ≤360px (sidebar sempit normal)
+   - w-xs: ≤280px (sidebar sangat sempit)
+   - w-xxs: ≤220px (sidebar minimal)
+   ============================================================ */
+
+/* w-sm (≤360px) — sidebar sempit normal */
+.popup.w-sm .hd{
+  padding:10px 10px 6px;
+  gap:6px;
+}
+.popup.w-sm .logo{
+  width:26px;
+  height:26px;
+  font-size:14px;
+  border-radius:8px;
+}
+.popup.w-sm .brand-t{
+  font-size:12px;
+}
+.popup.w-sm .brand-s{
+  font-size:9.5px;
+}
+.popup.w-sm .hd-actions{
+  gap:2px;
+}
+.popup.w-sm .iconbtn{
+  width:26px;
+  height:26px;
+  border-radius:7px;
+}
+.popup.w-sm .iconbtn svg{
+  width:13px;
+  height:13px;
+}
+
+/* Quick-actions di w-sm: label bisa tetap tampil, gap lebih kecil */
+.popup.w-sm .quick-actions{
+  gap:4px;
+  padding:5px 5px;
+  margin:2px 8px 6px;
+}
+.popup.w-sm .qa-btn{
+  padding:6px 3px;
+  font-size:10.5px;
+  gap:3px;
+}
+.popup.w-sm .qa-btn svg{
+  width:13px;
+  height:13px;
+}
+
+/* Tiles: lebih kompak */
+.popup.w-sm .tiles{
+  gap:5px;
+  padding:0 8px 8px;
+}
+.popup.w-sm .tile{
+  font-size:10px;
+  padding:8px 1px;
+  gap:3px;
+}
+.popup.w-sm .tile svg{
+  width:12px;
+  height:12px;
+}
+
+/* Strip */
+.popup.w-sm .strip{
+  margin:0 8px 6px;
+}
+.popup.w-sm .strip-bar{
+  padding:6px 8px;
+  font-size:10.5px;
+  gap:4px;
+}
+
+/* Notes bar compact di w-sm */
+.popup.w-sm .notes-bar-compact{
+  padding:6px 8px 6px !important;
+  gap:5px;
+}
+
+/* Tools header di w-sm */
+.popup.w-sm .tools-header{
+  padding:5px 2px 8px;
+}
+
+/* Tab bar di w-sm: text bisa di-hide kalau perlu */
+.popup.w-sm .tabbar{
+  padding:5px 6px 6px;
+}
+.popup.w-sm .tabbtn{
+  font-size:9.5px;
+  padding:5px 2px 3px;
+  gap:2px;
+}
+.popup.w-sm .tabbtn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tools grid di w-sm: tetap 2 kolom tapi lebih kompak */
+.popup.w-sm .toolgrid{
+  gap:6px;
+}
+.popup.w-sm .tool{
+  padding:8px 8px;
+  gap:6px;
+}
+.popup.w-sm .tool-ic{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+}
+.popup.w-sm .tool-ic svg{
+  width:13px;
+  height:13px;
+}
+.popup.w-sm .tool-n{
+  font-size:11px;
+}
+.popup.w-sm .tool-d{
+  font-size:9.5px;
+}
+
+/* Notes cards di w-sm */
+.popup.w-sm .note-card{
+  padding:8px 9px;
+}
+.popup.w-sm .note-title{
+  font-size:12px;
+}
+.popup.w-sm .note-body-txt{
+  font-size:11.5px;
+}
+
+/* Items di vault */
+.popup.w-sm .item{
+  padding:8px 8px;
+  gap:8px;
+}
+.popup.w-sm .item-ic{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+}
+.popup.w-sm .item-title{
+  font-size:12px;
+}
+.popup.w-sm .item-meta{
+  font-size:10px;
+}
+
+/* Page header di w-sm */
+.popup.w-sm .page-hd{
+  padding:10px 10px;
+  gap:6px;
+}
+.popup.w-sm .page-hd .pt{
+  font-size:12.5px;
+}
+.popup.w-sm .page-body{
+  padding:10px 10px;
+}
+
+/* ============================================================
+   w-xs (≤280px) — sidebar sangat sempit
+   ============================================================ */
+.popup.w-xs .hd{
+  padding:8px 8px 4px;
+  gap:4px;
+}
+.popup.w-xs .brand{
+  gap:5px;
+}
+.popup.w-xs .logo{
+  width:24px;
+  height:24px;
+  font-size:13px;
+  border-radius:7px;
+}
+.popup.w-xs .brand-t{
+  font-size:11px;
+}
+.popup.w-xs .brand-s{
+  font-size:9px;
+  max-width:80px;
+}
+.popup.w-xs .iconbtn{
+  width:24px;
+  height:24px;
+  border-radius:6px;
+}
+.popup.w-xs .iconbtn svg{
+  width:12px;
+  height:12px;
+}
+
+/* Quick-actions di w-xs: ICON-ONLY, label di-hide */
+.popup.w-xs .quick-actions{
+  gap:3px;
+  padding:4px 4px;
+  margin:2px 6px 5px;
+}
+.popup.w-xs .qa-btn{
+  padding:8px 2px;
+  gap:0;
+  font-size:9px;
+  min-width:0;
+}
+.popup.w-xs .qa-btn .lbl{
+  display:none; /* label di-hide, icon-only */
+}
+.popup.w-xs .qa-btn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tiles di w-xs: icon-only, lebih kompak */
+.popup.w-xs .tiles{
+  gap:4px;
+  padding:0 6px 6px;
+  grid-template-columns:repeat(3,1fr);
+}
+.popup.w-xs .tile{
+  padding:7px 1px;
+  font-size:0; /* hide text */
+  gap:0;
+}
+.popup.w-xs .tile svg{
+  width:14px;
+  height:14px;
+}
+.popup.w-xs .tile::after{
+  content:attr(title);
+  font-size:0;
+}
+
+/* Notes bar di w-xs: bahkan lebih kompak */
+.popup.w-xs .notes-bar-compact{
+  padding:5px 6px 5px !important;
+  gap:4px;
+}
+.popup.w-xs .notes-bar-t{
+  font-size:10px;
+}
+.popup.w-xs .notes-bar-meta{
+  font-size:9px;
+}
+.popup.w-xs .notes-action-btn{
+  padding:6px 4px;
+  font-size:10px;
+}
+.popup.w-xs .notes-action-btn .lbl{
+  display:none; /* icon-only */
+}
+.popup.w-xs .notes-action-btn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tab bar di w-xs: icon-only */
+.popup.w-xs .tabbar{
+  padding:4px 4px 5px;
+}
+.popup.w-xs .tabbtn{
+  font-size:0; /* hide text label */
+  padding:6px 2px 4px;
+}
+.popup.w-xs .tabbtn svg{
+  width:16px;
+  height:16px;
+}
+.popup.w-xs .tabbtn .badge{
+  font-size:8px;
+  min-width:13px;
+  height:13px;
+  top:2px;
+  right:calc(50% - 18px);
+}
+
+/* Tools grid di w-xs: 1 kolom saja */
+.popup.w-xs .toolgrid{
+  grid-template-columns:1fr;
+  gap:5px;
+}
+.popup.w-xs .tool{
+  padding:9px 10px;
+}
+
+/* Notes cards di w-xs */
+.popup.w-xs .note-card{
+  padding:7px 8px;
+}
+
+/* Items di w-xs */
+.popup.w-xs .item{
+  padding:7px 6px;
+  gap:6px;
+}
+.popup.w-xs .item-ic{
+  width:26px;
+  height:26px;
+  border-radius:7px;
+}
+.popup.w-xs .item-ic svg{
+  width:13px;
+  height:13px;
+}
+.popup.w-xs .item-title{
+  font-size:11.5px;
+}
+.popup.w-xs .item-meta{
+  font-size:9.5px;
+}
+
+/* Vault chips di w-xs: wrap */
+.popup.w-xs .chips{
+  padding:0 8px 6px;
+  gap:4px;
+}
+.popup.w-xs .chip{
+  font-size:10px;
+  padding:4px 8px;
+}
+
+/* Strip di w-xs: hide some cells */
+.popup.w-xs .strip-bar{
+  padding:5px 6px;
+  font-size:10px;
+  gap:3px;
+}
+
+/* Page header di w-xs */
+.popup.w-xs .page-hd{
+  padding:9px 8px;
+  gap:5px;
+}
+.popup.w-xs .page-hd .pt{
+  font-size:12px;
+}
+.popup.w-xs .backbtn{
+  width:24px;
+  height:24px;
+}
+.popup.w-xs .page-body{
+  padding:9px 8px;
+}
+
+/* ============================================================
+   w-xxs (≤220px) — sidebar minimal (sempit banget)
+   ============================================================ */
+.popup.w-xxs .brand-t,
+.popup.w-xxs .brand-s{
+  display:none; /* hide brand text, logo only */
+}
+.popup.w-xxs .hd-actions{
+  gap:1px;
+}
+.popup.w-xxs .iconbtn{
+  width:22px;
+  height:22px;
+}
+.popup.w-xxs .iconbtn svg{
+  width:11px;
+  height:11px;
+}
+
+/* Quick-actions di w-xxs: minimal */
+.popup.w-xxs .quick-actions{
+  padding:3px;
+  gap:2px;
+  margin:2px 4px 4px;
+}
+.popup.w-xxs .qa-btn{
+  padding:6px 1px;
+}
+.popup.w-xxs .qa-btn svg{
+  width:13px;
+  height:13px;
+}
+
+/* Tab bar di w-xxs: padding super kecil */
+.popup.w-xxs .tabbar{
+  padding:3px 2px 4px;
+}
+.popup.w-xxs .tabbtn{
+  padding:5px 1px 3px;
+}
+.popup.w-xxs .tabbtn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tiles di w-xxs: 2 kolom saja */
+.popup.w-xxs .tiles{
+  grid-template-columns:repeat(2,1fr);
+  gap:3px;
+  padding:0 4px 4px;
+}
+
+/* Items: meta di-hide */
+.popup.w-xxs .item-meta{
+  display:none;
+}
+.popup.w-xxs .item{
+  padding:6px 4px;
+  gap:4px;
+}
+
+/* Notes cards di w-xxs */
+.popup.w-xxs .note-meta{
+  font-size:8.5px;
+}
+.popup.w-xxs .note-title{
+  font-size:11.5px;
+}
+.popup.w-xxs .note-body-txt{
+  font-size:11px;
+  -webkit-line-clamp:2;
+}
+
+/* Hide addbtn di w-xxs (sudah ada quick-actions) */
+.popup.w-xxs .vault-hd .addbtn .lbl,
+.popup.w-xxs .addbtn{
+  font-size:0;
+  padding:4px 6px;
+}
+.popup.w-xxs .addbtn svg{
+  width:12px;
+  height:12px;
 }

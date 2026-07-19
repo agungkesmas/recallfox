@@ -20,7 +20,7 @@ import {
   getNoteGroups
 } from '../lib/storage.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
-import { AI_TOOLS, groupByRegion, matchCurrentTool } from '../lib/ai-tools.js';
+import { AI_TOOLS, groupByRegion, matchCurrentTool, getEffectiveTools, getVisibleTools } from '../lib/ai-tools.js';
 import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
 import { getNextPrayerIncludingSunnah, getLastPassedPrayer, getSunnahPrayers, formatCountdown, to12Hour } from '../lib/salahtime.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
@@ -1924,17 +1924,40 @@ function saveScreenshotManualSheet() {
 // ============ AI Tools launcher ============
 function aiToolsSheet() {
   openSheet('Alat AI', 'Pilih alat AI — buka di tab baru', b => {
-    const pinned = AI_TOOLS.filter(t => t.pinned);
-    const others = AI_TOOLS.filter(t => !t.pinned);
-    const row = (t) => '<button class="act" data-url="' + esc(t.url) + '" data-name="' + esc(t.name) + '">' + ICONS.spark + '<div style="flex:1">' + esc(t.name) + '<div class="ad">' + esc(t.url) + '</div></div><span class="ad">Buka</span></button>';
+    // v3.11.1 (Issue 4): Pakai effective tools (built-in + custom + pinned/hidden flags)
+    const customizations = (currentVault?.settings?.aiToolsCustomizations) || {};
+    const effectiveTools = getEffectiveTools(customizations);
+    const visible = effectiveTools.filter(t => !t.hidden);
+    const pinned = visible.filter(t => t.pinned);
+    const others = visible.filter(t => !t.pinned);
+    const row = (t) => '<button class="act" data-url="' + esc(t.url) + '" data-name="' + esc(t.name) + '">'
+      + '<span style="font-size:18px;flex:none;width:24px;text-align:center">' + (t.emoji || '🤖') + '</span>'
+      + '<div style="flex:1"><div>' + esc(t.name) + (t.custom ? ' <span style="font-size:9px;background:var(--violet-soft);color:var(--violet);padding:1px 5px;border-radius:4px;font-weight:700;margin-left:4px">CUSTOM</span>' : '') + (t.pinned ? ' <span style="color:var(--amber)">⭐</span>' : '') + '</div>'
+      + '<div class="ad">' + esc(t.url) + '</div></div>'
+      + '<span class="ad">Buka →</span></button>';
     let html = '';
-    if (pinned.length) html += '<div class="sec-label" style="padding:4px 10px">⭐ Sering dipakai</div>' + pinned.map(row).join('');
+    // v3.11.1: Tombol "Kelola Situs AI" di paling atas
+    html += '<button class="act" id="aiManageBtn" style="background:var(--primary-soft);border:1px dashed var(--primary);margin-bottom:8px">'
+      + '<span style="font-size:18px;flex:none;width:24px;text-align:center">⚙️</span>'
+      + '<div style="flex:1"><div style="color:var(--primary);font-weight:700">Kelola Situs AI</div>'
+      + '<div class="ad">Pin / sembunyikan / tambah situs custom</div></div>'
+      + '<span class="ad">' + visible.length + ' aktif →</span></button>';
+    if (pinned.length) html += '<div class="sec-label" style="padding:4px 10px">⭐ Sering dipakai (' + pinned.length + ')</div>' + pinned.map(row).join('');
     const groups = groupByRegion(others);
     for (const [region, tools] of Object.entries(groups)) {
-      html += '<div class="sec-label" style="padding:8px 10px 4px">' + esc(region) + '</div>' + tools.map(row).join('');
+      if (!tools.length) continue;
+      const regionLabel = { local: '🇮🇩 LOKAL', west: '🌍 BARAT', china: '🇨🇳 CHINA' }[region] || region.toUpperCase();
+      html += '<div class="sec-label" style="padding:8px 10px 4px">' + regionLabel + ' (' + tools.length + ')</div>' + tools.map(row).join('');
     }
     b.innerHTML = html;
-    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', async () => {
+    // Bind "Kelola Situs AI" button
+    const manageBtn = b.querySelector('#aiManageBtn');
+    if (manageBtn) manageBtn.addEventListener('click', () => {
+      closeSheet();
+      setTimeout(() => toolPage('aimanage'), 80);
+    });
+    // Bind AI tool rows
+    b.querySelectorAll('.act[data-url]').forEach(a => a.addEventListener('click', async () => {
       closeSheet();
       await browser.tabs.create({ url: a.dataset.url });
       toast('⚡ ' + a.dataset.name + ' dibuka');
@@ -1981,6 +2004,9 @@ const COMMANDS = [
   { k: 'alat', t: 'Buka tab Alat', s: 'Semua alat dalam satu tempat', run: () => setView('tools') }
 ];
 function renderSearch() {
+  // v3.11.1: Defensive — kalau search bar tidak ada (sidebar mode), skip
+  const searchEl = $('#search');
+  if (!searchEl) return;
   const q = currentQuery.trim(); const has = q.length > 0;
   $('#list').style.display = has ? 'none' : '';
   const cr = $('#cmdres'); cr.style.display = has ? '' : 'none';
@@ -2026,7 +2052,9 @@ function renderSearch() {
   }
 }
 function clearSearch() {
-  $('#search').value = '';
+  // v3.11.1: Defensive — kalau search input tidak ada, just reset state
+  const searchEl = $('#search');
+  if (searchEl) searchEl.value = '';
   currentQuery = '';
   // v3.10.2 (Issue 4 fix): Sembunyikan tombol clear (X) setelah input dikosongkan
   const clearBtn = $('#searchClear');
@@ -2044,7 +2072,11 @@ function setView(v) {
   $('#notesView').classList.toggle('hide', v !== 'notes');
   $('#toolsView').classList.toggle('hide', v !== 'tools');
   const homeOnly = (v === 'home');
-  $('#cmdWrap').style.display = homeOnly ? 'flex' : 'none';
+  // v3.11.1: cmdWrap (search bar) sudah dihapus — ganti dengan quickActions
+  const cmdWrap = $('#cmdWrap');
+  if (cmdWrap) cmdWrap.style.display = homeOnly ? 'flex' : 'none';
+  const quickActions = $('#quickActions');
+  if (quickActions) quickActions.style.display = homeOnly ? 'flex' : 'none';
   document.querySelector('.tiles').style.display = homeOnly ? 'grid' : 'none';
   document.querySelector('.strip').style.display = homeOnly ? '' : 'none';
   $('#page').classList.remove('in');
@@ -2067,6 +2099,12 @@ async function renderNotes() {
   const list = $('#notesList');
   const badge = $('#notesBadge');
   if (badge) { badge.style.display = currentNotes.length ? 'grid' : 'none'; badge.textContent = currentNotes.length; }
+  // v3.11.1 (Issue 3 fix): Update count meta di notes-bar compact
+  const countMeta = $('#notesCountMeta');
+  if (countMeta) {
+    const activeCount = currentNotes.filter(n => !n.archived).length;
+    countMeta.textContent = activeCount + ' catatan';
+  }
   // v3.7.2 (Issue 5): Group filter chips
   const groups = await getNoteGroups();
   let groupChipsHtml = '';
@@ -2321,6 +2359,7 @@ const TOOLS = [
   ['puasa', 'Puasa Sunnah', 'Kalender Islam & jadwal', ICONS.moonstar],
   ['volume', 'Penguat Volume', 'Hingga 600% per tab', ICONS.vol],
   ['kontrol', 'Kontrol Situs', 'Blocker + filter konten', ICONS.shield],
+  ['aimanage', 'Kelola Situs AI', 'Pin/hide/tambah situs', ICONS.spark],  // v3.11.1 (Issue 4)
   ['cache', 'Bersihkan Cache', '9 tipe data · konfirmasi', ICONS.trash, 'warn'],
   ['askai', 'Tanya AI', 'Tanya soal teks terseleksi', ICONS.spark],
   ['gdrive', 'Sync GDrive', 'Apps Script Spreadsheet', ICONS.cloud || '☁️'],   // v3.8.1 Issue #1+#2
@@ -2333,7 +2372,7 @@ function renderTools() {
 }
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard' };
+  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -2344,6 +2383,7 @@ function toolPage(k) {
   else if (k === 'gdrive') renderGDrivePage(B);   // v3.8.1 Issue #1+#2+#6
   else if (k === 'keys') renderKeysPage(B);
   else if (k === 'kontrol') renderKontrolSitusPage(B);
+  else if (k === 'aimanage') renderAiManagePage(B);  // v3.11.1 (Issue 4)
   else renderToolStubPage(B, k, names[k]);
 }
 function renderShalatPage(B) {
@@ -2832,6 +2872,170 @@ function renderToolStubPage(B, k, name) {
     + '<div style="font-size:12.5px;color:var(--text-2);line-height:1.55;max-width:250px;margin:0 auto 14px">' + (desc[k] || '') + '</div>'
     + '<button class="btn btn-p" id="goSettings">Buka di Pengaturan</button></div>';
   $('#goSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
+}
+
+// v3.11.1 (Issue 4): Halaman "Kelola Situs AI"
+// User bisa: pin/unpin, hide/unhide, add custom site, delete custom site.
+// Set perubahan disimpan di settings.aiToolsCustomizations.
+async function renderAiManagePage(B) {
+  const s = currentVault?.settings || {};
+  const customizations = s.aiToolsCustomizations || {};
+  const allTools = getEffectiveTools(customizations);
+
+  const render = () => {
+    const currentCust = (currentVault?.settings?.aiToolsCustomizations) || {};
+    const tools = getEffectiveTools(currentCust);
+    const pinned = tools.filter(t => t.pinned && !t.hidden);
+    const visible = tools.filter(t => !t.pinned && !t.hidden);
+    const hidden = tools.filter(t => t.hidden);
+    const custom = tools.filter(t => t.custom);
+
+    const row = (t) => {
+      const pinnedBtn = t.pinned
+        ? '<button class="btn btn-g ai-action-btn ai-unpin" data-id="' + esc(t.id) + '" data-act="unpin" title="Lepas pin" style="background:var(--amber-soft);color:var(--amber);border-color:transparent">⭐ Unpin</button>'
+        : '<button class="btn btn-g ai-action-btn ai-pin" data-id="' + esc(t.id) + '" data-act="pin" title="Pin ke atas">☆ Pin</button>';
+      const hideBtn = '<button class="btn btn-g ai-action-btn ai-hide" data-id="' + esc(t.id) + '" data-act="hide" title="Sembunyikan dari daftar">👁️ Hide</button>';
+      const deleteBtn = t.custom
+        ? '<button class="btn btn-d ai-action-btn ai-delete" data-id="' + esc(t.id) + '" data-act="delete" title="Hapus permanen">🗑️</button>'
+        : '';
+      const customBadge = t.custom ? ' <span style="font-size:9px;background:var(--violet-soft);color:var(--violet);padding:1px 5px;border-radius:4px;font-weight:700;margin-left:4px">CUSTOM</span>' : '';
+      const pinnedBadge = t.pinned ? ' <span style="color:var(--amber)">⭐</span>' : '';
+      return '<div class="ai-mgmt-row" data-id="' + esc(t.id) + '">'
+        + '<div class="ai-mgmt-ic">' + (t.emoji || '🤖') + '</div>'
+        + '<div class="ai-mgmt-main">'
+        + '<div class="ai-mgmt-name">' + esc(t.name) + customBadge + pinnedBadge + '</div>'
+        + '<div class="ai-mgmt-url">' + esc(t.url) + '</div>'
+        + '</div>'
+        + '<div class="ai-mgmt-actions">'
+        + pinnedBtn + hideBtn + deleteBtn
+        + '</div>'
+        + '</div>';
+    };
+
+    let html = '';
+    // Intro
+    html += '<div class="card" style="background:linear-gradient(135deg,var(--primary-soft),var(--surface-2));border:1px solid var(--primary)">'
+      + '<div style="display:flex;align-items:center;gap:10px">'
+      + '<div style="font-size:24px">⚙️</div>'
+      + '<div style="flex:1">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--primary)">Kelola Situs AI</div>'
+      + '<div style="font-size:11px;color:var(--text-2);margin-top:2px;line-height:1.5">Pin situs yang sering dipakai ke atas, sembunyikan yang tidak pernah dipakai, atau tambah situs AI baru yang custom.</div>'
+      + '</div></div></div>';
+
+    // Stats summary
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px">'
+      + '<div style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 8px">'
+      + '<div style="font-size:18px;font-weight:750;color:var(--primary)">' + pinned.length + '</div>'
+      + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">Dipin</div></div>'
+      + '<div style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 8px">'
+      + '<div style="font-size:18px;font-weight:750;color:var(--text)">' + (pinned.length + visible.length) + '</div>'
+      + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">Aktif</div></div>'
+      + '<div style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 8px">'
+      + '<div style="font-size:18px;font-weight:750;color:var(--muted)">' + hidden.length + '</div>'
+      + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">Disembunyikan</div></div>'
+      + '</div>';
+
+    html += '</div>';
+
+    // Add custom site form
+    html += '<div class="card">'
+      + '<h3>➕ Tambah Situs AI Custom</h3>'
+      + '<div class="ai-add-form">'
+      + '<div class="ai-add-row"><label>Nama</label><input id="aiAddName" type="text" placeholder="mis. MyAI" /></div>'
+      + '<div class="ai-add-row"><label>URL</label><input id="aiAddUrl" type="text" placeholder="https://myai.example.com/" /></div>'
+      + '<div class="ai-add-row"><label>Emoji (opsional)</label><input id="aiAddEmoji" type="text" placeholder="🤖" maxlength="4" style="max-width:80px" /></div>'
+      + '<div class="ai-add-row"><label>Region</label>'
+      + '<select id="aiAddRegion">'
+      + '<option value="west">🌍 Barat</option>'
+      + '<option value="china">🇨🇳 China</option>'
+      + '<option value="local">🇮🇩 Lokal</option>'
+      + '</select></div>'
+      + '</div>'
+      + '<button class="btn btn-p" id="aiAddBtn" style="margin-top:10px;width:100%">➕ Tambah Situs</button>'
+      + '</div>';
+
+    // Pinned section
+    if (pinned.length) {
+      html += '<div class="card"><h3>⭐ Dipin (' + pinned.length + ')</h3>'
+        + '<div class="ai-mgmt-list">' + pinned.map(row).join('') + '</div></div>';
+    }
+    // Active (non-pinned, visible)
+    if (visible.length) {
+      html += '<div class="card"><h3>📋 Aktif (' + visible.length + ')</h3>'
+        + '<div class="ai-mgmt-list">' + visible.map(row).join('') + '</div></div>';
+    }
+    // Hidden section
+    if (hidden.length) {
+      html += '<div class="card"><h3>🚫 Disembunyikan (' + hidden.length + ')</h3>'
+        + '<div class="ai-mgmt-list">' + hidden.map(row).join('') + '</div></div>';
+    }
+    // Custom sites info
+    if (custom.length) {
+      html += '<div class="hintbox" style="margin-top:10px">💡 <b>' + custom.length + ' situs custom</b> — ditandai badge "CUSTOM". Bisa dihapus permanen dengan tombol 🗑️.</div>';
+    }
+
+    B.innerHTML = html;
+
+    // Bind action buttons (pin/unpin/hide/unhide/delete)
+    B.querySelectorAll('.ai-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const act = btn.dataset.act;
+        const cust = { ...((currentVault?.settings?.aiToolsCustomizations) || {}) };
+        if (!cust[id]) cust[id] = {};
+        if (act === 'pin') { cust[id].pinned = true; toast('⭐ Dipin ke atas'); }
+        else if (act === 'unpin') { cust[id].pinned = false; toast('☆ Pin dilepas'); }
+        else if (act === 'hide') { cust[id].hidden = true; toast('👁️ Disembunyikan'); }
+        else if (act === 'unhide') { cust[id].hidden = false; toast('👁️ Ditampilkan kembali'); }
+        else if (act === 'delete') {
+          // Confirm before delete
+          if (!confirm('Hapus situs custom ini permanen? Tidak bisa dibatalkan.')) return;
+          delete cust[id];
+          toast('🗑️ Situs custom dihapus');
+        }
+        await saveSettings({ aiToolsCustomizations: cust });
+        await refreshVault();
+        render();
+      });
+    });
+
+    // Also update unhide buttons in hidden section — they use act="hide" with already-hidden tool
+    // Re-bind: untuk tool yang sudah hidden, tombol "Hide" jadi "Unhide"
+    B.querySelectorAll('.ai-mgmt-row').forEach(r => {
+      const id = r.dataset.id;
+      const cust = (currentVault?.settings?.aiToolsCustomizations) || {};
+      const isHidden = cust[id]?.hidden === true;
+      const hideBtn = r.querySelector('.ai-hide');
+      if (hideBtn && isHidden) {
+        hideBtn.textContent = '👁️ Unhide';
+        hideBtn.dataset.act = 'unhide';
+        hideBtn.style.background = 'var(--green-soft)';
+        hideBtn.style.color = 'var(--green)';
+        hideBtn.style.borderColor = 'transparent';
+      }
+    });
+
+    // Bind add button
+    const addBtn = B.querySelector('#aiAddBtn');
+    if (addBtn) addBtn.addEventListener('click', async () => {
+      const name = B.querySelector('#aiAddName').value.trim();
+      const url = B.querySelector('#aiAddUrl').value.trim();
+      const emoji = B.querySelector('#aiAddEmoji').value.trim() || '🤖';
+      const region = B.querySelector('#aiAddRegion').value;
+      if (!name) { toast('⚠️ Nama wajib diisi', 'err'); return; }
+      if (!url || !/^https?:\/\//.test(url)) { toast('⚠️ URL tidak valid (harus http/https)', 'err'); return; }
+      // Generate unique id
+      const customId = 'custom_' + Date.now().toString(36);
+      const cust = { ...((currentVault?.settings?.aiToolsCustomizations) || {}) };
+      cust[customId] = { custom: true, name, url, region, emoji, alt: [], pinned: false, hidden: false };
+      await saveSettings({ aiToolsCustomizations: cust });
+      await refreshVault();
+      toast('✅ ' + name + ' ditambahkan');
+      render();
+    });
+  };
+
+  render();
 }
 
 // v3.7: Halaman Backup — UI lengkap dengan export/import/info langsung
@@ -4244,17 +4448,23 @@ async function init() {
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
 
   // Width responsive for sidebar
+  // v3.11.1 (Issue 2 fix): Tambah w-xs (≤280px) dan w-xxs (≤220px) untuk collapse lebih sempit.
+  // Sebelumnya cuma w-sm (≤310px) — tidak cukup untuk sidebar super narrow.
   if (document.body.classList.contains('rf-sidebar-body')) {
     const setW = () => {
       const w = window.innerWidth;
-      $('#popup').classList.toggle('w-sm', w <= 310);
+      const popup = $('#popup');
+      if (!popup) return;
+      popup.classList.toggle('w-sm', w <= 360);
+      popup.classList.toggle('w-xs', w <= 280);
+      popup.classList.toggle('w-xxs', w <= 220);
     };
     setW();
     window.addEventListener('resize', setW);
   }
 
-  // Focus search
-  try { setTimeout(() => $('#search')?.focus(), 300); } catch (e) {}
+  // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
+  // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
 }
 
 function bindEvents() {
@@ -4305,35 +4515,53 @@ function bindEvents() {
   $('#tabTools').addEventListener('click', () => setView('tools'));
 
   // Search / command bar
+  // v3.11.1: Search bar sudah dihapus dari sidebar (ganti quick-actions).
+  // Pertahankan binding untuk popup mode (yang masih punya search bar).
   // v3.10.2 (Issue 4 fix): Update tombol clear (X) visibility saat user mengetik
   const searchInput = $('#search');
   const searchClearBtn = $('#searchClear');
   function updateClearBtnVisibility() {
     if (!searchClearBtn) return;
-    searchClearBtn.style.display = (searchInput.value && searchInput.value.length > 0) ? 'flex' : 'none';
+    searchClearBtn.style.display = (searchInput && searchInput.value && searchInput.value.length > 0) ? 'flex' : 'none';
   }
-  $('#search').addEventListener('input', e => {
-    currentQuery = e.target.value;
-    updateClearBtnVisibility();
-    renderSearch();
-  });
-  $('#search').addEventListener('keydown', e => {
-    if (e.key === 'Escape') { clearSearch(); updateClearBtnVisibility(); e.target.blur(); }
-  });
-  // v3.10.2 (Issue 4 fix): Click tombol clear (X) → hapus semua teks sekaligus
-  if (searchClearBtn) {
-    searchClearBtn.addEventListener('click', () => {
-      clearSearch();
+  if (searchInput) {
+    searchInput.addEventListener('input', e => {
+      currentQuery = e.target.value;
       updateClearBtnVisibility();
-      searchInput.focus();
+      renderSearch();
     });
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { clearSearch(); updateClearBtnVisibility(); e.target.blur(); }
+    });
+    // v3.10.2 (Issue 4 fix): Click tombol clear (X) → hapus semua teks sekaligus
+    if (searchClearBtn) {
+      searchClearBtn.addEventListener('click', () => {
+        clearSearch();
+        updateClearBtnVisibility();
+        searchInput.focus();
+      });
+    }
   }
+  // v3.11.1: Quick-actions bar (pengganti search bar di sidebar)
+  // 5 tombol cepat: Prompt, Catatan, Link, Shot, Menu lengkap
+  const qaPrompt = $('#qaNewPrompt');
+  if (qaPrompt) qaPrompt.addEventListener('click', savePromptSheet);
+  const qaNote = $('#qaNewNote');
+  if (qaNote) qaNote.addEventListener('click', () => { setView('notes'); newNote(); });
+  const qaLink = $('#qaNewLink');
+  if (qaLink) qaLink.addEventListener('click', saveLinkSheet);
+  const qaShot = $('#qaQuickShot');
+  if (qaShot) qaShot.addEventListener('click', () => doShot());
+  const qaMore = $('#qaMoreBtn');
+  if (qaMore) qaMore.addEventListener('click', addItemMenu);
+
   document.addEventListener('keydown', e => {
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && !inField) {
+    // v3.11.1: Shortcuts search hanya aktif kalau search bar ada (popup mode)
+    if (searchInput && ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && !inField)) {
       e.preventDefault();
       setView('home');
-      $('#search').focus();
+      searchInput.focus();
     }
     if (e.key === 'Escape') {
       if ($('#prayerSetupOverlay').style.display !== 'none') closePrayerSetup();
