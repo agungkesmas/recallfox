@@ -4543,7 +4543,8 @@ function bindEvents() {
     }
   }
   // v3.11.1: Quick-actions bar (pengganti search bar di sidebar)
-  // 5 tombol cepat: Prompt, Catatan, Link, Shot, Menu lengkap
+  // v3.11.2: Tombol "Menu" (qaMoreBtn) dihapus — redundan dengan tombol "Baru" di vault view.
+  // Sisa 4 tombol cepat: Prompt, Catatan, Link, Shot.
   const qaPrompt = $('#qaNewPrompt');
   if (qaPrompt) qaPrompt.addEventListener('click', savePromptSheet);
   const qaNote = $('#qaNewNote');
@@ -4552,8 +4553,6 @@ function bindEvents() {
   if (qaLink) qaLink.addEventListener('click', saveLinkSheet);
   const qaShot = $('#qaQuickShot');
   if (qaShot) qaShot.addEventListener('click', () => doShot());
-  const qaMore = $('#qaMoreBtn');
-  if (qaMore) qaMore.addEventListener('click', addItemMenu);
 
   document.addEventListener('keydown', e => {
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);

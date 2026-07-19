@@ -48,28 +48,30 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
 
 /* ============================================================
    v3.11.1 (Issue 2 fix): Quick Actions bar — pengganti search bar
-   - 5 tombol cepat: Prompt, Catatan, Link, Shot, Menu
-   - Wrap ke 2 baris saat narrow, icon-only saat sangat sempit
+   v3.11.2: 4 tombol saja (Prompt, Catatan, Link, Shot) — Menu button dihapus.
+   - flex-wrap:wrap supaya tombol wrap ke baris berikutnya saat sidebar sempit
+   - Saat sangat sempit, icon-only (label di-hide via w-xs)
    ============================================================ */
 .quick-actions{
   display:flex;
+  flex-wrap:wrap;            /* v3.11.2: FIX wrap logic — tombol wrap bila tidak muat */
   align-items:center;
   gap:6px;
   margin:2px 10px 8px;
-  padding:0;
+  padding:6px;
   background:var(--surface);
   border:1px solid var(--border);
   border-radius:var(--r-md);
-  padding:6px 6px;
   flex:none;
 }
 .qa-btn{
-  flex:1;
+  flex:1 1 auto;             /* v3.11.2: allow grow+shrink+wrap basis auto */
+  min-width:60px;            /* v3.11.2: minimum width sebelum wrap */
   display:flex;
   align-items:center;
   justify-content:center;
   gap:5px;
-  padding:7px 4px;
+  padding:7px 6px;
   border-radius:8px;
   background:transparent;
   color:var(--text-2);
@@ -77,9 +79,8 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   font-weight:650;
   cursor:pointer;
   transition:.15s;
-  min-width:0;
-  white-space:nowrap;
   overflow:hidden;
+  white-space:nowrap;
 }
 .qa-btn svg{
   width:14px;
@@ -99,62 +100,53 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
 .qa-btn:active{
   transform:translateY(0) scale(.96);
 }
-.qa-btn-more{
-  color:var(--text-2);
-}
-.qa-btn-more svg{
-  color:var(--text-2);
-}
 
 /* ============================================================
-   v3.11.1 (Issue 3 fix): Notes bar compact redesign
-   - Hapus ruang kosong mubazir
-   - 2 baris: atas (title + count), bawah (action buttons)
-   - Action buttons pakai icon + label (label sembunyi di narrow)
+   v3.11.2 (Issue dari Google Doc): Notes bar — 1-row dengan flex-wrap
+   Revert dari V3.11.1 yang pakai 2-row vertical (bikin wrap rusak).
+   Layout: title + count + spacer + 2 action buttons, semua flex-wrap.
+   Saat sidebar sempit, action buttons wrap ke baris berikutnya.
    ============================================================ */
-.notes-bar-compact{
+.notes-bar-flat{
   display:flex;
-  flex-direction:column;
-  gap:6px;
-  padding:8px 12px 8px !important;
+  flex-wrap:wrap;            /* FIX wrap logic — tombol wrap bila tidak muat */
+  align-items:center;
+  gap:6px 8px;
+  padding:8px 12px !important;
   flex:none;
   border-bottom:1px solid var(--border);
   background:var(--surface);
 }
-.notes-bar-top{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  min-width:0;
-}
-.notes-bar-t{
+.notes-bar-flat .notes-bar-t{
   font-size:11px;
   font-weight:700;
   text-transform:uppercase;
   letter-spacing:.05em;
   color:var(--text);
   white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+  flex:none;
 }
-.notes-bar-meta{
+.notes-bar-flat .notes-bar-meta{
   font-size:10.5px;
   color:var(--muted);
   white-space:nowrap;
   flex:none;
+  background:var(--surface-2);
+  padding:1px 7px;
+  border-radius:999px;
+  font-weight:600;
 }
-.notes-bar-actions{
-  display:flex;
-  gap:6px;
+.notes-bar-flat .notes-bar-spacer{
+  flex:1 1 auto;
+  min-width:0;
 }
-.notes-action-btn{
-  flex:1;
+.notes-bar-flat .notes-action-btn{
+  flex:0 0 auto;             /* v3.11.2: jangan grow — biar wrap bila sempit */
   display:flex;
   align-items:center;
   justify-content:center;
   gap:5px;
-  padding:7px 8px;
+  padding:6px 10px;
   border-radius:8px;
   background:var(--primary-soft);
   color:var(--primary);
@@ -163,30 +155,37 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   cursor:pointer;
   transition:.15s;
   border:1px solid transparent;
-  min-width:0;
+  white-space:nowrap;
 }
-.notes-action-btn svg{
+.notes-bar-flat .notes-action-btn svg{
   width:13px;
   height:13px;
   flex:none;
 }
-.notes-action-btn .lbl{
-  white-space:nowrap;
+.notes-bar-flat .notes-action-btn .lbl{
   overflow:hidden;
   text-overflow:ellipsis;
 }
-.notes-action-btn:hover{
+.notes-bar-flat .notes-action-btn:hover{
   background:var(--primary);
   color:#fff;
   border-color:var(--primary);
 }
-.notes-action-btn:active{
+.notes-bar-flat .notes-action-btn:active{
   transform:scale(.97);
+}
+.notes-bar-flat .notes-action-secondary{
+  background:var(--surface-2);
+  color:var(--text-2);
+}
+.notes-bar-flat .notes-action-secondary:hover{
+  background:var(--text);
+  color:var(--bg);
+  border-color:var(--text);
 }
 
 /* ============================================================
    v3.11.1 (Issue 3 fix): Tools header compact
-   - Hapus sec-label yang panjang, ganti dengan compact header
    ============================================================ */
 .tools-header{
   display:flex;
@@ -195,6 +194,7 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   gap:8px;
   padding:6px 4px 10px;
   min-width:0;
+  flex-wrap:wrap;            /* v3.11.2: wrap juga di tools header */
 }
 .tools-h-t{
   font-size:11px;
@@ -291,10 +291,14 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   gap:4px;
 }
 
-/* Notes bar compact di w-sm */
-.popup.w-sm .notes-bar-compact{
-  padding:6px 8px 6px !important;
-  gap:5px;
+/* v3.11.2: Notes bar flat (1-row + flex-wrap) di w-sm */
+.popup.w-sm .notes-bar-flat{
+  padding:6px 8px !important;
+  gap:5px 6px;
+}
+.popup.w-sm .notes-bar-flat .notes-action-btn{
+  padding:5px 8px;
+  font-size:10.5px;
 }
 
 /* Tools header di w-sm */
@@ -413,19 +417,20 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:12px;
 }
 
-/* Quick-actions di w-xs: ICON-ONLY, label di-hide */
+/* Quick-actions di w-xs: ICON-ONLY, label di-hide. v3.11.2: min-width:0 supaya wrap lebih cepat */
 .popup.w-xs .quick-actions{
   gap:3px;
-  padding:4px 4px;
+  padding:4px;
   margin:2px 6px 5px;
 }
 .popup.w-xs .qa-btn{
-  padding:8px 2px;
+  padding:8px 4px;
   gap:0;
-  font-size:9px;
+  font-size:0;
   min-width:0;
+  flex:1 1 40px;  /* v3.11.2: wrap ke 2 baris (2x2) bila sempit */
 }
-.popup.w-xs .qa-btn .lbl{
+.popup.w-xs .qa-btn span{
   display:none; /* label di-hide, icon-only */
 }
 .popup.w-xs .qa-btn svg{
@@ -433,45 +438,47 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:14px;
 }
 
-/* Tiles di w-xs: icon-only, lebih kompak */
+/* Tiles di w-xs: icon-only, 3 kolom. v3.11.2: gunakan display:inline-flex untuk anak-anak */
 .popup.w-xs .tiles{
   gap:4px;
   padding:0 6px 6px;
   grid-template-columns:repeat(3,1fr);
 }
 .popup.w-xs .tile{
-  padding:7px 1px;
-  font-size:0; /* hide text */
+  padding:8px 2px;
+  font-size:0; /* hide text label */
   gap:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
 }
 .popup.w-xs .tile svg{
   width:14px;
   height:14px;
-}
-.popup.w-xs .tile::after{
-  content:attr(title);
-  font-size:0;
+  display:block;
 }
 
-/* Notes bar di w-xs: bahkan lebih kompak */
-.popup.w-xs .notes-bar-compact{
-  padding:5px 6px 5px !important;
-  gap:4px;
+/* v3.11.2: Notes bar flat di w-xs — tombol wrap ke baris berikutnya, icon-only */
+.popup.w-xs .notes-bar-flat{
+  padding:5px 6px !important;
+  gap:4px 5px;
 }
-.popup.w-xs .notes-bar-t{
+.popup.w-xs .notes-bar-flat .notes-bar-t{
   font-size:10px;
 }
-.popup.w-xs .notes-bar-meta{
+.popup.w-xs .notes-bar-flat .notes-bar-meta{
   font-size:9px;
+  padding:1px 5px;
 }
-.popup.w-xs .notes-action-btn{
-  padding:6px 4px;
-  font-size:10px;
+.popup.w-xs .notes-bar-flat .notes-action-btn{
+  padding:6px 5px;
+  font-size:0;
+  flex:0 0 auto;
 }
-.popup.w-xs .notes-action-btn .lbl{
+.popup.w-xs .notes-bar-flat .notes-action-btn .lbl{
   display:none; /* icon-only */
 }
-.popup.w-xs .notes-action-btn svg{
+.popup.w-xs .notes-bar-flat .notes-action-btn svg{
   width:14px;
   height:14px;
 }
@@ -583,14 +590,15 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   height:11px;
 }
 
-/* Quick-actions di w-xxs: minimal */
+/* Quick-actions di w-xxs: minimal, 2x2 grid */
 .popup.w-xxs .quick-actions{
   padding:3px;
   gap:2px;
   margin:2px 4px 4px;
 }
 .popup.w-xxs .qa-btn{
-  padding:6px 1px;
+  padding:6px 2px;
+  flex:1 1 35px;  /* v3.11.2: wrap ke 2x2 di w-xxs */
 }
 .popup.w-xxs .qa-btn svg{
   width:13px;
@@ -623,6 +631,26 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
 .popup.w-xxs .item{
   padding:6px 4px;
   gap:4px;
+}
+
+/* v3.11.2: Notes bar flat di w-xxs */
+.popup.w-xxs .notes-bar-flat{
+  padding:4px 5px !important;
+  gap:3px 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-bar-t{
+  font-size:9.5px;
+}
+.popup.w-xxs .notes-bar-flat .notes-bar-meta{
+  font-size:8.5px;
+  padding:0 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-action-btn{
+  padding:5px 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-action-btn svg{
+  width:13px;
+  height:13px;
 }
 
 /* Notes cards di w-xxs */
