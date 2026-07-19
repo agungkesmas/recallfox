@@ -398,6 +398,11 @@ function renderChips() {
 
 // v3.7.2 (Issue 4): Searchable text untuk satu item — gabungan field yang relevan.
 // Termasuk screenshot source.url, source.title, linkUrl, dan bundle item titles.
+// v3.10.2 (Issue 4 fix): Lebih komprehensif — tambah screenshotMode, fileName,
+//   gdriveFileUrl, bundle note titles/bodies (noteIds), inlinePrompt, nama bundle,
+//   dll. Memastikan user bisa cari "github" di link apapun, cari teks di catatan
+//   bundle, cari nama bundle, dst. Sesuai catatan Issue #4: harus bisa cari teks
+//   di Prompt, Konteks, Link, Bundle, Snapshot, Shot, sampai arsip.
 function searchableTextFor(it) {
   if (!it) return '';
   const parts = [it.title || '', it.type || ''];
@@ -410,14 +415,40 @@ function searchableTextFor(it) {
   if (it.source) {
     if (it.source.url) parts.push(it.source.url);
     if (it.source.title) parts.push(it.source.title);
+    if (it.source.domain) parts.push(it.source.domain);
   }
+  // v3.10.2 (Issue 4 fix): Field tambahan untuk screenshot — mode, gdrive link
+  if (it.screenshotMode) parts.push(it.screenshotMode);
+  if (it.gdriveFileUrl) parts.push(it.gdriveFileUrl);
+  if (it.gdriveFileId) parts.push(it.gdriveFileId);
+  // v3.10.2 (Issue 4 fix): Snapshot metadata
+  if (it.snapshotDomain) parts.push(it.snapshotDomain);
+  if (it.snapshotMessageCount) parts.push(String(it.snapshotMessageCount));
   // v3.7.2 (Issue 4): bundle — sertakan judul semua item anggota
   if (it._bundle) {
-    const memberTitles = (it._bundle.injectOrder || it._bundle.itemIds || [])
+    const bd = it._bundle;
+    if (bd.name) parts.push(bd.name);
+    if (bd.note) parts.push(bd.note);
+    if (bd.inlinePrompt) parts.push(bd.inlinePrompt);
+    const memberTitles = (bd.injectOrder || bd.itemIds || [])
       .map(iid => currentVault.items.find(i => i.id === iid))
       .filter(Boolean)
       .map(i => i.title || '');
     parts.push(memberTitles.join(' '));
+    // v3.10.2 (Issue 4 fix): Sertakan juga body item anggota (bukan cuma title)
+    // sehingga user bisa cari teks di dalam item bundle.
+    const memberBodies = (bd.injectOrder || bd.itemIds || [])
+      .map(iid => currentVault.items.find(i => i.id === iid))
+      .filter(Boolean)
+      .map(i => (i.body || '') + ' ' + (i.linkUrl || '') + ' ' + (i.linkTitle || ''));
+    parts.push(memberBodies.join(' '));
+    // v3.10.2 (Issue 4 fix): Sertakan juga title + body catatan bundle (noteIds)
+    const noteIds = Array.isArray(bd.noteIds) ? bd.noteIds : [];
+    const noteTexts = noteIds
+      .map(nid => currentNotes.find(n => n.id === nid))
+      .filter(Boolean)
+      .map(n => (n.title || '') + ' ' + (n.body || ''));
+    parts.push(noteTexts.join(' '));
   }
   return parts.join(' ').toLowerCase();
 }
@@ -520,14 +551,29 @@ function bindItemClicks() {
         if (action === 'copy') { injectBundle(it.id); return; }
         else if (action === 'inject') {
           // Sisipkan semua teks item bundle ke chat AI
+          // v3.10.2 (Issue 3 + 5 fix): Sertakan juga catatan (bundle.noteIds)
+          // dan inline prompt — sebelumnya hanya item teks.
           const bundle = currentVault.bundles.find(b => b.id === it.id);
           if (bundle) {
             const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
             const textItems = items.filter(i => i.type !== 'link');
-            if (textItems.length > 0) {
-              const text = textItems.map(i => '## ' + (i.title || i.type) + '\n' + (i.body || '')).join('\n\n---\n\n');
+            const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
+            const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+            const parts = [];
+            // Inline prompt di awal kalau ada
+            if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
+              parts.push('## ' + (bundle.name || 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
+            }
+            for (const i of textItems) {
+              parts.push('## ' + (i.title || i.type) + '\n' + (i.body || ''));
+            }
+            for (const n of notes) {
+              parts.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + (n.body || ''));
+            }
+            if (parts.length > 0) {
+              const text = parts.join('\n\n---\n\n');
               doInject(text, it.id);
-            } else { toast('Bundle tidak punya item teks', false); }
+            } else { toast('Bundle tidak punya item teks/catatan', false); }
           }
           return;
         }
@@ -677,23 +723,36 @@ async function injectBundle(id) {
   const bundle = currentVault.bundles.find(b => b.id === id);
   if (!bundle) return;
   const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
-  if (items.length === 0) { toast('Bundle kosong', false); return; }
+  // v3.10.2 (Issue 3 + 5 fix): Sertakan catatan yang tercentang (bundle.noteIds)
+  // ke teks bundle saat disalin/disisipkan — sebelumnya noteIds diabaikan.
+  const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
+  const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+  if (items.length === 0 && notes.length === 0) { toast('Bundle kosong', false); return; }
   // v3.7.1-FIX: Bundle sekarang salin semua konten ke clipboard, bukan buka link di tab baru
   const allParts = items.map(i => {
     const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
     if (i.type === 'link') return header + '\n' + (i.linkUrl || i.body || '');
     return header + '\n' + (i.body || '');
   });
+  // v3.10.2 (Issue 3 + 5 fix): Tambahkan catatan sebagai section terpisah
+  for (const n of notes) {
+    const noteTitle = n.title || 'Catatan';
+    allParts.push('## ' + noteTitle + ' [Catatan]\n' + (n.body || ''));
+  }
+  // v3.10.2 (Issue 3 + 5 fix): Tambahkan inline prompt kalau ada
+  if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
+    allParts.unshift('## ' + (bundle.inlinePromptItemId ? (bundle.name || 'Prompt Inline') : 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
+  }
   const fullText = allParts.join('\n\n---\n\n');
   try {
     await navigator.clipboard.writeText(fullText);
     for (const i of items) await incrementUseCount(i.id);
-    toast('📋 Bundle disalin ke clipboard (' + items.length + ' item)');
+    toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
   } catch (e) {
     try {
       await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
       for (const i of items) await incrementUseCount(i.id);
-      toast('📋 Bundle disalin ke clipboard (' + items.length + ' item)');
+      toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
     } catch (e2) {
       toast('⚠ Gagal menyalin bundle', false);
     }
@@ -808,6 +867,10 @@ function openReassignBundleSheet(itemId) {
   });
 }
 // v3.7.2 (Issue 1): Bundle editor — ubah nama, tambah / hapus anggota, arsipkan bundle.
+// v3.10.2 (Issue 5 fix): Selaraskan dengan Buat Bundle — tambah section Catatan,
+//   filter "Catatan", field Warna, field Prompt cepat inline, checkbox "Simpan
+//   sebagai item Prompt". Catatan yang tercentang sekarang diteruskan ke
+//   updateBundle({ noteIds }) sehingga konsisten dengan addBundle.
 function openBundleEditorSheet(bundleId) {
   const bd = currentVault.bundles.find(b => b.id === bundleId);
   if (!bd) { toast('Bundle tidak ditemukan', false); return; }
@@ -817,11 +880,31 @@ function openBundleEditorSheet(bundleId) {
     ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
   ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                     (a.title || '').localeCompare(c.title || ''));
+  // v3.10.2 (Issue 5 fix): Catatan candidates — selaras dengan Buat Bundle
+  const noteCandidates = (currentNotes || []).filter(n => !n.archived);
 
-  openSheet('📦 Edit Bundle', 'Filter per tipe, centang anggota, simpan', b => {
+  openSheet('📦 Edit Bundle', 'Filter per tipe, centang anggota + catatan, simpan', b => {
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Nama Bundle</label><input class="f" id="ebName" value="' + esc(bd.name || '') + '" placeholder="mis. Riset kompetitor…"></div>'
-      // v3.9.0 (Issue 2): Filter chips per tipe
+      // v3.10.2 (Issue 5 fix): Tambah field Warna label (sebelumnya hanya di Buat Bundle)
+      + '<div><label>Warna label <span class="field-hint">(opsional, untuk sort visual)</span></label>'
+      +   '<select class="f" id="ebColor">'
+      +     '<option value=""' + ((bd.color || '') === '' ? ' selected' : '') + '>— Tanpa warna —</option>'
+      +     '<option value="orange"' + (bd.color === 'orange' ? ' selected' : '') + '>🟠 Oranye</option>'
+      +     '<option value="green"' + (bd.color === 'green' ? ' selected' : '') + '>🟢 Hijau</option>'
+      +     '<option value="blue"' + (bd.color === 'blue' ? ' selected' : '') + '>🔵 Biru</option>'
+      +     '<option value="purple"' + (bd.color === 'purple' ? ' selected' : '') + '>🟣 Ungu</option>'
+      +     '<option value="pink"' + (bd.color === 'pink' ? ' selected' : '') + '>🩷 Merah Muda</option>'
+      +     '<option value="red"' + (bd.color === 'red' ? ' selected' : '') + '>🔴 Merah</option>'
+      +   '</select></div>'
+      // v3.10.2 (Issue 5 fix): Tambah Prompt cepat inline (sebelumnya hanya di Buat Bundle)
+      + '<div><label>Prompt cepat <span class="field-hint">(opsional — tulis prompt langsung tanpa bikin item dulu)</span></label>'
+      +   '<input class="f" id="ebInlineTitle" placeholder="Judul prompt (opsional)" style="margin-bottom:4px" value="' + esc(bd.inlinePromptItemId ? (bd.name || '') + ' — inline' : '') + '">'
+      +   '<textarea class="f" id="ebInlinePrompt" rows="3" placeholder="Tulis prompt cepat — akan di-inject sebagai prompt tambahan saat bundle dipakai...">' + esc(bd.inlinePrompt || '') + '</textarea>'
+      +   '<label class="checkrow" style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px">'
+      +     '<input type="checkbox" id="ebSaveAsPrompt"' + (bd.inlinePromptItemId ? ' checked' : '') + '> Simpan juga sebagai item Prompt tersendiri'
+      +   '</label></div>'
+      // v3.9.0 (Issue 2): Filter chips per tipe — sekarang + chip "Catatan"
       + '<div><label>Filter per tipe <span class="field-hint">(klik untuk filter)</span></label>'
       +   '<div class="eb-filters" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'
       +     '<button class="chip eb-filter on" data-cat="all" style="font-size:10.5px;padding:3px 9px">Semua</button>'
@@ -830,36 +913,59 @@ function openBundleEditorSheet(bundleId) {
       +     '<button class="chip eb-filter" data-cat="link" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #0891b2">🔗 Link</button>'
       +     '<button class="chip eb-filter" data-cat="screenshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--green)">🖼️ Media</button>'
       +     '<button class="chip eb-filter" data-cat="snapshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--amber)">📸 Snapshot</button>'
+      +     '<button class="chip eb-filter" data-cat="note" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #ca8a04">📝 Catatan</button>'
       +   '</div></div>'
-      + '<div><label>Anggota <span class="field-hint" id="ebCount">' + (bd.itemIds || []).length + ' dipilih</span></label>'
+      + '<div><label>Anggota <span class="field-hint" id="ebCount">' + ((bd.itemIds || []).length + (bd.noteIds || []).length) + ' dipilih</span></label>'
       +   '<div class="picklist" id="ebList"></div></div>'
       + '<div class="btn-row"><button class="btn btn-g" id="ebArchive">' + ICONS.archive + (bd.archived ? 'Keluarkan dari arsip' : 'Arsipkan') + '</button>'
       +   '<span style="flex:1"></span>'
       +   '<button class="btn btn-g" id="ebCancel">Batal</button><button class="btn btn-p" id="ebSave">' + ICONS.check + 'Simpan</button></div></div>';
 
     // v3.9.0 (Issue 2): Render list with filter + track checked items in a Set
+    // v3.10.2 (Issue 5 fix): + track checked notes in a Set
     const listBox = b.querySelector('#ebList');
     let activeFilter = 'all';
     b._checkedSet = new Set(bd.itemIds || []);
+    b._checkedNotes = new Set(bd.noteIds || []);
 
     function renderList() {
-      const filtered = activeFilter === 'all'
+      let html = '';
+      // Items
+      const filtered = activeFilter === 'all' || activeFilter === 'note'
         ? allCandidates
         : allCandidates.filter(it => it.type === activeFilter);
-      listBox.innerHTML = filtered.map(it => {
+      for (const it of filtered) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedSet.has(it.id) ? ' checked' : '';
-        return '<label class="pickrow"><input type="checkbox" value="' + it.id + '"' + checked + '>'
+        html += '<label class="pickrow"><input type="checkbox" value="' + it.id + '" data-kind="item"' + checked + '>'
           + '<span class="item-ic t-' + it.type + '" style="width:18px;height:18px;font-size:11px;flex-shrink:0">' + T.icon + '</span>'
           + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</span>'
           + '<span class="pt-type" style="font-size:10px;color:#888">' + T.label + '</span></label>';
-      }).join('');
+      }
+      // v3.10.2 (Issue 5 fix): Notes section — IDENTIK dengan Buat Bundle
+      if ((activeFilter === 'all' || activeFilter === 'note') && noteCandidates.length > 0) {
+        html += '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
+        for (const n of noteCandidates) {
+          const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
+          const checked = b._checkedNotes.has(n.id) ? ' checked' : '';
+          html += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note"' + checked + '>'
+            + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
+            + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(noteTitle) + '</span>'
+            + '<span class="pt-type" style="font-size:10px;color:#888">catatan</span></label>';
+        }
+      }
+      listBox.innerHTML = html;
       // Bind change handlers
       listBox.querySelectorAll('input[type=checkbox]').forEach(cb => {
         cb.addEventListener('change', () => {
-          if (cb.checked) b._checkedSet.add(cb.value);
-          else b._checkedSet.delete(cb.value);
-          b.querySelector('#ebCount').textContent = b._checkedSet.size + ' dipilih';
+          if (cb.dataset.kind === 'note') {
+            if (cb.checked) b._checkedNotes.add(cb.value);
+            else b._checkedNotes.delete(cb.value);
+          } else {
+            if (cb.checked) b._checkedSet.add(cb.value);
+            else b._checkedSet.delete(cb.value);
+          }
+          b.querySelector('#ebCount').textContent = (b._checkedSet.size + b._checkedNotes.size) + ' dipilih';
         });
       });
     }
@@ -879,11 +985,28 @@ function openBundleEditorSheet(bundleId) {
     $('#ebSave').addEventListener('click', async () => {
       const name = ($('#ebName').value || '').trim() || 'Bundle tanpa nama';
       const ids = Array.from(b._checkedSet || []);
-      if (ids.length < 1) { toast('Pilih minimal 1 item', false); return; }
-      await updateBundle(bd.id, { name, itemIds: ids, injectOrder: ids });
+      const noteIds = Array.from(b._checkedNotes || []);
+      // v3.10.2 (Issue 5 fix): Ambil juga warna, inline prompt, saveAsPrompt
+      const color = $('#ebColor')?.value || '';
+      const inlinePrompt = ($('#ebInlinePrompt')?.value || '').trim();
+      const inlineTitle = ($('#ebInlineTitle')?.value || '').trim();
+      const saveAsPrompt = $('#ebSaveAsPrompt')?.checked || false;
+      if (ids.length + noteIds.length < 1 && !inlinePrompt) { toast('Pilih minimal 1 item/catatan ATAU tulis prompt cepat inline', false); return; }
+      // v3.10.2 (Issue 5 fix): Pass noteIds, color, inlinePrompt, saveAsPrompt ke updateBundle
+      await updateBundle(bd.id, {
+        name,
+        itemIds: ids,
+        injectOrder: ids,
+        noteIds,
+        color,
+        inlinePrompt,
+        inlineTitle,
+        saveAsPrompt
+      });
       closeSheet();
       await refreshVault();
-      toast('Bundle diperbarui ✓ · ' + ids.length + ' item');
+      toast('Bundle diperbarui ✓ · ' + (ids.length + noteIds.length) + ' anggota'
+            + (inlinePrompt ? ' + 1 prompt inline' : ''));
     });
     $('#ebArchive').addEventListener('click', async () => {
       await updateBundle(bd.id, { archived: !bd.archived });
@@ -1435,34 +1558,13 @@ function saveBundleSheet() {
     // v3.8.1 (Issue #5a): Bundle sekarang dukung CATATAN sebagai anggota.
     // v3.8.1 (Issue #5d): Item di-sort per tipe + badge warna (bukan cuma teks).
     // Sertakan juga screenshot & snapshot (v3.7.2 Issue 1).
+    // v3.10.2 (Issue 3 fix): Tambah filter per tipe — selaras dengan Edit Bundle.
     const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5 };
     const itemCandidates = (currentVault?.items || []).filter(i =>
       ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
     ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                        (a.title || '').localeCompare(c.title || ''));
     const noteCandidates = (currentNotes || []).filter(n => !n.archived);
-
-    // Build HTML untuk item candidates — dipisah dari string concat utama supaya tidak ada bug parser
-    let itemsHtml = '';
-    for (const it of itemCandidates) {
-      const T = TYPE[it.type] || { icon: '', label: it.type };
-      itemsHtml += '<label class="pickrow"><input type="checkbox" value="' + it.id + '" data-kind="item">'
-        + '<span class="item-ic t-' + it.type + '" style="width:18px;height:18px;font-size:11px;flex-shrink:0">' + T.icon + '</span>'
-        + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</span>'
-        + '<span class="pt-type" style="font-size:10px;color:#888">' + T.label + '</span></label>';
-    }
-    // Build HTML untuk note candidates — Issue #5a
-    let notesHtml = '';
-    if (noteCandidates.length > 0) {
-      notesHtml = '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
-      for (const n of noteCandidates) {
-        const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
-        notesHtml += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note">'
-          + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
-          + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(noteTitle) + '</span>'
-          + '<span class="pt-type" style="font-size:10px;color:#888">catatan</span></label>';
-      }
-    }
 
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Nama Bundle</label><input class="f" id="bT" placeholder="mis. Riset kompetitor…"></div>'
@@ -1482,17 +1584,84 @@ function saveBundleSheet() {
       +   '<label class="checkrow" style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px">'
       +     '<input type="checkbox" id="bSaveAsPrompt"> Simpan juga sebagai item Prompt tersendiri (default: mati)'
       +   '</label></div>'
+      // v3.10.2 (Issue 3 fix): Filter chips per tipe — IDENTIK dengan Edit Bundle
+      + '<div><label>Filter per tipe <span class="field-hint">(klik untuk filter)</span></label>'
+      +   '<div class="eb-filters" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'
+      +     '<button class="chip eb-filter on" data-cat="all" style="font-size:10.5px;padding:3px 9px">Semua</button>'
+      +     '<button class="chip eb-filter" data-cat="prompt" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--primary)">💬 Prompt</button>'
+      +     '<button class="chip eb-filter" data-cat="context" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--violet)">📋 Konteks</button>'
+      +     '<button class="chip eb-filter" data-cat="link" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #0891b2">🔗 Link</button>'
+      +     '<button class="chip eb-filter" data-cat="screenshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--green)">🖼️ Media</button>'
+      +     '<button class="chip eb-filter" data-cat="snapshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--amber)">📸 Snapshot</button>'
+      +     '<button class="chip eb-filter" data-cat="note" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #ca8a04">📝 Catatan</button>'
+      +   '</div></div>'
       + '<div><label>Pilih item <span class="field-hint" id="bCount">0 dipilih</span></label>'
-      +   '<div class="picklist">' + itemsHtml + notesHtml + '</div></div>'
+      +   '<div class="picklist" id="bList"></div></div>'
       + '<div class="btn-row"><button class="btn btn-g" id="bCancel">Batal</button><button class="btn btn-p" id="bSave">' + ICONS.check + 'Buat Bundle</button></div></div>';
 
-    const boxes = [...b.querySelectorAll('input[type=checkbox]')];
-    boxes.forEach(x => x.addEventListener('change', () => {
-      b.querySelector('#bCount').textContent = boxes.filter(c => c.checked).length + ' dipilih';
-    }));
+    // v3.10.2 (Issue 3 fix): Render list dengan filter, tracking checked via Set
+    const listBox = b.querySelector('#bList');
+    let activeFilter = 'all';
+    // Set untuk track item + note yang tercentang (id unik jadi tidak tabrakan)
+    b._checkedItems = new Set();
+    b._checkedNotes = new Set();
+
+    function renderList() {
+      let html = '';
+      // Items (filter sesuai activeFilter, "all" = tampilkan semua)
+      const filteredItems = activeFilter === 'all' || activeFilter === 'note'
+        ? itemCandidates
+        : itemCandidates.filter(it => it.type === activeFilter);
+      for (const it of filteredItems) {
+        const T = TYPE[it.type] || { icon: '', label: it.type };
+        const checked = b._checkedItems.has(it.id) ? ' checked' : '';
+        html += '<label class="pickrow"><input type="checkbox" value="' + it.id + '" data-kind="item"' + checked + '>'
+          + '<span class="item-ic t-' + it.type + '" style="width:18px;height:18px;font-size:11px;flex-shrink:0">' + T.icon + '</span>'
+          + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</span>'
+          + '<span class="pt-type" style="font-size:10px;color:#888">' + T.label + '</span></label>';
+      }
+      // Notes (tampil kalau filter = all atau note)
+      if ((activeFilter === 'all' || activeFilter === 'note') && noteCandidates.length > 0) {
+        html += '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
+        for (const n of noteCandidates) {
+          const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
+          const checked = b._checkedNotes.has(n.id) ? ' checked' : '';
+          html += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note"' + checked + '>'
+            + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
+            + '<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(noteTitle) + '</span>'
+            + '<span class="pt-type" style="font-size:10px;color:#888">catatan</span></label>';
+        }
+      }
+      listBox.innerHTML = html;
+      // Bind change handlers
+      listBox.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          if (cb.dataset.kind === 'note') {
+            if (cb.checked) b._checkedNotes.add(cb.value);
+            else b._checkedNotes.delete(cb.value);
+          } else {
+            if (cb.checked) b._checkedItems.add(cb.value);
+            else b._checkedItems.delete(cb.value);
+          }
+          b.querySelector('#bCount').textContent = (b._checkedItems.size + b._checkedNotes.size) + ' dipilih';
+        });
+      });
+    }
+    renderList();
+
+    // Filter chip handlers
+    b.querySelectorAll('.eb-filter').forEach(btn => {
+      btn.addEventListener('click', () => {
+        b.querySelectorAll('.eb-filter').forEach(c => c.classList.remove('on'));
+        btn.classList.add('on');
+        activeFilter = btn.dataset.cat;
+        renderList();
+      });
+    });
+
     b.querySelector('#bCancel').addEventListener('click', closeSheet);
     b.querySelector('#bSave').addEventListener('click', async () => {
-      const totalChecked = boxes.filter(c => c.checked).length;
+      const totalChecked = b._checkedItems.size + b._checkedNotes.size;
       const inlinePrompt = (b.querySelector('#bInlinePrompt')?.value || '').trim();
       const saveAsPrompt = b.querySelector('#bSaveAsPrompt')?.checked || false;
       // Validasi: minimal 2 item ATAU ada inlinePrompt
@@ -1502,8 +1671,8 @@ function saveBundleSheet() {
       }
       const name = (b.querySelector('#bT')?.value || '').trim() || 'Bundle tanpa nama';
       const color = b.querySelector('#bColor')?.value || '';
-      const itemIds = boxes.filter(c => c.checked && c.dataset.kind === 'item').map(c => c.value);
-      const noteIds = boxes.filter(c => c.checked && c.dataset.kind === 'note').map(c => c.value);
+      const itemIds = Array.from(b._checkedItems);
+      const noteIds = Array.from(b._checkedNotes);
       const inlineTitle = (b.querySelector('#bInlineTitle')?.value || '').trim();
       // v3.8.1: addBundle sekarang terima opts { color, noteIds, inlinePrompt, inlineTitle, saveAsPrompt }
       await addBundle(name, itemIds, {
@@ -1856,7 +2025,14 @@ function renderSearch() {
     cr.querySelectorAll('[data-note]').forEach(el => el.addEventListener('click', () => { setView('notes'); setTimeout(() => openNoteEditor(el.dataset.note), 60); clearSearch(); }));
   }
 }
-function clearSearch() { $('#search').value = ''; currentQuery = ''; renderSearch(); }
+function clearSearch() {
+  $('#search').value = '';
+  currentQuery = '';
+  // v3.10.2 (Issue 4 fix): Sembunyikan tombol clear (X) setelah input dikosongkan
+  const clearBtn = $('#searchClear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  renderSearch();
+}
 
 // ============ View switcher ============
 function setView(v) {
@@ -4129,10 +4305,29 @@ function bindEvents() {
   $('#tabTools').addEventListener('click', () => setView('tools'));
 
   // Search / command bar
-  $('#search').addEventListener('input', e => { currentQuery = e.target.value; renderSearch(); });
-  $('#search').addEventListener('keydown', e => {
-    if (e.key === 'Escape') { clearSearch(); e.target.blur(); }
+  // v3.10.2 (Issue 4 fix): Update tombol clear (X) visibility saat user mengetik
+  const searchInput = $('#search');
+  const searchClearBtn = $('#searchClear');
+  function updateClearBtnVisibility() {
+    if (!searchClearBtn) return;
+    searchClearBtn.style.display = (searchInput.value && searchInput.value.length > 0) ? 'flex' : 'none';
+  }
+  $('#search').addEventListener('input', e => {
+    currentQuery = e.target.value;
+    updateClearBtnVisibility();
+    renderSearch();
   });
+  $('#search').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { clearSearch(); updateClearBtnVisibility(); e.target.blur(); }
+  });
+  // v3.10.2 (Issue 4 fix): Click tombol clear (X) → hapus semua teks sekaligus
+  if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', () => {
+      clearSearch();
+      updateClearBtnVisibility();
+      searchInput.focus();
+    });
+  }
   document.addEventListener('keydown', e => {
     const inField = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     if ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && !inField) {

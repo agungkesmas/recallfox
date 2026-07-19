@@ -78,6 +78,10 @@ body.rf-sidebar-body .popup{
 .cmd input{flex:1;min-width:0;border:none;outline:none;background:none;color:var(--text);font-size:13px;height:100%}
 .cmd input::placeholder{color:var(--muted)}
 .cmd .hint{display:flex;gap:3px;flex:none}
+/* v3.10.2 (Issue 4 fix): Tombol clear (X) di kotak pencarian */
+.cmd-clear{display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--surface-2);color:var(--muted);flex:none;padding:0;cursor:pointer;transition:.15s;border:none}
+.cmd-clear:hover{background:var(--border-strong);color:var(--text)}
+.cmd-clear svg{width:12px;height:12px;pointer-events:none}
 
 /* Status strip */
 .strip{margin:0 12px 10px;flex:none}

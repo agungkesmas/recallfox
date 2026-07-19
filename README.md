@@ -1,14 +1,14 @@
-# RecallFox v3.10.1
+# RecallFox v3.10.2
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.10.1 — Hotfix GDrive Sync**
-> - 🔧 **Root cause fix**: tombol "Sync Sekarang" & "Full Backup" tidak berfungsi karena `isGDriveSyncEnabled()` return false saat master switch OFF (padahal URL+token sudah diisi)
-> - ✨ **Auto-enable sync**: klik Full Backup/Sync Sekarang → otomatis aktifkan sync kalau URL+token sudah ada
-> - 📋 **Error messages actionable**: setiap error type dapat pesan spesifik + saran perbaikan (401/404/500/timeout/network)
-> - 🏷️ **Code.gs update ke v3.10.0** supaya konsisten dengan addon (sebelumnya v3.8.1)
-> - 📦 Baseline v3.10.0 (5 fixes batch 2) + v3.9.0 (7 fixes batch 1) + v3.8.1 (GDrive Sync)
+> **v3.10.2 — 5 Fixes dari Log Troubleshooting Sesi 1**
+> - 🔧 **Issue #1**: Tombol "Full Backup ke GDrive" tidak bekerja — root cause: `buildBackupPayload()` di `lib/autobackup.js` tidak di-export, sehingga dynamic import di `background.js` return `undefined`. Fix: tambahkan keyword `export`.
+> - 📸 **Issue #2**: Screenshot fitur "Shot" tidak tersimpan di Google Drive (kolom `gdriveFileId`/`gdriveFileUrl` di spreadsheet selalu kosong) — root cause: upload fire-and-forget, hasil upload tidak pernah di-update ke vault item atau spreadsheet. Fix: setelah upload sukses, patch vault item + notify ulang ke GDrive sync supaya row spreadsheet di-update dengan link file Drive.
+> - 📦 **Issue #3**: Menu **Buat Bundle** tidak punya kolom "Filter per tipe" (padahal di Edit Bundle ada). Fix: tambahkan filter chips per tipe (Semua, Prompt, Konteks, Link, Media, Snapshot, Catatan) yang identik dengan Edit Bundle. Juga memastikan catatan tercentang masuk saat bundle di-copy atau disisipkan ke chat AI.
+> - 🔍 **Issue #4**: Fitur pencarian tidak menemukan teks yang ada (mis. "github" padahal ada link github di vault). Fix: perkuat `searchableTextFor()` agar mencari di semua field (linkUrl, linkTitle, body item bundle, title+body catatan bundle, gdriveFileUrl, snapshotDomain, dll). Plus tambah tombol **clear (X)** di ujung kanan kotak pencarian untuk hapus semua teks sekaligus.
+> - 🗂️ **Issue #5**: Menu **Edit Bundle** tidak bisa menautkan catatan (padahal Buat Bundle bisa). Fix: selaraskan — Edit Bundle sekarang punya section Catatan (dengan chip filter "Catatan"), field Warna label, field Prompt cepat inline, dan checkbox "Simpan sebagai item Prompt", identik dengan Buat Bundle.
 >
 > Lihat [Changelog](#changelog) di bawah.
 
