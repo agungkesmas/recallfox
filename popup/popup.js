@@ -5192,7 +5192,14 @@ const ADZAN_URLS = {
 
 function _stopAdzan() {
   if (_adzanAudio) {
-    try { _adzanAudio.pause(); _adzanAudio.currentTime = 0; } catch (e) {}
+    // v3.11.9: Handle 2 jenis — Audio element ATAU Web Audio API context
+    if (_adzanAudio._toneCtx) {
+      // Web Audio API tone
+      try { _adzanAudio._toneCtx.close(); } catch (e) {}
+    } else {
+      // Audio element
+      try { _adzanAudio.pause(); _adzanAudio.currentTime = 0; } catch (e) {}
+    }
     _adzanAudio = null;
   }
   if (_adzanBanner) {
@@ -5244,26 +5251,35 @@ function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
   // Stop adzan sebelumnya kalau ada
   _stopAdzan();
 
-  // Tentukan URL
-  let url;
-  if (sound === 'custom' && customUrl) {
-    url = customUrl;
-  } else if (sound === 'short') {
-    url = ADZAN_URLS.short;
-  } else {
-    url = ADZAN_URLS.default;
-  }
+  const vol = Math.max(0, Math.min(1, Number(volume) || 0.7));
 
-  // Buat audio element
-  try {
-    _adzanAudio = new Audio(url);
-    _adzanAudio.volume = Math.max(0, Math.min(1, Number(volume) || 0.7));
-    _adzanAudio.play().catch(e => {
-      console.warn('[RecallFox] Adzan play failed (mungkin autoplay-blocked):', e.message);
-      // Fallback: tampilkan banner saja tanpa audio
-    });
-  } catch (e) {
-    console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+  // v3.11.9 (Issue #3 fix): Adzan pakai 2 strategi:
+  // 1. Jika sound='custom' + customUrl → pakai Audio element dengan URL custom
+  // 2. Jika sound='default'/'short' → pakai Web Audio API generate tone (PASTI JALAN, no CORS, no 404)
+  //    Sebelumnya pakai URL IslamicFinder yang 404 → error terus.
+  //    Tone ini bukan adzan asli, tapi cukup sebagai pengingat waktu sholat.
+  //    User yang mau adzan asli bisa set custom URL ke file MP3 sendiri.
+
+  let _adzanTimeout = null;
+
+  if (sound === 'custom' && customUrl) {
+    // Strategy 1: Custom URL — pakai Audio element
+    try {
+      _adzanAudio = new Audio(customUrl);
+      _adzanAudio.volume = vol;
+      _adzanAudio.crossOrigin = 'anonymous';
+      _adzanAudio.play().catch(e => {
+        console.warn('[RecallFox] Custom adzan play failed:', e.message);
+        // Fallback ke tone
+        _playAdzanTone(vol);
+      });
+    } catch (e) {
+      console.warn('[RecallFox] Custom adzan init failed:', e.message);
+      _playAdzanTone(vol);
+    }
+  } else {
+    // Strategy 2: Web Audio API tone (default + short)
+    _playAdzanTone(vol, sound === 'short');
   }
 
   // Tampilkan banner Stop (fixed di bawah, tidak nutupin konten)
@@ -5303,39 +5319,119 @@ function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
     stopBtn.addEventListener('click', _stopAdzan);
   }
 
-  // Auto-cleanup saat audio selesai
+  // Auto-cleanup saat audio selesai (hanya untuk custom URL)
   if (_adzanAudio) {
     _adzanAudio.onended = () => _stopAdzan();
     _adzanAudio.onerror = () => {
-      console.warn('[RecallFox] Adzan audio error — kemungkinan URL tidak accessible');
+      console.warn('[RecallFox] Adzan audio error — fallback ke tone');
       _stopAdzan();
+      _playAdzanTone(vol);
     };
   }
 
-  // Auto-stop setelah 5 menit (safety, kalau audio tidak pernah ended)
-  setTimeout(() => {
+  // Auto-stop setelah 2 menit (safety)
+  _adzanTimeout = setTimeout(() => {
     if (_adzanAudio || _adzanBanner) {
-      console.log('[RecallFox] Adzan auto-stop after 5 minutes');
+      console.log('[RecallFox] Adzan auto-stop after 2 minutes');
       _stopAdzan();
     }
-  }, 5 * 60 * 1000);
+  }, 2 * 60 * 1000);
 
   // v3.11.7-fix2 (Sesi 7, Issue #5): Tampilkan tombol Stop global di header
   _showAdzanStopButton();
 }
 
+// v3.11.9 (Issue #3 fix): Generate adzan-like tone pakai Web Audio API.
+// Tidak butuh file MP3 eksternal → pasti jalan, no CORS, no 404.
+// Tone: urutan nada yang mirip panggilan adzan (Allahu Akbar motif).
+function _playAdzanTone(vol, isShort) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) {
+      console.warn('[RecallFox] Web Audio API tidak support');
+      return;
+    }
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Nada adzan: Allahu Akbar motif
+    // Frekuensi (Hz): D4=293.66, E4=329.63, F4=349.23, G4=392, A4=440
+    // Pola: A4-G4-A4-G4-F4-E4-D4 (turun) lalu A4 (Allahu Akbar)
+    const notes = isShort
+      ? [ // Short version: 4 nada, ~8 detik
+        { freq: 440, start: 0, dur: 1.5 },   // A4
+        { freq: 392, start: 1.5, dur: 1.0 }, // G4
+        { freq: 440, start: 2.5, dur: 1.5 }, // A4
+        { freq: 349, start: 4.0, dur: 2.0 }, // F4
+      ]
+      : [ // Default version: 7 nada, ~15 detik
+        { freq: 440, start: 0, dur: 1.5 },   // A4 — "Al"
+        { freq: 392, start: 1.5, dur: 1.0 }, // G4 — "la"
+        { freq: 440, start: 2.5, dur: 1.5 }, // A4 — "hu"
+        { freq: 392, start: 4.0, dur: 1.0 }, // G4 — "Ak"
+        { freq: 349, start: 5.0, dur: 1.5 }, // F4 — "bar"
+        { freq: 392, start: 6.5, dur: 1.0 }, // G4 — pause
+        { freq: 440, start: 7.5, dur: 3.0 }, // A4 — "Allahu Akbar" (panjang)
+      ];
+
+    // Master gain
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = vol;
+    masterGain.connect(ctx.destination);
+
+    // Mainkan setiap nada
+    for (const note of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = note.freq;
+
+      // Envelope: attack-decay-sustain-release supaya tidak "pop"
+      const start = now + note.start;
+      const end = start + note.dur;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(vol, start + 0.05); // attack 50ms
+      gain.gain.linearRampToValueAtTime(vol * 0.7, start + note.dur * 0.7); // sustain
+      gain.gain.linearRampToValueAtTime(0, end); // release
+
+      osc.connect(gain);
+      gain.connect(masterGain);
+      osc.start(start);
+      osc.stop(end + 0.1);
+    }
+
+    // Simpan context supaya bisa di-stop
+    _adzanAudio = { _toneCtx: ctx, _toneGain: masterGain };
+
+    console.log('[RecallFox] Adzan tone diputar (' + (isShort ? 'short' : 'default') + ', ' + notes.length + ' nada)');
+  } catch (e) {
+    console.warn('[RecallFox] Adzan tone failed:', e.message);
+  }
+}
+
 // Listener untuk message PLAY_ADZAN dari background
+// v3.11.9 (Issue #2 fix): return `true` untuk async response supaya tidak
+// "Promised response from onMessage listener went out of scope"
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'PLAY_ADZAN') {
-      _playAdzan(msg.prayer, msg.prayerKey, msg.volume, msg.sound, msg.customUrl);
-      sendResponse({ ok: true });
-      return false; // sync response
+      try {
+        _playAdzan(msg.prayer, msg.prayerKey, msg.volume, msg.sound, msg.customUrl);
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true; // v3.11.9: return true supaya sendResponse tidak out of scope
     }
     if (msg.type === 'STOP_ADZAN') {
-      _stopAdzan();
-      sendResponse({ ok: true });
-      return false;
+      try {
+        _stopAdzan();
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true;
     }
+    return false;
   });
 }

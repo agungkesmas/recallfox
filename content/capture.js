@@ -237,9 +237,10 @@
   // ===== Selection mode (overlay + crop) =====
   async function captureSelection(format, quality) {
     ensureStyles();
-    showBanner('Seret untuk pilih area · Esc batal');
+    // v3.11.9 (Issue #1 fix): HAPUS showBanner — showSelectionOverlay sudah punya
+    // tip sendiri (recallfox-sel-tip "Drag untuk pilih area · Esc untuk batal")
+    // di tengah layar. Sebelumnya showBanner + sel-tip bertumpuk → user bingung.
     const rect = await showSelectionOverlay();
-    hideBanner();
     if (!rect) {
       return { dataUrl: null, cancelled: true, width: 0, height: 0, bytes: 0, selectionRect: null };
     }

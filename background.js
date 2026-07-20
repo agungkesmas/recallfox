@@ -1168,7 +1168,8 @@ browser.commands.onCommand.addListener(async (cmd) => {
 
 let syncTimer = null;
 
-browser.runtime.onMessage.addListener(async (msg, sender) => {
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
   if (msg.type === 'TRIGGER_SYNC') {
     // debounce 2s
     if (syncTimer) clearTimeout(syncTimer);
@@ -1194,21 +1195,21 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'SYNC_NOW') {
     try {
       const ok = await pushToSync();
-      return { ok };
+      sendResponse({ ok }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PULL_SYNC') {
     try {
       const ok = await mergeSyncIntoLocal();
-      return { ok };
+      sendResponse({ ok }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GET_VAULT') {
-    return await getVault();
+    sendResponse(await getVault()); return;
   }
   if (msg.type === 'OPEN_SIDEBAR') {
     // Toggle sidebar: open if closed, close if open
@@ -1225,15 +1226,15 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       if (isOpen) {
         await browser.sidebarAction.close();
         console.log('[RecallFox] Sidebar closed');
-        return { ok: true, action: 'closed' };
+        sendResponse({ ok: true, action: 'closed' }); return;
       } else {
         await browser.sidebarAction.open();
         console.log('[RecallFox] Sidebar opened');
-        return { ok: true, action: 'opened' };
+        sendResponse({ ok: true, action: 'opened' }); return;
       }
     } catch (e) {
       console.error('[RecallFox] Sidebar toggle failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'SAVE_SELECTION_FROM_CS') {
@@ -1249,10 +1250,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
           capturedAt: new Date().toISOString()
         }
       });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       console.error('[RecallFox] SAVE_SELECTION_FROM_CS failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'QUICK_SNAPSHOT') {
@@ -1261,7 +1262,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (!tab?.id) return { ok: false, error: 'no_active_tab' };
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       // Content script not loaded — try to inject it
       try {
@@ -1275,9 +1276,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         });
         await new Promise(r => setTimeout(r, 500));
         await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-        return { ok: true };
+        sendResponse({ ok: true }); return;
       } catch (e2) {
-        return { ok: false, error: e2.message };
+        sendResponse({ ok: false, error: e2.message }); return;
       }
     }
   }
@@ -1286,7 +1287,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return { ok: false, error: 'no_active_tab' };
     if (!tab.url || !/^https?:\/\//.test(tab.url)) {
-      return { ok: false, error: 'not_http_page' };
+      sendResponse({ ok: false, error: 'not_http_page' }); return;
     }
     try {
       const results = await browser.scripting.executeScript({
@@ -1295,7 +1296,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       const text = results?.[0]?.result || '';
       if (!text.trim()) {
-        return { ok: false, error: 'no_selection' };
+        sendResponse({ ok: false, error: 'no_selection' }); return;
       }
       await addItem({
         type: 'prompt',
@@ -1303,9 +1304,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         body: text,
         source: { url: tab.url, title: tab.title, capturedAt: new Date().toISOString() }
       });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'INJECT_TO_ACTIVE_TAB') {
@@ -1318,9 +1319,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         text: msg.text,
         mode: msg.mode
       });
-      return res;
+      sendResponse(res); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1329,17 +1330,17 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'COPY_TO_CLIPBOARD') {
     try {
       await navigator.clipboard.writeText(msg.text || '');
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       // Fallback: pakai content script di active tab
       try {
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
         if (tab?.id) {
           await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text: msg.text });
-          return { ok: true };
+          sendResponse({ ok: true }); return;
         }
       } catch (e2) {}
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1354,7 +1355,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       let ext = 'json';
       if (msg.encrypted) {
         if (!msg.passphrase || msg.passphrase.length < 1) {
-          return { ok: false, error: 'passphrase_required' };
+          sendResponse({ ok: false, error: 'passphrase_required' }); return;
         }
         content = await encryptBackup(json, msg.passphrase);
         ext = 'rfvault';
@@ -1371,10 +1372,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       // Update lastBackupAt
       await saveSettings({ lastBackupAt: new Date().toISOString(), lastBackupSize: content.length });
-      return { ok: true, filename, size: content.length };
+      sendResponse({ ok: true, filename, size: content.length }); return;
     } catch (e) {
       console.error('[RecallFox] EXPORT_BACKUP error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1389,20 +1390,20 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         try {
           jsonStr = await decryptBackup(text, msg.passphrase);
         } catch (err) {
-          return { ok: false, error: err.message === 'WRONG_PASSPHRASE' ? 'Passphrase salah atau file rusak' : 'Gagal decrypt: ' + err.message };
+          sendResponse({ ok: false, error: err.message === 'WRONG_PASSPHRASE' ? 'Passphrase salah atau file rusak' : 'Gagal decrypt: ' + err.message }); return;
         }
       } else {
         try {
           JSON.parse(text);  // validate
           jsonStr = text;
         } catch (err) {
-          return { ok: false, error: 'File backup tidak valid' };
+          sendResponse({ ok: false, error: 'File backup tidak valid' }); return;
         }
       }
       const parsed = JSON.parse(jsonStr);
       const importedVault = parsed.vault || parsed;
       if (!importedVault || !Array.isArray(importedVault.items)) {
-        return { ok: false, error: 'Format backup tidak dikenal' };
+        sendResponse({ ok: false, error: 'Format backup tidak dikenal' }); return;
       }
       // Merge: item dengan ID yang sudah ada → skip
       const currentVault = await getVault();
@@ -1423,10 +1424,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       }
       // Jangan import bundles otomatis (bisa conflict) — info saja
       console.log('[RecallFox] Import selesai: ' + added + ' added, ' + skipped + ' skipped');
-      return { ok: true, added, skipped };
+      sendResponse({ ok: true, added, skipped }); return;
     } catch (e) {
       console.error('[RecallFox] IMPORT_BACKUP error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1456,7 +1457,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       return result || { ok: true };
     } catch (e) {
       console.error('[RecallFox] MANUAL_BACKUP_NOW error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1464,10 +1465,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'GDRIVE_SYNC_NOW') {
     try {
       const result = await gdriveFlushNow();
-      return { ok: true, result };
+      sendResponse({ ok: true, result }); return;
     } catch (e) {
       console.error('[RecallFox] GDRIVE_SYNC_NOW error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GDRIVE_FULL_BACKUP') {
@@ -1487,7 +1488,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       return result;
     } catch (e) {
       console.error('[RecallFox] GDRIVE_FULL_BACKUP error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GDRIVE_TEST') {
@@ -1495,24 +1496,24 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       const result = await gdriveTestConnection();
       return result;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GDRIVE_STATUS') {
     try {
       const meta = await gdriveGetMeta();
       const queueLen = await gdriveGetQueueLength();
-      return { ok: true, meta, queueLength: queueLen };
+      sendResponse({ ok: true, meta, queueLength: queueLen }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GDRIVE_CLEAR_QUEUE') {
     try {
       await gdriveClearQueue();
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1522,35 +1523,35 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'SYNC_GET_PROFILES') {
     try {
       const { getSyncProfiles } = await import('./lib/sync-profile.js');
-      return { ok: true, data: await getSyncProfiles() };
+      sendResponse({ ok: true, data: await getSyncProfiles() }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (msg.type === 'SYNC_ADD_PROFILE') {
     try {
       const { addSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await addSyncProfile(msg.profile);
-      return { ok: true, profile };
+      sendResponse({ ok: true, profile }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (msg.type === 'SYNC_UPDATE_PROFILE') {
     try {
       const { updateSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await updateSyncProfile(msg.id, msg.patch);
-      return { ok: true, profile };
+      sendResponse({ ok: true, profile }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (msg.type === 'SYNC_DELETE_PROFILE') {
     try {
       const { deleteSyncProfile } = await import('./lib/sync-profile.js');
       const data = await deleteSyncProfile(msg.id);
-      return { ok: true, data };
+      sendResponse({ ok: true, data }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (msg.type === 'SYNC_SET_ACTIVE') {
     try {
       const { setActiveProfile } = await import('./lib/sync-profile.js');
       await setActiveProfile(msg.id);
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
   if (msg.type === 'SYNC_PUSH') {
@@ -1615,7 +1616,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'SYNC_STATUS') {
     try {
       const { getSyncStatus } = await import('./lib/sync-profile.js');
-      return { ok: true, status: await getSyncStatus() };
+      sendResponse({ ok: true, status: await getSyncStatus() }); return;
     } catch (e) { return { ok: false, error: e.message }; }
   }
 
@@ -1626,7 +1627,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) return { ok: false, error: 'no_active_tab' };
       if (!tab.url || !/^https?:\/\//.test(tab.url)) {
-        return { ok: false, error: 'not_http_page', url: tab.url };
+        sendResponse({ ok: false, error: 'not_http_page', url: tab.url }); return;
       }
       const results = await browser.scripting.executeScript({
         target: { tabId: tab.id },
@@ -1650,14 +1651,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
               meta: { wordCount: text ? text.split(/\s+/).length : 0, charCount: text.length }
             };
           } catch (e) {
-            return { ok: false, error: e.message };
+            sendResponse({ ok: false, error: e.message }); return;
           }
         },
         args: [msg.maxLen || 8000]
       });
       return results?.[0]?.result || { ok: false, error: 'no_result' };
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   // Issue #3: SAVE_UPLOADED_SCREENSHOT — simpan screenshot dari file upload/paste
@@ -1760,10 +1761,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         thumbnailDataUrl,
         source: source || { kind: 'upload', url: '', title: title || 'Screenshot Upload' }
       });
-      return { ok: true, item: newItem };
+      sendResponse({ ok: true, item: newItem }); return;
     } catch (e) {
       console.error('[RecallFox] SAVE_UPLOADED_SCREENSHOT error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_VISIBLE_TAB') {
@@ -1780,7 +1781,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       reload: settings.clearCacheReload,
       notify: settings.clearCacheNotify
     });
-    return res;
+    sendResponse(res); return;
   }
   if (msg.type === 'VOLUME_SET') {
     // Set volume for current tab's domain
@@ -1793,7 +1794,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     try {
       await browser.tabs.sendMessage(tab.id, { command: 'setVolume', dB: dB });
     } catch (e) { /* volume-cs.js might not be loaded */ }
-    return { ok: true, dB };
+    sendResponse({ ok: true, dB }); return;
   }
   if (msg.type === 'VOLUME_GET') {
     // Get volume for current tab's domain
@@ -1802,7 +1803,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (!tab?.id) return { ok: false, error: 'no_tab' };
     const domain = extractDomain(tab.url);
     const dB = await getSiteVolume(domain);
-    return { ok: true, dB, domain };
+    sendResponse({ ok: true, dB, domain }); return;
   }
   if (msg.type === 'VOLUME_GET_STATE') {
     // Get current audio state from the active tab
@@ -1810,9 +1811,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (!tab?.id) return { ok: false, error: 'no_tab' };
     try {
       const res = await browser.tabs.sendMessage(tab.id, { command: 'getAudioControlState' });
-      return { ok: true, state: res?.response || { volume: 0, muted: false, mono: false } };
+      sendResponse({ ok: true, state: res?.response || { volume: 0, muted: false, mono: false } }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'VOLUME_MUTE') {
@@ -1821,9 +1822,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     if (!tab?.id) return { ok: false, error: 'no_tab' };
     try {
       await browser.tabs.sendMessage(tab.id, { command: 'setMute', muted: msg.muted });
-      return { ok: true, muted: msg.muted };
+      sendResponse({ ok: true, muted: msg.muted }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'RESTART_BACKUP_TIMER') {
@@ -1831,9 +1832,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     try {
       const { startBackupInterval } = await import('./lib/autobackup.js');
       await startBackupInterval();
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'TOGGLE_OVERLAY') {
@@ -1847,7 +1848,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       try { await browser.tabs.sendMessage(tab.id, { type: 'OVERLAY_TOGGLED' }); } catch (e) {}
     }
     console.log('[RecallFox] Overlay toggled:', newEnabled);
-    return { ok: true, enabled: newEnabled };
+    sendResponse({ ok: true, enabled: newEnabled }); return;
   }
 
   // v3.7.2 (Issue 6): Toggle Mode Anak — 1 klik aktif/nonaktifkan YouTube Kids Only + Block Shorts.
@@ -1873,7 +1874,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         }
       }
     }).catch(() => {});
-    return { ok: true, enabled: newOn };
+    sendResponse({ ok: true, enabled: newOn }); return;
   }
 
   // v3.7.2 (Issue 6): Toggle Block Shorts saja (tanpa YouTube Kids redirect).
@@ -1882,24 +1883,24 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardBlockShorts === true);
     await saveSettings({ contentGuardBlockShorts: newOn });
     console.log('[RecallFox] Block Shorts toggled:', newOn);
-    return { ok: true, enabled: newOn };
+    sendResponse({ ok: true, enabled: newOn }); return;
   }
 
   if (msg.type === 'PRAYER_FETCH') {
     // Fetch prayer times for today (used by popup/sidebar Prayer tab)
     const s = await getSettings();
     if (!s.prayerEnabled) {
-      return { ok: false, error: 'not_enabled' };
+      sendResponse({ ok: false, error: 'not_enabled' }); return;
     }
     if (typeof s.prayerLatitude !== 'number' || typeof s.prayerLongitude !== 'number') {
-      return { ok: false, error: 'no_location' };
+      sendResponse({ ok: false, error: 'no_location' }); return;
     }
 
     // Check cache: refresh if missing or stale (>24h or different date)
     const cached = s.prayerCachedTimes;
     const today = new Date().toISOString().slice(0, 10);
     if (cached && cached.date === today) {
-      return { ok: true, times: cached, fromCache: true };
+      sendResponse({ ok: true, times: cached, fromCache: true }); return;
     }
 
     try {
@@ -1911,9 +1912,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         prayerCachedTimes: times,
         prayerLastFetch: new Date().toISOString()
       });
-      return { ok: true, times, fromCache: false };
+      sendResponse({ ok: true, times, fromCache: false }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PRAYER_GEOLOCATE') {
@@ -1922,16 +1923,16 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     // because Firefox requires user activation for geolocation prompts.
     // We do the actual getCurrentPosition in popup/sidebar; this handler is
     // only used if popup delegates to background (not recommended).
-    return { ok: false, error: 'use_popup_geolocation' };
+    sendResponse({ ok: false, error: 'use_popup_geolocation' }); return;
   }
   if (msg.type === 'PRAYER_REVERSE_GEOCODE') {
     // Reverse geocode coordinates to a human-readable location
     const { reverseGeocode } = await import('./lib/salahtime.js');
     try {
       const location = await reverseGeocode(msg.lat, msg.lng);
-      return { ok: true, location };
+      sendResponse({ ok: true, location }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PRAYER_GEOCODE') {
@@ -1939,9 +1940,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const { geocode } = await import('./lib/salahtime.js');
     try {
       const result = await geocode(msg.address);
-      return { ok: true, ...result };
+      sendResponse({ ok: true, ...result }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
@@ -1972,7 +1973,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         type: 'TRIGGER_CAPTURE_FROM_POPUP',
         mode: mode  // forwarded to overlay.js -> triggerCapture(mode)
       });
-      return { ok: true, deferred: true };
+      sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
       // Fallback to direct save (skips modal)
       return await triggerScreenshot(tab, mode || 'entire');
@@ -1982,7 +1983,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     // Lazy-load full image for popup/sidebar preview
     const { getScreenshotBlob } = await import('./lib/storage.js');
     const dataUrl = await getScreenshotBlob(msg.id);
-    return { ok: true, dataUrl };
+    sendResponse({ ok: true, dataUrl }); return;
   }
   if (msg.type === 'INJECT_ANNOTATE_SCRIPT') {
     // v3.11.4: Inject content/annotate.js into the active tab on-demand.
@@ -1994,10 +1995,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         target: { tabId: tab.id, allFrames: false },
         files: ['content/annotate.js']
       });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       console.warn('[RecallFox] inject annotate.js failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'DOWNLOAD_SCREENSHOT') {
@@ -2014,9 +2015,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         filename: `RecallFox/${safeName}_${ts}.${ext}`,
         saveAs: false
       });
-      return { ok: true, downloadId: id };
+      sendResponse({ ok: true, downloadId: id }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'COPY_SCREENSHOT_TO_CLIPBOARD') {
@@ -2062,7 +2063,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       if (!tab?.id) return { ok: false, error: 'no_active_tab' };
       // Skip jika tab adalah about: atau file:// (tidak bisa inject)
       if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
-        return { ok: false, error: 'cannot_inject_this_page' };
+        sendResponse({ ok: false, error: 'cannot_inject_this_page' }); return;
       }
 
       const results = await browser.scripting.executeScript({
@@ -2082,12 +2083,12 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
                 'text/plain': new Blob([textPlain], { type: 'text/plain' })
               });
               await navigator.clipboard.write([item]);
-              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
+              sendResponse({ ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' }); return;
             } else if (typeof ClipboardItem !== 'undefined') {
               // Image only
               const item = new ClipboardItem({ 'image/png': pngBlob });
               await navigator.clipboard.write([item]);
-              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
+              sendResponse({ ok: true, message: '✓ Gambar tersalin ke clipboard' }); return;
             } else {
               // Fallback: browser.clipboard.setImageData (Firefox < 127)
               const arrBuf = await pngBlob.arrayBuffer();
@@ -2095,10 +2096,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
               if (withCaption) {
                 try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
               }
-              return { ok: true, message: '✓ Gambar tersalin (mode fallback)' };
+              sendResponse({ ok: true, message: '✓ Gambar tersalin (mode fallback)' }); return;
             }
           } catch (e) {
-            return { ok: false, error: e.message };
+            sendResponse({ ok: false, error: e.message }); return;
           }
         },
         args: [dataUrl, !!msg.withCaption, textPlain, textHtml]
@@ -2106,10 +2107,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
 
       const result = results?.[0]?.result;
       if (result && result.ok) return result;
-      return { ok: false, error: result?.error || 'clipboard_write_failed' };
+      sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
     } catch (e) {
       console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_SNAPSHOT') {
@@ -2135,7 +2136,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       sourceUrl: msg.sourceUrl || '',
       sourceTitle: msg.sourceTitle || ''
     });
-    return { ok: true };
+    sendResponse({ ok: true }); return;
   }
 
   // v0.9.7: Discard handlers — dipindahkan ke listener 1 karena async listener
@@ -2191,10 +2192,11 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         browser.tabs.sendMessage(t.id, { type: 'EB_RULES_UPDATED' }).catch(() => {});
       }
     }).catch(() => {});
-    return { ok: true };
+    sendResponse({ ok: true }); return;
   }
 
-  return false;
+  })();
+  return true;
 });
 
 // ===== Listen to sync changes (from other devices) =====

@@ -524,13 +524,14 @@ function bindEvents() {
       toast('✓ Tersimpan: waktu adzan');
     });
   });
-  // Test Adzan button — v3.11.8 (Issue #5 fix): mainkan audio LANGSUNG di settings page.
-  // Sebelumnya: broadcast PLAY_ADZAN ke popup/sidebar — tapi popup harus aktif untuk terima,
-  // sering gagal. Settings page adalah halaman web normal, bisa new Audio().play() langsung
-  // setelah user click (user gesture) — pasti jalan.
+  // Test Adzan button — v3.11.9 (Issue #3 fix): mainkan tone LANGSUNG di settings page.
+  // Sebelumnya: pakai URL IslamicFinder yang 404 → error terus.
+  // Sekarang: pakai Web Audio API generate tone (pasti jalan, no CORS, no 404).
+  // Kalau user set custom URL, pakai Audio element dengan URL custom.
   const testAdzanBtn = document.getElementById('rf-set-prayer-adzan-test');
   if (testAdzanBtn) {
     let _settingsAdzanAudio = null;
+    let _settingsAdzanCtx = null;
     testAdzanBtn.addEventListener('click', async () => {
       try {
         const s = await getSettings();
@@ -539,60 +540,65 @@ function bindEvents() {
           try { _settingsAdzanAudio.pause(); } catch (e) {}
           _settingsAdzanAudio = null;
         }
-        // Tentukan URL
-        const ADZAN_URLS = {
-          default: 'https://www.islamicfinder.org/cms/audio/azan1/azan1.mp3',
-          short: 'https://www.islamicfinder.org/cms/audio/azan2/azan2.mp3'
-        };
-        let url;
-        const sound = s.prayerAdzanSound || 'default';
-        if (sound === 'custom' && s.prayerAdzanCustomUrl) {
-          url = s.prayerAdzanCustomUrl;
-        } else if (sound === 'short') {
-          url = ADZAN_URLS.short;
-        } else {
-          url = ADZAN_URLS.default;
+        if (_settingsAdzanCtx) {
+          try { _settingsAdzanCtx.close(); } catch (e) {}
+          _settingsAdzanCtx = null;
         }
-        // Mainkan audio LANGSUNG di settings page (user gesture = click)
-        _settingsAdzanAudio = new Audio(url);
-        _settingsAdzanAudio.volume = Math.max(0, Math.min(1, Number(s.prayerAdzanVolume) || 0.7));
-        _settingsAdzanAudio.play().catch(e => {
-          toast('Gagal play adzan: ' + e.message + '. Coba enable adzan di sidebar dulu, atau cek URL custom.', false);
-          console.error('[RecallFox] Adzan play failed:', e);
-        });
+
+        const vol = Math.max(0, Math.min(1, Number(s.prayerAdzanVolume) || 0.7));
+        const sound = s.prayerAdzanSound || 'default';
+        const customUrl = s.prayerAdzanCustomUrl || '';
+
         // Update button text supaya user tahu sedang play
         const origText = testAdzanBtn.textContent;
         testAdzanBtn.textContent = '⏹ Stop Adzan';
         testAdzanBtn.style.background = '#fee2e2';
         testAdzanBtn.style.color = '#991b1b';
-        _settingsAdzanAudio.onended = () => {
+
+        const resetBtn = () => {
           testAdzanBtn.textContent = origText;
           testAdzanBtn.style.background = '';
           testAdzanBtn.style.color = '';
           _settingsAdzanAudio = null;
+          _settingsAdzanCtx = null;
         };
-        _settingsAdzanAudio.onerror = () => {
-          toast('Adzan audio error — coba ganti sound (default/short) atau cek URL custom', false);
-          testAdzanBtn.textContent = origText;
-          testAdzanBtn.style.background = '';
-          testAdzanBtn.style.color = '';
-          _settingsAdzanAudio = null;
-        };
-        // Click lagi untuk stop
-        const stopHandler = () => {
-          if (_settingsAdzanAudio) {
-            _settingsAdzanAudio.pause();
-            _settingsAdzanAudio = null;
-            testAdzanBtn.textContent = origText;
-            testAdzanBtn.style.background = '';
-            testAdzanBtn.style.color = '';
-            toast('Adzan dihentikan');
-          }
-        };
-        // Bind stop handler sekali (pakai flag)
+
+        if (sound === 'custom' && customUrl) {
+          // Custom URL — pakai Audio element
+          _settingsAdzanAudio = new Audio(customUrl);
+          _settingsAdzanAudio.volume = vol;
+          _settingsAdzanAudio.crossOrigin = 'anonymous';
+          _settingsAdzanAudio.onended = resetBtn;
+          _settingsAdzanAudio.onerror = () => {
+            toast('Custom URL gagal — fallback ke tone', false);
+            resetBtn();
+            _playSettingsAdzanTone(vol, false, resetBtn, ctx => _settingsAdzanCtx = ctx);
+          };
+          _settingsAdzanAudio.play().catch(e => {
+            toast('Custom URL gagal: ' + e.message + ' — fallback ke tone', false);
+            resetBtn();
+            _playSettingsAdzanTone(vol, false, resetBtn, ctx => _settingsAdzanCtx = ctx);
+          });
+        } else {
+          // Default/short — pakai Web Audio API tone
+          _playSettingsAdzanTone(vol, sound === 'short', resetBtn, ctx => _settingsAdzanCtx = ctx);
+        }
+
+        // Click lagi untuk stop (pakai flag)
         if (!testAdzanBtn._stopBound) {
-          testAdzanBtn.addEventListener('click', () => {
-            if (_settingsAdzanAudio) stopHandler();
+          testAdzanBtn.addEventListener('click', (e) => {
+            // Kalau button text = "Stop Adzan", berarti sedang play → stop
+            if (testAdzanBtn.textContent.includes('Stop')) {
+              if (_settingsAdzanAudio) {
+                try { _settingsAdzanAudio.pause(); } catch (err) {}
+              }
+              if (_settingsAdzanCtx) {
+                try { _settingsAdzanCtx.close(); } catch (err) {}
+              }
+              testAdzanBtn.textContent = '🔔 Test Adzan';
+              testAdzanBtn.style.background = '';
+              testAdzanBtn.style.color = '';
+            }
           }, true);
           testAdzanBtn._stopBound = true;
         }
@@ -601,6 +607,63 @@ function bindEvents() {
         toast('Gagal test adzan: ' + e.message, false);
       }
     });
+
+    // v3.11.9: Helper untuk play adzan tone di settings page
+    function _playSettingsAdzanTone(vol, isShort, onEnd, saveCtx) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+          toast('Browser tidak support Web Audio API', false);
+          return;
+        }
+        const ctx = new AudioCtx();
+        saveCtx(ctx);
+        const now = ctx.currentTime;
+        const notes = isShort
+          ? [
+            { freq: 440, start: 0, dur: 1.5 },
+            { freq: 392, start: 1.5, dur: 1.0 },
+            { freq: 440, start: 2.5, dur: 1.5 },
+            { freq: 349, start: 4.0, dur: 2.0 },
+          ]
+          : [
+            { freq: 440, start: 0, dur: 1.5 },
+            { freq: 392, start: 1.5, dur: 1.0 },
+            { freq: 440, start: 2.5, dur: 1.5 },
+            { freq: 392, start: 4.0, dur: 1.0 },
+            { freq: 349, start: 5.0, dur: 1.5 },
+            { freq: 392, start: 6.5, dur: 1.0 },
+            { freq: 440, start: 7.5, dur: 3.0 },
+          ];
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = vol;
+        masterGain.connect(ctx.destination);
+        for (const note of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = note.freq;
+          const start = now + note.start;
+          const end = start + note.dur;
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(vol, start + 0.05);
+          gain.gain.linearRampToValueAtTime(vol * 0.7, start + note.dur * 0.7);
+          gain.gain.linearRampToValueAtTime(0, end);
+          osc.connect(gain);
+          gain.connect(masterGain);
+          osc.start(start);
+          osc.stop(end + 0.1);
+        }
+        // Auto-reset setelah selesai
+        const totalDur = notes[notes.length - 1].start + notes[notes.length - 1].dur + 0.5;
+        setTimeout(() => {
+          try { ctx.close(); } catch (e) {}
+          onEnd();
+        }, totalDur * 1000);
+      } catch (e) {
+        toast('Adzan tone failed: ' + e.message, false);
+      }
+    }
   }
 
   // ===== Content Guardian: textarea bindings (keywords & domains) =====
