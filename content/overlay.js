@@ -655,9 +655,13 @@
               <span class="rf-cap-btn-icon">✏️</span>
               <span>Anotasi</span>
             </button>
-            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy">
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy" title="Salin gambar saja ke clipboard">
               <span class="rf-cap-btn-icon">📋</span>
-              <span>Salin</span>
+              <span>Salin Gambar</span>
+            </button>
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy-bundle" title="Salin gambar + keterangan (URL, judul, waktu) ke clipboard">
+              <span class="rf-cap-btn-icon">📦</span>
+              <span>Salin + Keterangan</span>
             </button>
             <button class="rf-cap-btn rf-cap-btn-ghost" data-action="save-vault">
               <span class="rf-cap-btn-icon">🦊</span>
@@ -775,7 +779,8 @@
           modalEl.style.display = '';
         }
       } else if (action === 'copy') {
-        showStatus('Menyalin ke clipboard…');
+        // v3.11.5: Salin gambar saja ke clipboard (tanpa keterangan)
+        showStatus('Menyalin gambar ke clipboard…');
         try {
           const blob = await (await fetch(lastCapture.dataUrl)).blob();
           await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
@@ -787,6 +792,71 @@
             showStatus('✓ Gambar tersalin ke clipboard');
           } catch (e2) {
             showStatus('✗ Gagal salin: ' + e2.message, true);
+          }
+        }
+
+      } else if (action === 'copy-bundle') {
+        // v3.11.5 (Issue 1 dari Google Doc): Salin gambar + keterangan lengkap
+        // User request: "salin dengan keterangan lengkap yang ditangkap sehingga
+        //   saya bisa paste gambar berikut keterangan gambarnya ditangkap di link
+        //   apa kapan dsb sesuai yang ada kalau pakai bundle aja"
+        // Strategi: pakai ClipboardItem dengan 2 mime type:
+        //   - image/png (gambar)
+        //   - text/html (HTML dengan <img> + keterangan)
+        //   - text/plain (fallback teks dengan link + waktu)
+        // Saat user paste ke chat Aplikasi yang support HTML (Telegram, Slack,
+        // Discord, Gmail compose) → gambar + keterangan muncul bersama.
+        // Saat paste ke editor teks biasa → keterangan teks muncul.
+        showStatus('Menyalin gambar + keterangan…');
+        try {
+          const blob = await (await fetch(lastCapture.dataUrl)).blob();
+          const pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
+
+          // Bangun keterangan teks (sesuai yang ada di bundle RecallFox)
+          const pageTitle = document.title || 'screenshot';
+          const pageUrl = location.href;
+          const capturedAt = new Date().toISOString();
+          const modeLabel = lastCapture.mode === 'visible' ? 'Viewport' : (lastCapture.mode === 'selection' ? 'Area' : 'Seluruh halaman');
+          const dims = lastCapture.width + '×' + lastCapture.height + ' px';
+
+          const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
+            + 'Sumber: ' + pageUrl + '\n'
+            + 'Waktu: ' + new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
+            + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+            + 'Ditangkap oleh RecallFox';
+
+          const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+            + '<p style="margin:0 0 6px"><img src="' + lastCapture.dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
+            + '<p style="margin:8px 0 2px"><strong>📸 ' + escapeHtml(pageTitle) + '</strong></p>'
+            + '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageUrl) + '</a></p>'
+            + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + escapeHtml(new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
+            + '<p style="margin:0;color:#78716c">🔧 ' + escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
+            + '</div>';
+
+          // Coba pakai ClipboardItem dengan multiple representations
+          const clipboardItem = new ClipboardItem({
+            'image/png': pngBlob,
+            'text/html': new Blob([textHtml], { type: 'text/html' }),
+            'text/plain': new Blob([textPlain], { type: 'text/plain' })
+          });
+          await navigator.clipboard.write([clipboardItem]);
+          showStatus('✓ Gambar + keterangan tersalin ke clipboard');
+        } catch (e) {
+          // Fallback 1: coba salin gambar saja + teks plain secara terpisah
+          console.warn('[RecallFox] ClipboardItem multi-mime failed, fallback:', e);
+          try {
+            const arr = await (await fetch(lastCapture.dataUrl)).arrayBuffer();
+            await browser.clipboard.setImageData(arr, 'png');
+            // Coba juga tulis teks plain
+            try {
+              const textFallback = '📸 Screenshot dari ' + location.href + ' — ' + new Date().toLocaleString('id-ID');
+              await navigator.clipboard.writeText(textFallback);
+              showStatus('✓ Gambar tersalin (keterangan terpisah di clipboard teks)');
+            } catch (e2) {
+              showStatus('✓ Gambar tersalin (tanpa keterangan — browser tidak mendukung multi-mime)');
+            }
+          } catch (e3) {
+            showStatus('✗ Gagal salin: ' + e3.message, true);
           }
         }
 

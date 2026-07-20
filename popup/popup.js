@@ -325,6 +325,47 @@ async function updateHabitsStrip() {
     const total = (s.quranEnabled !== false ? 1 : 0) + (s.exerciseEnabled !== false ? 1 : 0);
     stripQuran.textContent = done + '/' + (total || 2);
   }
+
+  // v3.11.5 (Issue 2): Render pintasan web ngaji & olahraga
+  renderShortcuts('quranShortcutsRow', s.quranShortcuts, '📖');
+  renderShortcuts('exerciseShortcutsRow', s.exerciseShortcuts, '🏃');
+}
+
+// v3.11.5 (Issue 2): Render pintasan web di strip-detail
+// Container: #quranShortcutsRow or #exerciseShortcutsRow
+// Shortcuts: array of { name, url, emoji } — maksimal 6
+function renderShortcuts(containerId, shortcuts, defaultEmoji) {
+  const container = $('#' + containerId);
+  if (!container) return;
+  if (!Array.isArray(shortcuts) || shortcuts.length === 0) {
+    container.innerHTML = '';
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = '';
+  const list = shortcuts.slice(0, 6);  // maksimal 6 pintasan
+  container.innerHTML = list.map((sc, i) => {
+    const emoji = sc.emoji || defaultEmoji;
+    const name = esc(sc.name || 'Web');
+    const url = esc(sc.url || '#');
+    return '<button class="shortcut-btn" data-url="' + url + '" title="' + esc(sc.name || '') + ' — ' + url + '">'
+      + '<span class="shortcut-ic">' + emoji + '</span>'
+      + '<span class="shortcut-name">' + name + '</span>'
+      + '</button>';
+  }).join('');
+  container.querySelectorAll('.shortcut-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const url = btn.dataset.url;
+      if (!url || url === '#') return;
+      try {
+        await browser.tabs.create({ url });
+        toast('🌐 Membuka ' + (btn.querySelector('.shortcut-name')?.textContent || 'web'));
+      } catch (err) {
+        toast('Gagal buka: ' + err.message, false);
+      }
+    });
+  });
 }
 
 async function updateFastStrip() {

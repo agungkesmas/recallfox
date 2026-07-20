@@ -137,6 +137,14 @@ body.rf-sidebar-body .popup{
 .habit.done{background:var(--green-soft);border-color:transparent;color:var(--green)}
 .fast-note{margin-top:8px;font-size:11px;background:var(--amber-soft);color:var(--amber);border-radius:8px;padding:6px 9px;line-height:1.4}
 
+/* v3.11.5 (Issue 2): Pintasan web ngaji & olahraga di strip-detail */
+.shortcuts-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.shortcut-btn{flex:1 1 80px;min-width:0;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text-2);font-size:10.5px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;overflow:hidden}
+.shortcut-btn:hover{background:var(--primary-soft);border-color:var(--primary);color:var(--primary);transform:translateY(-1px);box-shadow:var(--sh-sm)}
+.shortcut-btn:active{transform:translateY(0) scale(.97)}
+.shortcut-ic{font-size:13px;flex:none;line-height:1}
+.shortcut-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+
 /* Hero task bar — 6 trigger spesifik */
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 12px 10px;flex:none}
 .tile{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);font-size:11px;font-weight:650;color:var(--text-2);transition:.15s;white-space:nowrap}
