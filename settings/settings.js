@@ -69,6 +69,25 @@ async function init() {
     setChk('rf-set-prayer-sunnah', s.prayerShowSunnah !== false);
     setChk('rf-set-prayer-elapsed', s.prayerShowElapsed !== false);
     setChk('rf-set-prayer-badge', s.prayerShowBadge !== false);
+    // v3.11.7-fix (Issue #6): Adzan settings
+    setChk('rf-set-prayer-adzan-enabled', s.prayerAdzanEnabled === true);
+    const adzanVol = document.getElementById('rf-set-prayer-adzan-volume');
+    if (adzanVol) {
+      adzanVol.value = s.prayerAdzanVolume ?? 0.7;
+      const volLabel = document.getElementById('rf-adzan-vol-label');
+      if (volLabel) volLabel.textContent = adzanVol.value;
+    }
+    setVal('rf-set-prayer-adzan-sound', s.prayerAdzanSound || 'default');
+    setVal('rf-set-prayer-adzan-custom-url', s.prayerAdzanCustomUrl || '');
+    // Set prayer checkboxes
+    const adzanPrayers = Array.isArray(s.prayerAdzanPrayers) && s.prayerAdzanPrayers.length > 0
+      ? s.prayerAdzanPrayers
+      : ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+    document.querySelectorAll('.rf-adzan-prayer').forEach(cb => {
+      cb.checked = adzanPrayers.includes(cb.value);
+    });
+    // Show/hide adzan options based on enabled state
+    _updateAdzanVisibility(s.prayerAdzanEnabled === true, s.prayerAdzanSound || 'default');
   } catch (e) { console.warn('[RecallFox] settings: prayer section failed:', e); }
 
   // === Habit tracker ===
@@ -248,6 +267,19 @@ function updateAssistantBaseUrlVisibility() {
   row.style.display = (provider === 'custom') ? 'flex' : 'none';
 }
 
+// v3.11.7-fix (Issue #6): Helper untuk show/hide adzan options berdasarkan state
+function _updateAdzanVisibility(enabled, sound) {
+  const show = (id, show) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? 'flex' : 'none';
+  };
+  show('rf-adzan-opts', enabled);
+  show('rf-adzan-sound-opts', enabled);
+  show('rf-adzan-custom-opts', enabled && sound === 'custom');
+  show('rf-adzan-prayers-opts', enabled);
+  show('rf-adzan-test-opts', enabled);
+}
+
 function updateAssistantModelHint() {
   const provider = document.getElementById('rf-set-assistant-provider').value;
   const info = getProviderInfo(provider);
@@ -330,6 +362,11 @@ function bindEvents() {
     ['rf-set-prayer-sunnah', 'prayerShowSunnah', 'checked'],
     ['rf-set-prayer-elapsed', 'prayerShowElapsed', 'checked'],
     ['rf-set-prayer-badge', 'prayerShowBadge', 'checked'],
+    // v3.11.7-fix (Issue #6): Adzan settings
+    ['rf-set-prayer-adzan-enabled', 'prayerAdzanEnabled', 'checked'],
+    ['rf-set-prayer-adzan-volume', 'prayerAdzanVolume', 'value'],
+    ['rf-set-prayer-adzan-sound', 'prayerAdzanSound', 'value'],
+    ['rf-set-prayer-adzan-custom-url', 'prayerAdzanCustomUrl', 'value'],
     // Habit tracker
     ['rf-set-quran-enabled', 'quranEnabled', 'checked'],
     ['rf-set-quran-target', 'quranTargetPages', 'value'],
@@ -457,8 +494,61 @@ function bindEvents() {
           }
         } catch (e) {}
       }
+      // v3.11.7-fix (Issue #6): Update visibility adzan options saat toggle/sound berubah
+      if (key === 'prayerAdzanEnabled') {
+        const soundEl = document.getElementById('rf-set-prayer-adzan-sound');
+        _updateAdzanVisibility(val === true, soundEl ? soundEl.value : 'default');
+      }
+      if (key === 'prayerAdzanSound') {
+        const enabledEl = document.getElementById('rf-set-prayer-adzan-enabled');
+        _updateAdzanVisibility(enabledEl ? enabledEl.checked : false, val);
+      }
+      // v3.11.7-fix (Issue #6): Save prayer checkboxes (array) — handler terpisah di bawah
     });
   });
+
+  // v3.11.7-fix (Issue #6): Adzan — event listeners khusus
+  // Volume slider — update label real-time
+  const adzanVolSlider = document.getElementById('rf-set-prayer-adzan-volume');
+  if (adzanVolSlider) {
+    const volLabel = document.getElementById('rf-adzan-vol-label');
+    adzanVolSlider.addEventListener('input', () => {
+      if (volLabel) volLabel.textContent = adzanVolSlider.value;
+    });
+  }
+  // Prayer checkboxes — save sebagai array
+  document.querySelectorAll('.rf-adzan-prayer').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const selected = [...document.querySelectorAll('.rf-adzan-prayer:checked')].map(c => c.value);
+      await saveSettings({ prayerAdzanPrayers: selected });
+      toast('✓ Tersimpan: waktu adzan');
+    });
+  });
+  // Test Adzan button — broadcast PLAY_ADZAN ke popup/sidebar aktif
+  const testAdzanBtn = document.getElementById('rf-set-prayer-adzan-test');
+  if (testAdzanBtn) {
+    testAdzanBtn.addEventListener('click', async () => {
+      try {
+        const s = await getSettings();
+        // Buka sidebar supaya ada yang receive PLAY_ADZAN
+        if (browser.sidebarAction && browser.sidebarAction.open) {
+          try { await browser.sidebarAction.open(); } catch (e) {}
+        }
+        // Broadcast PLAY_ADZAN (popup/sidebar yang aktif akan terima)
+        await browser.runtime.sendMessage({
+          type: 'PLAY_ADZAN',
+          prayer: 'Test',
+          prayerKey: 'Test',
+          volume: s.prayerAdzanVolume ?? 0.7,
+          sound: s.prayerAdzanSound || 'default',
+          customUrl: s.prayerAdzanCustomUrl || ''
+        }).catch(() => {});
+        toast('🔔 Adzan diputar di sidebar/popup yang aktif');
+      } catch (e) {
+        toast('Gagal test adzan: ' + e.message);
+      }
+    });
+  }
 
   // ===== Content Guardian: textarea bindings (keywords & domains) =====
   const cgKeywordsEl = document.getElementById('rf-set-cg-keywords');

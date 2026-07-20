@@ -217,6 +217,71 @@
           <span class="rf-slider"></span>
         </label>
       </div>
+
+      <!-- v3.11.7-fix (Issue #6): Adzan Sound -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🔔 Adzan Sound</div>
+          <div class="rf-row-desc">Mainkan suara adzan otomatis saat masuk waktu sholat (5 waktu wajib). Adzan bunyi di sidebar/popup RecallFox yang aktif. Ada tombol Stop kalau lagi tidak mau diganggu.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-adzan-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Volume Adzan</div>
+          <div class="rf-row-desc">Atur volume suara adzan (0.0 - 1.0). Default 0.7.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="rf-set-prayer-adzan-volume" min="0" max="1" step="0.1" value="0.7" style="width:140px" />
+          <span id="rf-adzan-vol-label" style="font-size:11px;min-width:30px">0.7</span>
+        </div>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-sound-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Pilih Suara Adzan</div>
+          <div class="rf-row-desc">Default: adzan standar (~2 menit). Short: adzan pendek (~30 detik). Custom: pakai URL file mp3/ogg Anda sendiri.</div>
+        </div>
+        <select id="rf-set-prayer-adzan-sound" style="width:160px">
+          <option value="default">Default (standar)</option>
+          <option value="short">Short (pendek)</option>
+          <option value="custom">Custom URL</option>
+        </select>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-custom-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Custom Adzan URL</div>
+          <div class="rf-row-desc">URL lengkap file adzan (mp3/ogg/wav). Contoh: https://example.com/adzan.mp3. Pastikan URL public accessible (CORS allowed).</div>
+        </div>
+        <input type="url" id="rf-set-prayer-adzan-custom-url" placeholder="https://example.com/adzan.mp3" style="flex:1;max-width:400px" />
+      </div>
+
+      <div class="rf-row" id="rf-adzan-prayers-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Waktu Sholat yang Bunyi Adzan</div>
+          <div class="rf-row-desc">Centang waktu sholat yang ingin bunyi adzan. Default: semua 5 waktu.</div>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px">
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Fajr" checked> Subuh</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Dhuhr" checked> Dzuhur</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Asr" checked> Ashar</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Maghrib" checked> Magrib</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Isha" checked> Isya</label>
+        </div>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-test-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Test Adzan</div>
+          <div class="rf-row-desc">Klik untuk test mainkan adzan sekarang. Popup/sidebar RecallFox harus aktif (buka sidebar dulu).</div>
+        </div>
+        <button id="rf-set-prayer-adzan-test" class="rf-btn rf-btn-secondary">🔔 Test Adzan</button>
+      </div>
     </section>
 
     <!-- Habit Tracker Settings -->

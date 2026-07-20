@@ -1638,11 +1638,11 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   // Issue #3: SAVE_UPLOADED_SCREENSHOT — simpan screenshot dari file upload/paste
   if (msg.type === 'SAVE_UPLOADED_SCREENSHOT') {
     try {
-      const { title, dataUrl, source } = msg;
+      let { title, dataUrl, source } = msg;
       if (!dataUrl) return { ok: false, error: 'NO_DATA_URL' };
       // Build screenshot item
       const match = dataUrl.match(/^data:(image\/[a-z]+);base64,/i);
-      const fmt = match && match[1] === 'image/jpeg' ? 'jpeg' : 'png';
+      let fmt = match && match[1] === 'image/jpeg' ? 'jpeg' : 'png';
       // Decode untuk dapat width/height/bytes
       let width = 0, height = 0, bytes = 0;
       try {
@@ -1650,6 +1650,54 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         const binStr = atob(base64);
         bytes = binStr.length;
       } catch (e) {}
+
+      // v3.11.7-fix (Issue #1 gap): Kompresi upload manual sesuai screenshotCompression.
+      // Sebelumnya upload manual tidak dikompresi → file PNG 9MB tetap 9MB → GDrive sync gagal.
+      // Sekarang kompres otomatis pakai setting yang sama dengan capture path.
+      try {
+        const settings = await getSettings();
+        const compLevel = settings.screenshotCompression || 'high';
+        let targetFormat = 'jpeg', targetQuality = 60;
+        if (compLevel === 'lossless') { targetFormat = 'png'; targetQuality = 100; }
+        else if (compLevel === 'low') { targetFormat = 'jpeg'; targetQuality = 90; }
+        else if (compLevel === 'medium') { targetFormat = 'jpeg'; targetQuality = 75; }
+        // 'high' default → jpeg q60
+
+        // Kompres hanya kalau target lebih kecil dari source (atau format beda)
+        const sourceIsPng = fmt === 'png';
+        const needCompress = (targetFormat === 'jpeg') || (sourceIsPng && targetFormat === 'png' && compLevel !== 'lossless');
+        // Skip kompresi kalau lossless ATAU sudah jpeg dengan quality sama/lebih rendah
+        if (compLevel !== 'lossless' && needCompress) {
+          const imgBlob = await (await fetch(dataUrl)).blob();
+          const bitmap = await createImageBitmap(imgBlob);
+          const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+          const ctx2 = canvas.getContext('2d');
+          // Untuk JPEG, fill background putih dulu (JPEG tidak support transparansi)
+          if (targetFormat === 'jpeg') {
+            ctx2.fillStyle = '#ffffff';
+            ctx2.fillRect(0, 0, canvas.width, canvas.height);
+          }
+          ctx2.drawImage(bitmap, 0, 0);
+          const newBlob = await canvas.convertToBlob({
+            type: `image/${targetFormat}`,
+            quality: targetQuality / 100
+          });
+          // Hanya pakai hasil kompresi kalau ukurannya lebih kecil dari original
+          if (newBlob.size < bytes) {
+            dataUrl = await new Promise(resolve => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(newBlob);
+            });
+            fmt = targetFormat;
+            bytes = newBlob.size;
+            console.log(`[RecallFox] Upload manual dikompres: ${imgBlob.size} → ${newBlob.size} bytes (${compLevel})`);
+          }
+        }
+      } catch (e) {
+        console.warn('[RecallFox] Kompresi upload manual gagal (lanjut pakai original):', e.message);
+      }
+
       // Generate thumbnail (200px) via OffscreenCanvas (background-compatible)
       let thumbnailDataUrl = '';
       try {
@@ -2262,6 +2310,43 @@ async function checkPrayerReminder() {
       console.log('[RecallFox] Prayer reminder sent:', message);
     } catch (e) {
       console.warn('[RecallFox] Reminder notification failed:', e.message);
+    }
+
+    // v3.11.7-fix (Issue #6): Adzan sound saat masuk waktu sholat (0-1 menit sisa).
+    // Cek terpisah dari reminder notification — adzan bisa ON walau reminder OFF.
+    try {
+      const adzanEnabled = settings.prayerAdzanEnabled === true;
+      if (adzanEnabled && next.minutesUntil <= 1 && next.minutesUntil >= 0) {
+        const adzanKey = `${times.date}-${next.name}-adzan`;
+        const adzanLastKey = settings.prayerAdzanLastPlayedKey || '';
+        // Cek apakah prayer ini termasuk yang harus bunyi adzan
+        const adzanPrayers = Array.isArray(settings.prayerAdzanPrayers) && settings.prayerAdzanPrayers.length > 0
+          ? settings.prayerAdzanPrayers
+          : ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+        // next.name sudah dalam format Indonesia: Subuh/Dzuhur/Ashar/Magrib/Isya
+        // Map ke key Fajr/Dhuhr/Asr/Maghrib/Isha
+        const prayerKeyMap = { 'Subuh':'Fajr', 'Dzuhur':'Dhuhr', 'Ashar':'Asr', 'Magrib':'Maghrib', 'Isya':'Isha' };
+        const prayerKey = prayerKeyMap[next.name] || next.name;
+        if (adzanPrayers.includes(prayerKey) && adzanLastKey !== adzanKey) {
+          // Broadcast ke sidebar/popup untuk mainkan adzan (audio hanya bisa di context page/popup)
+          try {
+            await browser.runtime.sendMessage({
+              type: 'PLAY_ADZAN',
+              prayer: next.name,
+              prayerKey: prayerKey,
+              volume: settings.prayerAdzanVolume ?? 0.7,
+              sound: settings.prayerAdzanSound || 'default',
+              customUrl: settings.prayerAdzanCustomUrl || ''
+            }).catch(() => {}); // popup mungkin tidak aktif — silent fail
+            console.log('[RecallFox] Adzan broadcasted for', next.name);
+            await saveSettings({ prayerAdzanLastPlayedKey: adzanKey });
+          } catch (e) {
+            console.warn('[RecallFox] Adzan broadcast failed:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[RecallFox] Adzan trigger failed:', e.message);
     }
 
     await saveSettings({ prayerLastReminderKey: reminderKey });

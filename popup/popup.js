@@ -133,7 +133,9 @@ const ICONS = {
   kb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
-  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>'
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+  // v3.11.7-fix (code quality): Tambah icon cloud untuk tool Sync Cloud (sebelumnya pakai fallback emoji)
+  cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>'
 };
 
 const TYPE = {
@@ -2214,7 +2216,10 @@ function setView(v) {
   const cmdWrap = $('#cmdWrap');
   if (cmdWrap) cmdWrap.style.display = homeOnly ? 'flex' : 'none';
   document.querySelector('.tiles').style.display = homeOnly ? 'grid' : 'none';
-  document.querySelector('.strip').style.display = homeOnly ? '' : 'none';
+  // v3.11.7-fix (Issue #6): Strip jadwal sholat SELALU terlihat di semua view
+  // (home, notes, tools) supaya countdown sholat tidak hilang saat user di menu lain.
+  // Sebelumnya: homeOnly ? '' : 'none' → ketutup saat di notes/tools.
+  document.querySelector('.strip').style.display = '';
   $('#page').classList.remove('in');
   if (v === 'notes') renderNotes();
 }
@@ -2362,12 +2367,16 @@ function openNoteEditor(noteId) {
     + '</div>'
     + '<div class="card"><h3>Warna</h3><div class="ndots">' + NCOLORS.map(c => '<button class="d-' + c + (n.color === c ? ' on' : '') + '" data-c="' + c + '" title="' + c + '"></button>').join('') + '</div></div>'
     + '<div class="hintbox">🕑 Terakhir disimpan: <b id="nMeta">' + timeAgo(n.updatedAt || n.createdAt) + '</b> · Catatan tersimpan lokal & ikut backup otomatis.</div>';
+  // v3.11.7-fix (Issue #2 gap): Note editor footer konsisten dengan editor lain.
+  // Sebelumnya: 5 tombol flex:none + spacer span flex:1 → di sidebar sempit, tombol
+  // "Selesai" terdorong ke kanan ekstrim / wrap ke baris baru tidak rapi.
+  // Sekarang: semua tombol flex:1 (rata konsisten), label dipendekkan supaya muat sidebar.
   $('#pageFoot').innerHTML =
-    '<button class="btn btn-d" id="nDel" style="flex:none">Hapus</button><span style="flex:1"></span>'
-    + '<button class="btn btn-g" id="nArchive" style="flex:none">' + (n.archived ? '📤 Unarsip' : '📦 Arsipkan') + '</button>'
-    + '<button class="btn btn-g" id="nPin" style="flex:none">' + (n.pinned ? '📌 Lepas pin' : '📌 Pin') + '</button>'
-    + '<button class="btn btn-g" id="nCopy" style="flex:none">Salin</button>'
-    + '<button class="btn btn-p" id="nDone" style="flex:none">Selesai</button>';
+    '<button class="btn btn-d" id="nDel">Hapus</button>'
+    + '<button class="btn btn-g" id="nArchive">' + (n.archived ? '📤 Unarsip' : '📦 Arsip') + '</button>'
+    + '<button class="btn btn-g" id="nPin">' + (n.pinned ? '📌 Lepas' : '📌 Pin') + '</button>'
+    + '<button class="btn btn-g" id="nCopy">Salin</button>'
+    + '<button class="btn btn-p" id="nDone">Selesai</button>';
   const ta = $('#nBody');
   const titleInput = $('#nTitle');
   const groupInput = $('#nGroup');
@@ -3265,9 +3274,7 @@ async function renderGDrivePage(B) {
     +     '<button class="btn btn-g" id="rfGdCopyToken" title="Salin token ke clipboard" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy</button>'
     +   '</div>'
     +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">'
-    +     (tokenLocked
-    +       ? '🔒 Token <b>terkunci</b> (read-only) — klik 🔓 Unlock untuk edit. Mencegah ketimpa tidak sengaja.'
-    +       : '⚠️ Token <b>terbuka</b> — bisa diedit. Klik 🔒 Lock setelah selesai untuk mengamankan.')
+    +     (tokenLocked ? '🔒 Token <b>terkunci</b> (read-only) — klik 🔓 Unlock untuk edit. Mencegah ketimpa tidak sengaja.' : '⚠️ Token <b>terbuka</b> — bisa diedit. Klik 🔒 Lock setelah selesai untuk mengamankan.')
     +     '<br>Klik 🎲 Generate untuk buat token acak, lalu klik 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.'
     +   '</div>'
     + '</div>'
@@ -5141,3 +5148,127 @@ function initSidebarAutoClose() {
 }
 
 init().catch(e => console.error('[RecallFox] init failed:', e));
+
+// ============================================================================
+// v3.11.7-fix (Issue #6): Adzan sound handler — mainkan suara adzan saat masuk waktu sholat
+// Dipicu oleh background.js via browser.runtime.sendMessage({ type: 'PLAY_ADZAN' })
+// Audio hanya bisa di-play dari context page (popup/sidebar), bukan background.
+// ============================================================================
+
+let _adzanAudio = null;
+let _adzanBanner = null;
+
+// URL adzan default — pakai CDN publik (no API key needed).
+// File adzan pendek (~30 detik) dari IslamicFinder CDN (gratis, sering dipakai aplikasi adzan).
+const ADZAN_URLS = {
+  default: 'https://www.islamicfinder.org/cms/audio/azan1/azan1.mp3',
+  short: 'https://www.islamicfinder.org/cms/audio/azan2/azan2.mp3'
+};
+
+function _stopAdzan() {
+  if (_adzanAudio) {
+    try { _adzanAudio.pause(); _adzanAudio.currentTime = 0; } catch (e) {}
+    _adzanAudio = null;
+  }
+  if (_adzanBanner) {
+    try { _adzanBanner.remove(); } catch (e) {}
+    _adzanBanner = null;
+  }
+}
+
+function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
+  // Stop adzan sebelumnya kalau ada
+  _stopAdzan();
+
+  // Tentukan URL
+  let url;
+  if (sound === 'custom' && customUrl) {
+    url = customUrl;
+  } else if (sound === 'short') {
+    url = ADZAN_URLS.short;
+  } else {
+    url = ADZAN_URLS.default;
+  }
+
+  // Buat audio element
+  try {
+    _adzanAudio = new Audio(url);
+    _adzanAudio.volume = Math.max(0, Math.min(1, Number(volume) || 0.7));
+    _adzanAudio.play().catch(e => {
+      console.warn('[RecallFox] Adzan play failed (mungkin autoplay-blocked):', e.message);
+      // Fallback: tampilkan banner saja tanpa audio
+    });
+  } catch (e) {
+    console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+  }
+
+  // Tampilkan banner Stop (fixed di bawah, tidak nutupin konten)
+  _adzanBanner = document.createElement('div');
+  _adzanBanner.id = 'rfAdzanBanner';
+  _adzanBanner.style.cssText = [
+    'position:fixed',
+    'bottom:0',
+    'left:0',
+    'right:0',
+    'background:linear-gradient(135deg,#10b981,#059669)',
+    'color:#fff',
+    'padding:10px 16px',
+    'display:flex',
+    'align-items:center',
+    'justify-content:space-between',
+    'gap:10px',
+    'z-index:99999',
+    'font-size:13px',
+    'box-shadow:0 -2px 12px rgba(0,0,0,0.15)',
+    'font-family:inherit'
+  ].join(';');
+  _adzanBanner.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px">'
+    + '<span style="font-size:18px">🕌</span>'
+    + '<div>'
+    +   '<div style="font-weight:600">Adzan — ' + prayer + ' telah masuk</div>'
+    +   '<div style="font-size:11px;opacity:0.85">Klik ⏹ Stop untuk menghentikan suara</div>'
+    + '</div>'
+    + '</div>'
+    + '<button id="rfAdzanStop" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">⏹ Stop</button>';
+  document.body.appendChild(_adzanBanner);
+
+  // Bind tombol Stop
+  const stopBtn = _adzanBanner.querySelector('#rfAdzanStop');
+  if (stopBtn) {
+    stopBtn.addEventListener('click', _stopAdzan);
+  }
+
+  // Auto-cleanup saat audio selesai
+  if (_adzanAudio) {
+    _adzanAudio.onended = () => _stopAdzan();
+    _adzanAudio.onerror = () => {
+      console.warn('[RecallFox] Adzan audio error — kemungkinan URL tidak accessible');
+      _stopAdzan();
+    };
+  }
+
+  // Auto-stop setelah 5 menit (safety, kalau audio tidak pernah ended)
+  setTimeout(() => {
+    if (_adzanAudio || _adzanBanner) {
+      console.log('[RecallFox] Adzan auto-stop after 5 minutes');
+      _stopAdzan();
+    }
+  }, 5 * 60 * 1000);
+}
+
+// Listener untuk message PLAY_ADZAN dari background
+if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === 'PLAY_ADZAN') {
+      _playAdzan(msg.prayer, msg.prayerKey, msg.volume, msg.sound, msg.customUrl);
+      sendResponse({ ok: true });
+      return false; // sync response
+    }
+    if (msg.type === 'STOP_ADZAN') {
+      _stopAdzan();
+      sendResponse({ ok: true });
+      return false;
+    }
+  });
+}
