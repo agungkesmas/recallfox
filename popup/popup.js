@@ -1842,7 +1842,7 @@ async function doShot(mode) {
 // atau klik di luar sheet (di scrim).
 function openShotPickerSheet() {
   const s = currentVault?.settings || {};
-  const currentComp = s.screenshotCompression || 'high';
+  const currentComp = s.screenshotCompression || 'lossless';
   openSheet('🖼️ Tangkap Layar', 'Pilih mode tangkap · ESC atau klik luar untuk batal', b => {
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Mode tangkap <span class="field-hint">(klik untuk langsung capture)</span></label>'
@@ -3253,56 +3253,57 @@ async function renderGDrivePage(B) {
     + '<div style="font-size:13px;font-weight:600;margin:4px 0;color:' + multiPcColor + ';color:#fff">' + esc(multiPcBadge) + '</div>'
     + '</div>'
 
-    // ===== SECTION 1: Konfigurasi (URL + Token + Copy URL + Lock Token) =====
-    // v3.11.7-fix2 (Sesi 7, Issue #4): Perjelas label "Konfigurasi" — BUKAN login.
-    // User bingung: "ini tu masuk ke logika buat akun baru untuk konfigurasi dan multi
-    // pc sync ini untuk login? karena terasa tidak familiar penyebutannya. atau memang
-    // sebenarnya fungsinya beda?"
-    // Jawaban: INI BUKAN LOGIN. URL + Token adalah "jembatan" ke Google Apps Script
-    // Web App yang user deploy sendiri dari Spreadsheet sendiri. Tidak ada akun RecallFox,
-    // tidak ada server RecallFox. Data flow: addon ↔ Apps Script (milik user) ↔ Spreadsheet
-    // (milik user) ↔ Google Drive (milik user). Token = password yang user generate
-    // sendiri untuk memastikan hanya addon dengan token itu yang bisa akses Web App.
-    + '<div class="card"><h3>⚙️ Konfigurasi Sinkronisasi (URL Web App + Token Rahasia)</h3>'
-    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55">'
-    +   '<b>Bukan login akun.</b> Ini adalah jembatan ke <b>Google Apps Script milik Anda sendiri</b> '
-    +   '(yang Anda deploy dari Spreadsheet sendiri). '
-    +   '<br>· <b>URL Web App</b> = alamat Apps Script yang Anda deploy (Format: <code>https://script.google.com/macros/s/AKfyc.../exec</code>). '
-    +   '<br>· <b>Token</b> = password yang Anda generate sendiri di sini (32 karakter acak). Hanya addon dengan token ini yang bisa akses Web App Anda. '
-    +   '<br>· <b>Multi-PC Sync</b> = pakai URL + Token yang SAMA di PC lain supaya data sinkron antar perangkat. '
-    +   '<br>· <b>GDrive Sync</b> = one-way push data vault ke Spreadsheet + upload screenshot ke folder Drive. '
-    +   '<br>Data TIDAK melalui server RecallFox — langsung addon ↔ Apps Script Anda ↔ Spreadsheet/Drive Anda.'
+    // ===== SECTION 1: Hubungkan ke Google Drive (URL + Token + Copy URL + Lock Token) =====
+    // v3.11.8 (Issue #4): Simplify labeling — ganti "Konfigurasi" jadi "Hubungkan ke Google Drive".
+    // User report: "ini tu masuk ke logika buat akun baru untuk konfigurasi dan multi pc sync
+    // ini untuk login? karena terasa tidak familiar penyebutannya."
+    // Fix: Pakai istilah yang familiar — "Hubungkan" (bukan "Konfigurasi"), "Kunci" (bukan "Lock"),
+    // "Sandi" (bukan "Token"). Tambah penjelasan singkat di atas: Bukan login, ini jembatan.
+    + '<div class="card"><h3>🔗 Hubungkan ke Google Drive</h3>'
+    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e">'
+    +   '<b>💡 Ini BUKAN login akun.</b> RecallFox tidak punya server, tidak punya akun. '
+    +   'Anda hanya perlu menghubungkan addon ini ke <b>Apps Script milik Anda sendiri</b> '
+    +   '(yang Anda buat dari Spreadsheet Anda). Seperti menghubungkan Bluetooth — perlu kode '
+    +   'pasangan supaya aman.'
+    +   '<br><br>'
+    +   '<b>Cara pakai:</b><br>'
+    +   '1. Deploy Apps Script Web App (lihat panduan di bawah) → dapat <b>URL Web App</b><br>'
+    +   '2. Klik <b>🎲 Generate</b> di bawah untuk buat sandi acak<br>'
+    +   '3. Copy sandi, paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda<br>'
+    +   '4. Tempel <b>URL Web App</b> + <b>sandi</b> di bawah → klik <b>Simpan</b><br>'
+    +   '5. Klik <b>Test Koneksi</b> → harus "✅ Terhubung!"<br>'
+    +   '6. Untuk pakai di PC lain: copy URL+sandi, paste di PC lain (tidak perlu deploy ulang)'
     + '</div>'
     + '<div style="margin:8px 0">'
     +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
-    +     '<label style="font-size:11px;color:var(--muted)">Master switch — Aktifkan sync</label>'
+    +     '<label style="font-size:11px;color:var(--muted)"><b>Aktifkan sinkronisasi</b> (master switch)</label>'
     +     '<label class="ks-toggle' + (enabled ? ' on' : '') + '" id="rfGdToggle" aria-label="Toggle GDrive sync"><i></i></label>'
     +   '</div>'
     + '</div>'
     // v3.11.7-fix (Issue #3): Web App URL + tombol Copy URL
     + '<div style="margin:10px 0">'
-    +   '<label style="font-size:11px;color:var(--muted)">Web App URL (Apps Script) — dipakai di PC lain juga</label>'
+    +   '<label style="font-size:11px;color:var(--muted)"><b>URL Web App</b> (alamat Apps Script Anda)</label>'
     +   '<div style="display:flex;gap:6px;margin-top:4px">'
     +     '<input class="f" id="rfGdUrl" value="' + esc(s.gdriveWebAppUrl || '') + '" placeholder="https://script.google.com/macros/s/AKfyc.../exec" style="flex:1;font-size:11px">'
-    +     '<button class="btn btn-g" id="rfGdCopyUrl" title="Salin URL ke clipboard — mudah install di PC lain" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy URL</button>'
+    +     '<button class="btn btn-g" id="rfGdCopyUrl" title="Salin URL — paste di PC lain untuk multi-PC sync" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy URL</button>'
     +   '</div>'
-    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">Klik <b>📋 Copy URL</b> untuk salin URL Web App ke clipboard. Paste di PC lain di field URL yang sama.</div>'
+    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">Klik <b>📋 Copy URL</b> untuk salin ke clipboard. Paste di PC lain di field yang sama.</div>'
     + '</div>'
-    // v3.11.7-fix (Issue #3): Auth Token dengan LOCK protection
+    // v3.11.7-fix (Issue #3): Sandi rahasia dengan LOCK protection
     + '<div style="margin:10px 0">'
-    +   '<label style="font-size:11px;color:var(--muted)">Auth Token (HARUS sama dengan CONFIG.AUTH_TOKEN di Apps Script)</label>'
+    +   '<label style="font-size:11px;color:var(--muted)"><b>Sandi rahasia</b> (HARUS sama dengan <code>AUTH_TOKEN</code> di Code.gs Anda)</label>'
     +   '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">'
-    +     '<input type="' + (tokenLocked ? 'password' : 'text') + '" class="f" id="rfGdToken" value="' + esc(s.gdriveAuthToken || '') + '" placeholder="32-char random string" style="flex:1;min-width:120px;font-size:11px"' + (tokenLocked ? ' readonly' : '') + '>'
-    +     '<button class="btn btn-g" id="rfGdLockToken" title="' + (tokenLocked ? 'Buka kunci untuk edit token' : 'Kunci token agar tidak terketik tidak sengaja') + '" style="flex:none;padding:6px 10px;font-size:11px">' + (tokenLocked ? '🔓 Unlock' : '🔒 Lock') + '</button>'
-    +     '<button class="btn btn-g" id="rfGdGenToken" title="Generate token acak (butuh konfirmasi kalau sudah ada token)" style="flex:none;padding:6px 10px;font-size:11px">🎲 Generate</button>'
-    +     '<button class="btn btn-g" id="rfGdCopyToken" title="Salin token ke clipboard" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy</button>'
+    +     '<input type="' + (tokenLocked ? 'password' : 'text') + '" class="f" id="rfGdToken" value="' + esc(s.gdriveAuthToken || '') + '" placeholder="32 karakter acak" style="flex:1;min-width:120px;font-size:11px"' + (tokenLocked ? ' readonly' : '') + '>'
+    +     '<button class="btn btn-g" id="rfGdLockToken" title="' + (tokenLocked ? 'Buka kunci untuk edit sandi' : 'Kunci sandi agar tidak terketik tidak sengaja') + '" style="flex:none;padding:6px 10px;font-size:11px">' + (tokenLocked ? '🔓 Buka' : '🔒 Kunci') + '</button>'
+    +     '<button class="btn btn-g" id="rfGdGenToken" title="Buat sandi acak (butuh konfirmasi kalau sudah ada)" style="flex:none;padding:6px 10px;font-size:11px">🎲 Generate</button>'
+    +     '<button class="btn btn-g" id="rfGdCopyToken" title="Salin sandi ke clipboard" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy</button>'
     +   '</div>'
     +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">'
-    +     (tokenLocked ? '🔒 Token <b>terkunci</b> (read-only) — klik 🔓 Unlock untuk edit. Mencegah ketimpa tidak sengaja.' : '⚠️ Token <b>terbuka</b> — bisa diedit. Klik 🔒 Lock setelah selesai untuk mengamankan.')
-    +     '<br>Klik 🎲 Generate untuk buat token acak, lalu klik 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.'
+    +     (tokenLocked ? '🔒 Sandi <b>terkunci</b> (read-only) — klik 🔓 Buka untuk edit. Mencegah ketimpa tidak sengaja.' : '⚠️ Sandi <b>terbuka</b> — bisa diedit. Klik 🔒 Kunci setelah selesai.')
+    +     '<br>Klik 🎲 Generate untuk buat sandi acak, lalu 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.'
     +   '</div>'
     + '</div>'
-    + '<button class="btn btn-g" id="rfGdSave" style="width:100%;margin-top:6px">💾 Simpan Konfigurasi</button></div>'
+    + '<button class="btn btn-g" id="rfGdSave" style="width:100%;margin-top:6px">💾 Simpan & Hubungkan</button></div>'
 
     // ===== SECTION 2: Aksi Cepat (gabungan GDrive + Multi-PC) =====
     + '<div class="card"><h3>🚀 Aksi Cepat (1 klik)</h3>'
@@ -5201,6 +5202,9 @@ function _stopAdzan() {
   // v3.11.7-fix2 (Sesi 7, Issue #5): Hide tombol Stop global di header
   const stopBtn = document.getElementById('adzanStopBtn');
   if (stopBtn) stopBtn.style.display = 'none';
+  // v3.11.8 (Issue #5): Hide tombol Stop di strip jadwal sholat juga
+  const stripStopBtn = document.getElementById('stripAdzanStop');
+  if (stripStopBtn) stripStopBtn.style.display = 'none';
   // v3.11.7-fix2: Juga broadcast STOP_ADZAN ke content script tab aktif (kalau adzan
   // di-play di tab aktif, bukan di popup)
   try {
@@ -5220,6 +5224,18 @@ function _showAdzanStopButton() {
     if (!stopBtn.dataset.bound) {
       stopBtn.addEventListener('click', _stopAdzan);
       stopBtn.dataset.bound = '1';
+    }
+  }
+  // v3.11.8 (Issue #5): Show tombol Stop di strip jadwal sholat juga (selalu visible)
+  const stripStopBtn = document.getElementById('stripAdzanStop');
+  if (stripStopBtn) {
+    stripStopBtn.style.display = '';
+    if (!stripStopBtn.dataset.bound) {
+      stripStopBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _stopAdzan();
+      });
+      stripStopBtn.dataset.bound = '1';
     }
   }
 }

@@ -524,45 +524,81 @@ function bindEvents() {
       toast('✓ Tersimpan: waktu adzan');
     });
   });
-  // Test Adzan button — v3.11.7-fix2: kirim PLAY_ADZAN ke content script tab aktif
-  // (lebih reliable daripada popup-only). Kalau tab aktif tidak kompatibel, fallback
-  // ke popup/sidebar.
+  // Test Adzan button — v3.11.8 (Issue #5 fix): mainkan audio LANGSUNG di settings page.
+  // Sebelumnya: broadcast PLAY_ADZAN ke popup/sidebar — tapi popup harus aktif untuk terima,
+  // sering gagal. Settings page adalah halaman web normal, bisa new Audio().play() langsung
+  // setelah user click (user gesture) — pasti jalan.
   const testAdzanBtn = document.getElementById('rf-set-prayer-adzan-test');
   if (testAdzanBtn) {
+    let _settingsAdzanAudio = null;
     testAdzanBtn.addEventListener('click', async () => {
       try {
         const s = await getSettings();
-        const adzanPayload = {
-          type: 'PLAY_ADZAN',
-          prayer: 'Test',
-          prayerKey: 'Test',
-          volume: s.prayerAdzanVolume ?? 0.7,
-          sound: s.prayerAdzanSound || 'default',
-          customUrl: s.prayerAdzanCustomUrl || ''
-        };
-        // Strategy 1: kirim ke tab aktif (paling reliable)
-        let played = false;
-        try {
-          const activeTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-          for (const at of activeTabs) {
-            if (!at.url || !/^https?:\/\//.test(at.url)) continue;
-            if (/^(about:|moz-extension:|chrome:|file:)/.test(at.url)) continue;
-            try {
-              const r = await browser.tabs.sendMessage(at.id, adzanPayload);
-              if (r?.ok) { played = true; break; }
-            } catch (e) { /* tab mungkin tidak punya content script — skip */ }
-          }
-        } catch (e) {}
-        // Strategy 2: buka sidebar + broadcast ke popup (fallback)
-        if (!played) {
-          if (browser.sidebarAction && browser.sidebarAction.open) {
-            try { await browser.sidebarAction.open(); } catch (e) {}
-          }
-          await browser.runtime.sendMessage(adzanPayload).catch(() => {});
+        // Stop adzan sebelumnya kalau ada
+        if (_settingsAdzanAudio) {
+          try { _settingsAdzanAudio.pause(); } catch (e) {}
+          _settingsAdzanAudio = null;
         }
-        toast(played ? '🔔 Adzan diputar di tab aktif' : '🔔 Adzan diputar di sidebar/popup (tab aktif tidak kompatibel)');
+        // Tentukan URL
+        const ADZAN_URLS = {
+          default: 'https://www.islamicfinder.org/cms/audio/azan1/azan1.mp3',
+          short: 'https://www.islamicfinder.org/cms/audio/azan2/azan2.mp3'
+        };
+        let url;
+        const sound = s.prayerAdzanSound || 'default';
+        if (sound === 'custom' && s.prayerAdzanCustomUrl) {
+          url = s.prayerAdzanCustomUrl;
+        } else if (sound === 'short') {
+          url = ADZAN_URLS.short;
+        } else {
+          url = ADZAN_URLS.default;
+        }
+        // Mainkan audio LANGSUNG di settings page (user gesture = click)
+        _settingsAdzanAudio = new Audio(url);
+        _settingsAdzanAudio.volume = Math.max(0, Math.min(1, Number(s.prayerAdzanVolume) || 0.7));
+        _settingsAdzanAudio.play().catch(e => {
+          toast('Gagal play adzan: ' + e.message + '. Coba enable adzan di sidebar dulu, atau cek URL custom.', false);
+          console.error('[RecallFox] Adzan play failed:', e);
+        });
+        // Update button text supaya user tahu sedang play
+        const origText = testAdzanBtn.textContent;
+        testAdzanBtn.textContent = '⏹ Stop Adzan';
+        testAdzanBtn.style.background = '#fee2e2';
+        testAdzanBtn.style.color = '#991b1b';
+        _settingsAdzanAudio.onended = () => {
+          testAdzanBtn.textContent = origText;
+          testAdzanBtn.style.background = '';
+          testAdzanBtn.style.color = '';
+          _settingsAdzanAudio = null;
+        };
+        _settingsAdzanAudio.onerror = () => {
+          toast('Adzan audio error — coba ganti sound (default/short) atau cek URL custom', false);
+          testAdzanBtn.textContent = origText;
+          testAdzanBtn.style.background = '';
+          testAdzanBtn.style.color = '';
+          _settingsAdzanAudio = null;
+        };
+        // Click lagi untuk stop
+        const stopHandler = () => {
+          if (_settingsAdzanAudio) {
+            _settingsAdzanAudio.pause();
+            _settingsAdzanAudio = null;
+            testAdzanBtn.textContent = origText;
+            testAdzanBtn.style.background = '';
+            testAdzanBtn.style.color = '';
+            toast('Adzan dihentikan');
+          }
+        };
+        // Bind stop handler sekali (pakai flag)
+        if (!testAdzanBtn._stopBound) {
+          testAdzanBtn.addEventListener('click', () => {
+            if (_settingsAdzanAudio) stopHandler();
+          }, true);
+          testAdzanBtn._stopBound = true;
+        }
+        toast('🔔 Adzan diputar — klik tombol lagi untuk stop');
       } catch (e) {
-        toast('Gagal test adzan: ' + e.message);
+        toast('Gagal test adzan: ' + e.message, false);
       }
     });
   }
