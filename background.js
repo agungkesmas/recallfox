@@ -712,8 +712,26 @@ async function captureFullPage(tab, opts = {}) {
   }
 
   const settings = await getSettings();
-  const format = settings.screenshotFormat === 'jpeg' ? 'jpeg' : 'png';
-  const quality = Math.max(50, Math.min(100, settings.screenshotJpegQuality || 90));
+  // v3.11.7-fix (Issue #1): Baca "compression level" dulu, lalu map ke format + quality.
+  // Ini menggantikan pembacaan langsung screenshotFormat/screenshotJpegQuality supaya
+  // user cukup pilih 1 dropdown (Lossless / Sedikit / Sedang / Tinggi) dan kita yang
+  // atur format + quality di belakang. Default = "high" (JPEG q60) supaya upload
+  // GDrive sync selalu di bawah limit Apps Script (~10MB) dan Apps Script doGet payload.
+  const compLevel = settings.screenshotCompression || 'high';
+  let format, quality;
+  switch (compLevel) {
+    case 'lossless':
+      format = 'png'; quality = 100; break;     // PNG lossless — besar, ~puluhan MB
+    case 'low':
+      format = 'jpeg'; quality = 90; break;     // JPEG q90 — sedikit kompresi, ~1-3 MB
+    case 'medium':
+      format = 'jpeg'; quality = 75; break;     // JPEG q75 — sedang, ~500KB-1.5 MB
+    case 'high':
+    default:
+      format = 'jpeg'; quality = 60; break;     // JPEG q60 — tinggi, ~200KB-800KB (default)
+  }
+  // Override kalau user set format/quality eksplisit via settings lama (kompatibilitas)
+  // — TIDAK dipakai lagi, biarkan compression level yang menentukan.
   const maxHeight = Math.max(2048, Math.min(32768, settings.screenshotMaxFullHeight || 16384));
   const mode = opts.mode || 'entire';  // FireShot-style default
 
@@ -1138,6 +1156,14 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       }
       syncTimer = null;
     }, 2000);
+    // v3.11.7: Jika multi-PC auto-sync aktif, jadwalkan juga
+    try {
+      const settings = await getSettings();
+      if (settings.syncAutoEnabled) {
+        const { scheduleAutoSync } = await import('./lib/sync-profile.js');
+        scheduleAutoSync();
+      }
+    } catch (e) { /* silent */ }
     return false;
   }
   if (msg.type === 'SYNC_NOW') {
@@ -1464,6 +1490,110 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       return { ok: false, error: e.message };
     }
   }
+
+  // ============================================================
+  // v3.11.7: Multi-PC Bidirectional Sync handlers
+  // ============================================================
+  if (msg.type === 'SYNC_GET_PROFILES') {
+    try {
+      const { getSyncProfiles } = await import('./lib/sync-profile.js');
+      return { ok: true, data: await getSyncProfiles() };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_ADD_PROFILE') {
+    try {
+      const { addSyncProfile } = await import('./lib/sync-profile.js');
+      const profile = await addSyncProfile(msg.profile);
+      return { ok: true, profile };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_UPDATE_PROFILE') {
+    try {
+      const { updateSyncProfile } = await import('./lib/sync-profile.js');
+      const profile = await updateSyncProfile(msg.id, msg.patch);
+      return { ok: true, profile };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_DELETE_PROFILE') {
+    try {
+      const { deleteSyncProfile } = await import('./lib/sync-profile.js');
+      const data = await deleteSyncProfile(msg.id);
+      return { ok: true, data };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_SET_ACTIVE') {
+    try {
+      const { setActiveProfile } = await import('./lib/sync-profile.js');
+      await setActiveProfile(msg.id);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_PUSH') {
+    try {
+      const { pushStateToCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) return { ok: false, error: 'No active profile' };
+      const result = await pushStateToCloud(profile);
+      return result;
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_PULL') {
+    try {
+      const { pullStateFromCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) return { ok: false, error: 'No active profile' };
+      const result = await pullStateFromCloud(profile);
+      if (result.ok) {
+        // Notify semua tabs untuk refresh UI
+        try {
+          const tabs = await browser.tabs.query({});
+          for (const t of tabs) {
+            browser.tabs.sendMessage(t.id, { type: 'VAULT_UPDATED' }).catch(() => {});
+          }
+        } catch (e) {}
+        browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+      }
+      return result;
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_FULL') {
+    try {
+      const { fullSync, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) return { ok: false, error: 'No active profile' };
+      const result = await fullSync(profile);
+      if (result.ok) {
+        try {
+          const tabs = await browser.tabs.query({});
+          for (const t of tabs) {
+            browser.tabs.sendMessage(t.id, { type: 'VAULT_UPDATED' }).catch(() => {});
+          }
+        } catch (e) {}
+        browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+      }
+      return result;
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_TEST_PROFILE') {
+    try {
+      const { testProfileConnection } = await import('./lib/sync-profile.js');
+      const result = await testProfileConnection(msg.profile);
+      return result;
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (msg.type === 'SYNC_STATUS') {
+    try {
+      const { getSyncStatus } = await import('./lib/sync-profile.js');
+      return { ok: true, status: await getSyncStatus() };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
   // Issue #4 fallback: GET_PAGE_CONTEXT_VIA_BG — kalau content script tidak ter-inject
   // (mis. tab about: atau halaman restricted), background inject script on-demand.
   if (msg.type === 'GET_PAGE_CONTEXT_VIA_BG') {

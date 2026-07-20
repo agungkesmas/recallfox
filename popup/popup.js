@@ -966,8 +966,10 @@ function openBundleEditorSheet(bundleId) {
       +   '</div></div>'
       + '<div><label>Anggota <span class="field-hint" id="ebCount">' + ((bd.itemIds || []).length + (bd.noteIds || []).length) + ' dipilih</span></label>'
       +   '<div class="picklist" id="ebList"></div></div>'
-      + '<div class="btn-row"><button class="btn btn-g" id="ebArchive">' + ICONS.archive + (bd.archived ? 'Keluarkan dari arsip' : 'Arsipkan') + '</button>'
-      +   '<span style="flex:1"></span>'
+      // v3.11.7-fix (Issue #2): btn-row pakai 3 tombol flex:1 yang merata — HAPUS spacer
+      // style="flex:1" yang bikin tombol Simpan terdorong ke kanan ekstrim di sidebar lebar.
+      // Layout: [Arsipkan] [Batal] [Simpan] — semua flex:1, gap konsisten.
+      + '<div class="btn-row"><button class="btn btn-g" id="ebArchive">' + ICONS.archive + (bd.archived ? 'Keluarkan' : 'Arsipkan') + '</button>'
       +   '<button class="btn btn-g" id="ebCancel">Batal</button><button class="btn btn-p" id="ebSave">' + ICONS.check + 'Simpan</button></div></div>';
 
     // v3.9.0 (Issue 2): Render list with filter + track checked items in a Set
@@ -1796,6 +1798,14 @@ async function doShot(mode) {
     return;
   }
 
+  // v3.11.7-fix (Issue #1): Kalau tidak ada mode spesifik, tampilkan picker
+  // dengan pilihan mode + tingkat kompresi (sedikit/sedang/tinggi/lossless).
+  // Default kompresi = "high" (JPEG q60) supaya upload GDrive berhasil.
+  if (!mode) {
+    openShotPickerSheet();
+    return;
+  }
+
   const modeLabel = mode === 'selection' ? 'area' : mode === 'visible' ? 'viewport' : mode === 'entire' ? 'full page' : 'picker';
   toast('🖼️ Menangkap (' + modeLabel + ')…');
   try {
@@ -1812,6 +1822,56 @@ async function doShot(mode) {
       toast(msg, false);
     }
   } catch (e) { toast('Error: ' + e.message, false); }
+}
+
+// v3.11.7-fix (Issue #1): Shot picker sheet — pilih mode capture + tingkat kompresi
+// sebelum capture. Kompresi tinggi = JPEG q60 (default, recommended untuk GDrive sync).
+function openShotPickerSheet() {
+  const s = currentVault?.settings || {};
+  const currentComp = s.screenshotCompression || 'high';
+  openSheet('🖼️ Tangkap Layar', 'Pilih mode + tingkat kompresi', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Mode tangkap</label>'
+      +   '<div class="shot-mode-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:4px">'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="visible" style="padding:8px 4px;font-size:11px">📱<br>Bagian Terlihat</button>'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="entire" style="padding:8px 4px;font-size:11px">📄<br>Seluruh Halaman</button>'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="selection" style="padding:8px 4px;font-size:11px">✂️<br>Seleksi Area</button>'
+      +   '</div></div>'
+      + '<div><label>Tingkat kompresi <span class="field-hint">(default untuk GDrive sync)</span></label>'
+      +   '<select class="f" id="shotComp" style="margin-top:4px">'
+      +     '<option value="high"' + (currentComp === 'high' ? ' selected' : '') + '>Tinggi (JPEG q60) — recommended, ~200-800KB</option>'
+      +     '<option value="medium"' + (currentComp === 'medium' ? ' selected' : '') + '>Sedang (JPEG q75) — ~500KB-1.5MB</option>'
+      +     '<option value="low"' + (currentComp === 'low' ? ' selected' : '') + '>Sedikit (JPEG q90) — ~1-3MB</option>'
+      +     '<option value="lossless"' + (currentComp === 'lossless' ? ' selected' : '') + '>Lossless (PNG) — besar, GDrive bisa gagal</option>'
+      +   '</select></div>'
+      + '<div class="hintbox" style="font-size:10.5px">💡 <b>Tinggi</b> = upload GDrive selalu berhasil (di bawah limit Apps Script ~10MB). <b>Lossless</b> = kualitas terbaik tapi ukuran besar.</div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="shotCancel">Batal</button>'
+      +   '<button class="btn btn-p" id="shotCapture">' + ICONS.check + 'Tangkap</button></div></div>';
+
+    let selectedMode = null;
+    b.querySelectorAll('.shot-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        b.querySelectorAll('.shot-mode-btn').forEach(x => x.classList.remove('btn-p'));
+        b.querySelectorAll('.shot-mode-btn').forEach(x => x.classList.add('btn-g'));
+        btn.classList.remove('btn-g');
+        btn.classList.add('btn-p');
+        selectedMode = btn.dataset.mode;
+      });
+    });
+    b.querySelector('#shotCancel').addEventListener('click', closeSheet);
+    b.querySelector('#shotCapture').addEventListener('click', async () => {
+      if (!selectedMode) { toast('Pilih mode tangkap dulu', false); return; }
+      const comp = b.querySelector('#shotComp').value;
+      // Save compression ke settings supaya captureFullPage pakai compression baru
+      if (comp !== currentComp) {
+        await saveSettings({ screenshotCompression: comp });
+        toast('💡 Kompresi default diubah ke: ' + comp);
+      }
+      closeSheet();
+      // Trigger shot dengan mode terpilih
+      doShot(selectedMode);
+    });
+  });
 }
 
 // v3.8.1 (Issue #3): Upload manual screenshot — untuk screenshot dari luar web
@@ -2438,7 +2498,7 @@ const TOOLS = [
   ['aimanage', 'Kelola Situs AI', 'Pin/hide/tambah situs', ICONS.spark],  // v3.11.1 (Issue 4)
   ['cache', 'Bersihkan Cache', '9 tipe data · konfirmasi', ICONS.trash, 'warn'],
   ['askai', 'Tanya AI', 'Tanya soal teks terseleksi', ICONS.spark],
-  ['gdrive', 'Sync GDrive', 'Apps Script Spreadsheet', ICONS.cloud || '☁️'],   // v3.8.1 Issue #1+#2
+  ['gdrive', 'Sync Cloud', 'GDrive + Multi-PC sync', ICONS.cloud || '☁️'],   // v3.11.7-fix Issue #5: gabung GDrive + Multi-PC
   ['backup', 'Backup', 'Ekspor terenkripsi AES + GDrive', ICONS.archive],
   ['keys', 'Pintasan', 'Semua shortcut', ICONS.kb]
 ];
@@ -2448,7 +2508,7 @@ function renderTools() {
 }
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Google Drive', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -3120,15 +3180,24 @@ async function renderAiManagePage(B) {
 async function renderGDrivePage(B) {
   const s = currentVault?.settings || {};
 
-  // Ambil status sync terbaru dari background
+  // Ambil status sync terbaru dari background (GDrive Sync)
   let syncStatus = { meta: { lastSyncAt: null, lastError: null, totalSynced: 0, totalFailed: 0 }, queueLength: 0 };
   try {
     const r = await browser.runtime.sendMessage({ type: 'GDRIVE_STATUS' });
     if (r?.ok) syncStatus = { meta: r.meta, queueLength: r.queueLength };
   } catch (e) {}
 
+  // v3.11.7-fix (Issue #5): Ambil juga status Multi-PC Sync
+  let multiPcStatus = { hasActive: false, activeProfile: null, profiles: [] };
+  try {
+    const r = await browser.runtime.sendMessage({ type: 'SYNC_STATUS' });
+    if (r?.ok && r.status) multiPcStatus = r.status;
+  } catch (e) {}
+
   const enabled = !!s.gdriveSyncEnabled;
   const configured = !!(s.gdriveWebAppUrl && s.gdriveAuthToken);
+  // v3.11.7-fix (Issue #3): Lock token — read-only by default, butuh klik "Unlock" untuk edit
+  const tokenLocked = s.gdriveTokenLocked !== false; // default locked
 
   let statusBadge = '⛔ Nonaktif';
   let statusColor = '#6b7280';
@@ -3148,46 +3217,158 @@ async function renderGDrivePage(B) {
     statusColor = '#6b7280';
   }
 
+  // v3.11.7-fix (Issue #5): Status Multi-PC Sync
+  let multiPcBadge = '⛔ Belum ada profile aktif';
+  let multiPcColor = '#6b7280';
+  if (multiPcStatus.hasActive && multiPcStatus.activeProfile) {
+    const p = multiPcStatus.activeProfile;
+    const lastSync = p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : 'belum pernah';
+    multiPcBadge = '✅ Profile: ' + (p.name || '?') + ' · Last: ' + lastSync + ' · ' + (p.lastSyncDirection || '-');
+    multiPcColor = '#059669';
+  }
+
   B.innerHTML =
+    // ===== HEADER: Status gabungan GDrive + Multi-PC =====
     '<div class="card" style="background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border:none">'
-    + '<div style="font-size:11px;opacity:.85">Status sync</div>'
-    + '<div style="font-size:14px;font-weight:600;margin:4px 0;color:' + statusColor + ';color:#fff">' + esc(statusBadge) + '</div>'
-    + '<div style="font-size:11px;opacity:.85">Queue: ' + (syncStatus.queueLength || 0) + ' item · '
-    + 'Gagal: ' + (syncStatus.meta?.totalFailed || 0) + '</div>'
+    + '<div style="font-size:11px;opacity:.85">Status GDrive Sync (one-way push)</div>'
+    + '<div style="font-size:13px;font-weight:600;margin:4px 0;color:#fff">' + esc(statusBadge) + '</div>'
+    + '<div style="font-size:11px;opacity:.85">Queue: ' + (syncStatus.queueLength || 0) + ' item · Gagal: ' + (syncStatus.meta?.totalFailed || 0) + '</div>'
+    + '<hr style="border:none;border-top:1px solid rgba(255,255,255,.2);margin:8px 0">'
+    + '<div style="font-size:11px;opacity:.85">Status Multi-PC Sync (bidirectional)</div>'
+    + '<div style="font-size:13px;font-weight:600;margin:4px 0;color:' + multiPcColor + ';color:#fff">' + esc(multiPcBadge) + '</div>'
     + '</div>'
 
-    // Konfigurasi
-    + '<div class="card"><h3>⚙️ Konfigurasi</h3>'
+    // ===== SECTION 1: Konfigurasi (URL + Token + Copy URL + Lock Token) =====
+    + '<div class="card"><h3>⚙️ Konfigurasi (URL + Token — dipakai untuk GDrive Sync & Multi-PC Sync)</h3>'
     + '<div style="margin:8px 0">'
-    +   '<label style="font-size:11px;color:var(--muted)">Master switch — Aktifkan sync</label><br>'
-    +   '<label class="ks-toggle' + (enabled ? ' on' : '') + '" id="rfGdToggle" aria-label="Toggle GDrive sync" style="margin-top:6px"><i></i></label>'
+    +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+    +     '<label style="font-size:11px;color:var(--muted)">Master switch — Aktifkan sync</label>'
+    +     '<label class="ks-toggle' + (enabled ? ' on' : '') + '" id="rfGdToggle" aria-label="Toggle GDrive sync"><i></i></label>'
+    +   '</div>'
     + '</div>'
+    // v3.11.7-fix (Issue #3): Web App URL + tombol Copy URL
     + '<div style="margin:10px 0">'
-    +   '<label style="font-size:11px;color:var(--muted)">Web App URL (Apps Script)</label>'
-    +   '<input class="f" id="rfGdUrl" value="' + esc(s.gdriveWebAppUrl || '') + '" placeholder="https://script.google.com/macros/s/AKfyc.../exec" style="width:100%;margin-top:4px;font-size:11px">'
+    +   '<label style="font-size:11px;color:var(--muted)">Web App URL (Apps Script) — dipakai di PC lain juga</label>'
+    +   '<div style="display:flex;gap:6px;margin-top:4px">'
+    +     '<input class="f" id="rfGdUrl" value="' + esc(s.gdriveWebAppUrl || '') + '" placeholder="https://script.google.com/macros/s/AKfyc.../exec" style="flex:1;font-size:11px">'
+    +     '<button class="btn btn-g" id="rfGdCopyUrl" title="Salin URL ke clipboard — mudah install di PC lain" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy URL</button>'
+    +   '</div>'
+    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">Klik <b>📋 Copy URL</b> untuk salin URL Web App ke clipboard. Paste di PC lain di field URL yang sama.</div>'
     + '</div>'
+    // v3.11.7-fix (Issue #3): Auth Token dengan LOCK protection
     + '<div style="margin:10px 0">'
     +   '<label style="font-size:11px;color:var(--muted)">Auth Token (HARUS sama dengan CONFIG.AUTH_TOKEN di Apps Script)</label>'
-    +   '<div style="display:flex;gap:6px;margin-top:4px">'
-    +     '<input type="password" class="f" id="rfGdToken" value="' + esc(s.gdriveAuthToken || '') + '" placeholder="32-char random string" style="flex:1;font-size:11px">'
-    +     '<button class="btn btn-g" id="rfGdGenToken" title="Generate token acak" style="flex:none;padding:6px 10px;font-size:11px">🎲 Generate</button>'
+    +   '<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">'
+    +     '<input type="' + (tokenLocked ? 'password' : 'text') + '" class="f" id="rfGdToken" value="' + esc(s.gdriveAuthToken || '') + '" placeholder="32-char random string" style="flex:1;min-width:120px;font-size:11px"' + (tokenLocked ? ' readonly' : '') + '>'
+    +     '<button class="btn btn-g" id="rfGdLockToken" title="' + (tokenLocked ? 'Buka kunci untuk edit token' : 'Kunci token agar tidak terketik tidak sengaja') + '" style="flex:none;padding:6px 10px;font-size:11px">' + (tokenLocked ? '🔓 Unlock' : '🔒 Lock') + '</button>'
+    +     '<button class="btn btn-g" id="rfGdGenToken" title="Generate token acak (butuh konfirmasi kalau sudah ada token)" style="flex:none;padding:6px 10px;font-size:11px">🎲 Generate</button>'
     +     '<button class="btn btn-g" id="rfGdCopyToken" title="Salin token ke clipboard" style="flex:none;padding:6px 10px;font-size:11px">📋 Copy</button>'
     +   '</div>'
-    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">Klik 🎲 Generate untuk buat token acak, lalu klik 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.</div>'
+    +   '<div style="font-size:10px;color:var(--muted);margin-top:3px">'
+    +     (tokenLocked
+    +       ? '🔒 Token <b>terkunci</b> (read-only) — klik 🔓 Unlock untuk edit. Mencegah ketimpa tidak sengaja.'
+    +       : '⚠️ Token <b>terbuka</b> — bisa diedit. Klik 🔒 Lock setelah selesai untuk mengamankan.')
+    +     '<br>Klik 🎲 Generate untuk buat token acak, lalu klik 📋 Copy dan paste ke <code>AUTH_TOKEN</code> di Code.gs Apps Script Anda.'
+    +   '</div>'
     + '</div>'
     + '<button class="btn btn-g" id="rfGdSave" style="width:100%;margin-top:6px">💾 Simpan Konfigurasi</button></div>'
 
-    // v3.9.0 (Issue 1): Panduan step-by-step untuk pemula
-    + '<div class="card"><h3>📖 Panduan Setup (untuk pemula)</h3>'
+    // ===== SECTION 2: Aksi Cepat (gabungan GDrive + Multi-PC) =====
+    + '<div class="card"><h3>🚀 Aksi Cepat (1 klik)</h3>'
+    + '<div class="hintbox" style="margin-bottom:8px;font-size:11px">'
+    +   '<b>Test Koneksi</b>: cek URL+Token valid.<br>'
+    +   '<b>🔄 Sync Sekarang</b>: flush queue GDrive Sync (push perubahan tertunda ke spreadsheet).<br>'
+    +   '<b>💾 Full Backup</b>: kirim SEMUA item existing ke GDrive Spreadsheet (one-time, untuk first setup).<br>'
+    +   '<b>📤 Push (Multi-PC)</b>: upload state vault saat ini ke cloud (untuk PC lain ambil).<br>'
+    +   '<b>📥 Pull (Multi-PC)</b>: download state dari cloud ke PC ini (merge, tidak overwrite).<br>'
+    +   '<b>🔄 Sync Full (Multi-PC)</b>: push + pull sekaligus (bidirectional).<br>'
+    +   '<b>🗑 Reset Queue</b>: bersihkan queue GDrive yang tertunda (item belum terkirim akan dibuang).'
+    + '</div>'
+    + '<div class="btn-row" style="flex-direction:column;gap:6px">'
+    +   '<button class="btn btn-g" id="rfGdTest" style="width:100%">🔗 Test Koneksi</button>'
+    +   '<button class="btn btn-p" id="rfGdSyncNow" style="width:100%">🔄 Sync Sekarang (GDrive queue)</button>'
+    +   '<button class="btn btn-p" id="rfGdFullBackup" style="width:100%">💾 Full Backup ke GDrive (one-time)</button>'
+    +   '<div style="border-top:1px dashed var(--border);margin:4px 0;padding-top:6px"></div>'
+    +   '<button class="btn btn-p" id="rfSyncFull" style="width:100%;background:linear-gradient(135deg,#7c3aed,#5b21b6)">🔄 Sync Full Multi-PC (push+pull)</button>'
+    +   '<div class="btn-row" style="gap:6px">'
+    +     '<button class="btn btn-g" id="rfSyncPush" style="flex:1">📤 Push</button>'
+    +     '<button class="btn btn-g" id="rfSyncPull" style="flex:1">📥 Pull</button>'
+    +   '</div>'
+    +   '<button class="btn btn-g" id="rfGdClearQueue" style="width:100%;background:#fee2e2;color:#991b1b">🗑 Reset Queue GDrive (' + (syncStatus.queueLength || 0) + ' item)</button>'
+    + '</div></div>'
+
+    // ===== SECTION 3: Multi-PC Profile Manager (inline, bukan modal) =====
+    + '<div class="card"><h3>👥 Multi-PC Profile Manager</h3>'
+    + '<div class="hintbox" style="margin-bottom:8px;font-size:11px">'
+    +   '<b>Apa itu Profile?</b> Profile = pasangan URL+Token untuk satu Apps Script deployment. '
+    +   'Pakai 1 profile untuk multi-PC (Anda punya data sama di beberapa PC), atau multi-profile untuk multi-user (Anda, istri, teman — data terpisah).'
+    + '</div>'
+    + '<div id="rfSyncProfileList" style="margin-bottom:10px"></div>'
+    + '<div style="border-top:1px dashed var(--border);padding-top:10px">'
+    +   '<h4 style="font-size:11px;font-weight:700;margin-bottom:6px">➕ Tambah Profile Baru</h4>'
+    +   '<div style="display:flex;flex-direction:column;gap:6px">'
+    +     '<input class="f" id="rfSyncProfName" type="text" placeholder="Nama profile (mis. Kantor, Rumah, Istri)" style="font-size:11px">'
+    +     '<input class="f" id="rfSyncProfUrl" type="url" placeholder="URL Apps Script (https://script.google.com/macros/s/.../exec)" style="font-size:11px">'
+    +     '<input class="f" id="rfSyncProfToken" type="password" placeholder="Token (sama dengan CONFIG.AUTH_TOKEN di Apps Script)" style="font-size:11px">'
+    +     '<div class="btn-row" style="gap:6px">'
+    +       '<button class="btn btn-g" id="rfSyncProfTest" style="flex:1">🔌 Test Koneksi</button>'
+    +       '<button class="btn btn-p" id="rfSyncProfAdd" style="flex:1">➕ Tambah & Aktifkan</button>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div id="rfSyncProfResult" style="margin-top:6px;font-size:11px;display:none"></div>'
+    + '</div></div>'
+
+    // ===== SECTION 4: Opsi Sync =====
+    + '<div class="card"><h3>🔧 Opsi Sync</h3>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>GDrive: sync real-time saat save</b><div style="font-size:11px;color:var(--muted)">Setiap tambah/edit/hapus item langsung dikirim ke spreadsheet (debounced 2s)</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveSyncOnSave !== false ? ' on' : '') + '" id="rfGdOnSave" aria-label="Toggle sync-on-save"><i></i></button>'
+    + '</div>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>GDrive: upload screenshot ke Drive</b><div style="font-size:11px;color:var(--muted)">Full image screenshot disimpan sebagai file PNG/JPEG di folder Drive. Pakai kompresi <b>Tinggi (JPEG q60)</b> supaya < 10MB.</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveSyncScreenshots !== false ? ' on' : '') + '" id="rfGdShots" aria-label="Toggle screenshot upload"><i></i></button>'
+    + '</div>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>Multi-PC: auto-sync (debounced 30s)</b><div style="font-size:11px;color:var(--muted)">Setiap vault berubah, otomatis push+pull ke cloud (butuh profile aktif)</div></div>'
+    +   '<button class="ks-toggle' + (s.syncAutoEnabled ? ' on' : '') + '" id="rfSyncAuto" aria-label="Toggle auto-sync"><i></i></button>'
+    + '</div>'
+    + '<div class="krow" style="padding:6px 0">'
+    +   '<div><b>Auto-sync ke GDrive saat backup lokal</b><div style="font-size:11px;color:var(--muted)">Tombol "Backup sekarang" lokal juga kirim ke GDrive</div></div>'
+    +   '<button class="ks-toggle' + (s.gdriveAutoBackupOnLocalBackup !== false ? ' on' : '') + '" id="rfGdAutoBak" aria-label="Toggle auto-backup-on-local-backup"><i></i></button>'
+    + '</div>'
+    + '<div style="margin:8px 0">'
+    +   '<label style="font-size:11px;color:var(--muted)">Interval flush periodik GDrive (menit, min 1)</label>'
+    +   '<input type="number" class="f" id="rfGdInterval" value="' + (s.gdriveSyncIntervalMinutes || 5) + '" min="1" max="60" style="width:80px;margin-top:4px">'
+    + '</div></div>'
+
+    // ===== SECTION 5: Panduan Setup Detil =====
+    + '<div class="card"><h3>📖 Panduan Setup Detil (Step-by-Step)</h3>'
     + '<div style="font-size:11.5px;line-height:1.6;color:var(--text-2)">'
-    +   '<div style="margin-bottom:8px;padding:6px 8px;background:var(--surface-2);border-radius:6px"><b>❓ Apakah Google Drive Sync sama dengan Apps Script Sync?</b><br>'
-    +   '<span style="color:var(--muted)">YA, sama. "Google Drive Sync" di RecallFox memakai <b>Google Apps Script Web App</b> sebagai backend. Apps Script ini yang menyimpan data ke Spreadsheet + Google Drive Anda. Jadi namanya berbeda, tapi teknologinya sama — keduanya butuh URL Web App + Token.</span></div>'
+    +   '<div style="margin-bottom:8px;padding:6px 8px;background:var(--surface-2);border-radius:6px">'
+    +     '<b>❓ Apakah GDrive Sync sama dengan Multi-PC Sync?</b><br>'
+    +     '<span style="color:var(--muted)">TEKNOLOGI SAMA (Apps Script Web App + Spreadsheet), tapi FUNGSI BERBEDA:<br>'
+    +     '• <b>GDrive Sync</b> = <i>one-way push</i> real-time. Setiap save/hapus item langsung dikirim ke sheet terpisah (02_Prompts, 03_Konteks, dst.). Cocok untuk backup otomatis.<br>'
+    +     '• <b>Multi-PC Sync</b> = <i>bidirectional</i> seluruh state. Pakai sheet "SyncState" terpisah. Cocok untuk punya data sama di beberapa PC (push dari PC-1, pull di PC-2).<br>'
+    +     'Keduanya pakai URL+Token yang sama. Bisa dipakai bersamaan.</span>'
+    +   '</div>'
+    +   '<div style="margin-bottom:8px;padding:6px 8px;background:var(--surface-2);border-radius:6px">'
+    +     '<b>🆕 Setup PC pertama (3 langkah):</b><br>'
+    +     '<span style="color:var(--muted)">1. Deploy Apps Script Web App (lihat langkah A–H di bawah).<br>'
+    +     '2. Isi <b>Web App URL</b> + <b>Auth Token</b> di Konfigurasi atas → klik <b>Simpan</b>.<br>'
+    +     '3. Klik <b>💾 Full Backup ke GDrive</b> (kirim semua item existing ke spreadsheet).</span>'
+    +   '</div>'
+    +   '<div style="margin-bottom:8px;padding:6px 8px;background:var(--surface-2);border-radius:6px">'
+    +     '<b>💻 Setup PC kedua (3 langkah):</b><br>'
+    +     '<span style="color:var(--muted)">1. Install RecallFox di PC-2.<br>'
+    +     '2. Buka <b>Sync Cloud</b> di sidebar → klik <b>📋 Copy URL</b> dari PC-1 (atau ketik manual) → isi URL+Token sama.<br>'
+    +     '3. Klik <b>📥 Pull</b> (Multi-PC Sync) → semua data ter-restore ke PC-2.</span>'
+    +   '</div>'
     +   '<ol style="padding-left:18px;margin:0">'
     +     '<li style="margin-bottom:6px"><b>Buat Spreadsheet baru</b> di <a href="https://sheets.google.com" target="_blank">sheets.google.com</a> (atau pakai yang sudah ada).</li>'
     +     '<li style="margin-bottom:6px"><b>Buka Apps Script</b>: dari Spreadsheet, klik <code>Extensions → Apps Script</code>.</li>'
     +     '<li style="margin-bottom:6px"><b>Hapus kode default</b>, lalu <b>paste isi file <code>Code.gs</code></b> dari folder <code>appscript/</code> RecallFox.</li>'
     +     '<li style="margin-bottom:6px"><b>Ganti <code>SPREADSHEET_ID</code></b> di Code.gs dengan ID Spreadsheet Anda (dari URL sheet: <code>docs.google.com/spreadsheets/d/<b>[INI_ID_ANDA]</b>/edit</code>).</li>'
-    +     '<li style="margin-bottom:6px"><b>Klik tombol 🎲 Generate di atas</b> untuk buat token acak, lalu klik 📋 Copy.</li>'
+    +     '<li style="margin-bottom:6px"><b>Klik tombol 🎲 Generate di atas</b> (Unlock dulu kalau token sudah ada) untuk buat token acak, lalu klik 📋 Copy.</li>'
     +     '<li style="margin-bottom:6px"><b>Paste token ke <code>AUTH_TOKEN</code></b> di Code.gs Apps Script (ganti placeholder).</li>'
     +     '<li style="margin-bottom:6px"><b>Run fungsi <code>setup</code></b> sekali (tombol Run di editor Apps Script, accept permissions).</li>'
     +     '<li style="margin-bottom:6px"><b>Deploy → New deployment → Web app</b>. Set: Execute as = Me, Who has access = Anyone. Klik Deploy.</li>'
@@ -3200,41 +3381,15 @@ async function renderGDrivePage(B) {
     +   '</div>'
     + '</div></div>'
 
-    // Aksi
-    + '<div class="card"><h3>🚀 Aksi</h3>'
-    + '<div class="btn-row" style="flex-direction:column;gap:6px">'
-    +   '<button class="btn btn-g" id="rfGdTest" style="width:100%">🔗 Test Koneksi</button>'
-    +   '<button class="btn btn-p" id="rfGdSyncNow" style="width:100%">🔄 Sync Sekarang (flush queue)</button>'
-    +   '<button class="btn btn-p" id="rfGdFullBackup" style="width:100%">💾 Full Backup ke GDrive</button>'
-    +   '<button class="btn btn-g" id="rfGdClearQueue" style="width:100%;background:#fee2e2;color:#991b1b">🗑 Reset Queue (' + (syncStatus.queueLength || 0) + ' item)</button>'
-    + '</div></div>'
-
-    // Opsi lanjutan
-    + '<div class="card"><h3>🔧 Opsi</h3>'
-    + '<div class="krow" style="padding:6px 0">'
-    +   '<div><b>Sync real-time saat save</b><div style="font-size:11px;color:var(--muted)">Setiap tambah/edit/hapus item langsung dikirim (debounced 2s)</div></div>'
-    +   '<button class="ks-toggle' + (s.gdriveSyncOnSave !== false ? ' on' : '') + '" id="rfGdOnSave" aria-label="Toggle sync-on-save"><i></i></button>'
-    + '</div>'
-    + '<div class="krow" style="padding:6px 0">'
-    +   '<div><b>Upload screenshot ke Drive</b><div style="font-size:11px;color:var(--muted)">Full image screenshot disimpan sebagai file PNG/JPEG di folder Drive</div></div>'
-    +   '<button class="ks-toggle' + (s.gdriveSyncScreenshots !== false ? ' on' : '') + '" id="rfGdShots" aria-label="Toggle screenshot upload"><i></i></button>'
-    + '</div>'
-    + '<div class="krow" style="padding:6px 0">'
-    +   '<div><b>Auto-sync ke GDrive saat backup lokal</b><div style="font-size:11px;color:var(--muted)">Tombol "Backup sekarang" lokal juga kirim ke GDrive</div></div>'
-    +   '<button class="ks-toggle' + (s.gdriveAutoBackupOnLocalBackup !== false ? ' on' : '') + '" id="rfGdAutoBak" aria-label="Toggle auto-backup-on-local-backup"><i></i></button>'
-    + '</div>'
-    + '<div style="margin:8px 0">'
-    +   '<label style="font-size:11px;color:var(--muted)">Interval flush periodik (menit, min 1)</label>'
-    +   '<input type="number" class="f" id="rfGdInterval" value="' + (s.gdriveSyncIntervalMinutes || 5) + '" min="1" max="60" style="width:80px;margin-top:4px">'
-    + '</div></div>'
-
-    // Hasil operasi
+    // ===== SECTION 6: Hasil operasi terakhir =====
     + '<div class="card" id="rfGdResultCard" style="display:none"><h3>📋 Hasil operasi terakhir</h3>'
     + '<div id="rfGdResult" style="font-size:12px;line-height:1.5"></div></div>'
 
-    + '<p class="hintbox" style="margin:10px 3px">💡 <b>Setup:</b> 1) Deploy Apps Script Web App (lihat README). 2) Generate token via fungsi <code>generateToken()</code>. 3) Tempel URL + token di sini. 4) Klik Test Koneksi. 5) Klik Full Backup untuk kirim seluruh data existing.</p>';
+    + '<p class="hintbox" style="margin:10px 3px">💡 <b>Setup:</b> 1) Deploy Apps Script Web App (lihat panduan di atas). 2) Generate token via 🎲 Generate. 3) Tempel URL + token di Konfigurasi. 4) Klik Test Koneksi. 5) Klik Full Backup untuk kirim seluruh data existing. 6) Untuk multi-PC: di PC-2 pakai URL+Token sama, klik 📥 Pull.</p>';
 
-  // === Bind events ===
+  // ===== Bind events =====
+
+  // Save config
   $('#rfGdSave').addEventListener('click', async () => {
     const url = ($('#rfGdUrl').value || '').trim();
     const token = ($('#rfGdToken').value || '').trim();
@@ -3243,18 +3398,45 @@ async function renderGDrivePage(B) {
     renderGDrivePage(B);
   });
 
+  // Master toggle
   $('#rfGdToggle').addEventListener('click', async () => {
     await saveSettings({ gdriveSyncEnabled: !enabled });
     toast(!enabled ? '✓ GDrive sync AKTIF' : 'GDrive sync dimatikan');
     renderGDrivePage(B);
   });
 
+  // v3.11.7-fix (Issue #3): Copy URL ke clipboard
+  $('#rfGdCopyUrl').addEventListener('click', async () => {
+    const url = ($('#rfGdUrl').value || '').trim();
+    if (!url) { toast('URL masih kosong. Isi dulu, lalu Copy.', false); return; }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('📋 URL disalin. Paste di PC lain di field URL yang sama.');
+    } catch (e) {
+      toast('Gagal copy URL: ' + e.message, false);
+    }
+  });
+
+  // v3.11.7-fix (Issue #3): Lock/Unlock token
+  $('#rfGdLockToken').addEventListener('click', async () => {
+    const newLockState = !tokenLocked;
+    await saveSettings({ gdriveTokenLocked: newLockState });
+    toast(newLockState ? '🔒 Token dikunci (read-only)' : '🔓 Token dibuka — bisa diedit. Jangan lupa kunci lagi setelah selesai.');
+    renderGDrivePage(B);
+  });
+
+  // Toggles opsi
   $('#rfGdOnSave').addEventListener('click', async () => {
     await saveSettings({ gdriveSyncOnSave: s.gdriveSyncOnSave === false ? true : false });
     renderGDrivePage(B);
   });
   $('#rfGdShots').addEventListener('click', async () => {
     await saveSettings({ gdriveSyncScreenshots: s.gdriveSyncScreenshots === false ? true : false });
+    renderGDrivePage(B);
+  });
+  $('#rfSyncAuto').addEventListener('click', async () => {
+    await saveSettings({ syncAutoEnabled: !s.syncAutoEnabled });
+    toast(!s.syncAutoEnabled ? '✓ Multi-PC auto-sync aktif (30s debounce)' : 'Multi-PC auto-sync dimatikan');
     renderGDrivePage(B);
   });
   $('#rfGdAutoBak').addEventListener('click', async () => {
@@ -3267,27 +3449,37 @@ async function renderGDrivePage(B) {
     toast('✓ Interval sync: ' + v + ' menit');
   });
 
-  // v3.9.0 (Issue 1): Generate token acak
-  $('#rfGdGenToken').addEventListener('click', () => {
+  // Generate token — dengan konfirmasi kalau sudah ada
+  $('#rfGdGenToken').addEventListener('click', async () => {
+    const existing = $('#rfGdToken').value || '';
+    if (existing && !confirm('Token sudah ada. Yakin generate token baru?\n\nToken lama: ' + existing.slice(0, 8) + '...\n\nToken baru akan MENGUBAH token di addon. Pastikan Anda juga update AUTH_TOKEN di Code.gs Apps Script dan deploy ulang.')) {
+      return;
+    }
+    // Auto-unlock sebelum generate
+    if (tokenLocked) {
+      await saveSettings({ gdriveTokenLocked: false });
+    }
     const arr = new Uint8Array(24);
     crypto.getRandomValues(arr);
     const token = 'rf-' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
     const tokenInput = $('#rfGdToken');
     if (tokenInput) {
       tokenInput.value = token;
+      tokenInput.removeAttribute('readonly');
+      tokenInput.type = 'text';
       toast('🎲 Token di-generate. Klik 📋 Copy lalu paste ke Code.gs!');
     }
   });
-  // v3.9.0 (Issue 1): Copy token ke clipboard
+  // Copy token
   $('#rfGdCopyToken').addEventListener('click', async () => {
     const tokenInput = $('#rfGdToken');
     const token = tokenInput?.value || '';
-    if (!token) { toast('Token masih kosong. Klik 🎲 Generate dulu.'); return; }
+    if (!token) { toast('Token masih kosong. Klik 🎲 Generate dulu.', false); return; }
     try {
       await navigator.clipboard.writeText(token);
       toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
     } catch (e) {
-      toast('Gagal copy: ' + e.message);
+      toast('Gagal copy: ' + e.message, false);
     }
   });
 
@@ -3310,16 +3502,15 @@ async function renderGDrivePage(B) {
     }
   });
 
-  // Sync now
+  // GDrive Sync now (flush queue)
   $('#rfGdSyncNow').addEventListener('click', async () => {
     const btn = $('#rfGdSyncNow');
     const orig = btn.textContent;
     btn.textContent = '⏳ Syncing...';
     btn.disabled = true;
     try {
-      // v3.10.1 (Issue 1 fix): Auto-enable sync kalau URL+token sudah diisi
-      const s = currentVault?.settings || {};
-      if (s.gdriveWebAppUrl && s.gdriveAuthToken && !s.gdriveSyncEnabled) {
+      const s2 = currentVault?.settings || {};
+      if (s2.gdriveWebAppUrl && s2.gdriveAuthToken && !s2.gdriveSyncEnabled) {
         await saveSettings({ gdriveSyncEnabled: true });
         toast('💡 Sync otomatis diaktifkan (URL+token sudah diisi)');
       }
@@ -3327,7 +3518,6 @@ async function renderGDrivePage(B) {
       if (r?.ok) {
         const res = r.result || {};
         if ((res.synced || 0) === 0 && (res.remaining || 0) === 0) {
-          // v3.10.1: Queue kosong — beri saran yang actionable
           _showGDriveResult(B, true,
             '✅ Sync selesai — queue kosong (tidak ada perubahan tertunda).<br>'
             + '<span style="font-size:11px;color:var(--muted)">Item yang sudah ada sebelum sync diaktifkan TIDAK otomatis terkirim. '
@@ -3355,31 +3545,27 @@ async function renderGDrivePage(B) {
     }
   });
 
-  // Full backup
+  // GDrive Full backup
   $('#rfGdFullBackup').addEventListener('click', async () => {
     const btn = $('#rfGdFullBackup');
     const orig = btn.textContent;
     btn.textContent = '⏳ Mengupload...';
     btn.disabled = true;
-    // v3.10.1 (Issue 1 fix): Tampilkan progress yang informatif
     _showGDriveResult(B, true, '⏳ Memulai full backup... mohon tunggu, proses ini bisa 30-60 detik tergantung jumlah item.');
     try {
-      // v3.10.1 (Issue 1 fix): Auto-enable sync kalau URL+token sudah diisi
-      // tapi master switch belum ON. User jelas mau sync kalau klik Full Backup.
-      const s = currentVault?.settings || {};
-      if (s.gdriveWebAppUrl && s.gdriveAuthToken && !s.gdriveSyncEnabled) {
+      const s2 = currentVault?.settings || {};
+      if (s2.gdriveWebAppUrl && s2.gdriveAuthToken && !s2.gdriveSyncEnabled) {
         await saveSettings({ gdriveSyncEnabled: true });
         toast('💡 Sync otomatis diaktifkan (URL+token sudah diisi)');
       }
       const r = await browser.runtime.sendMessage({ type: 'GDRIVE_FULL_BACKUP' });
       if (r?.ok) {
-        const s = r.stats || {};
+        const st = r.stats || {};
         _showGDriveResult(B, true,
-          '✅ Full backup sukses! Items: ' + (s.items || 0) + ', Bundles: ' + (s.bundles || 0) + ', '
-          + 'Notes: ' + (s.notes || 0) + ', Toppings: ' + (s.toppings || 0) + ', '
-          + 'Habits: ' + (s.habits || 0) + ', Settings: ' + (s.settings || 0));
+          '✅ Full backup sukses! Items: ' + (st.items || 0) + ', Bundles: ' + (st.bundles || 0) + ', '
+          + 'Notes: ' + (st.notes || 0) + ', Toppings: ' + (st.toppings || 0) + ', '
+          + 'Habits: ' + (st.habits || 0) + ', Settings: ' + (st.settings || 0));
       } else {
-        // v3.10.1 (Issue 1 fix): Tampilkan error detail + saran yang actionable
         let errMsg = '❌ ' + (r?.error || 'Gagal');
         if (r?.reason === 'disabled') {
           errMsg = '⚠️ Sync belum diaktifkan. Klik toggle "Aktifkan sync" di atas dulu, atau isi URL + Token.';
@@ -3420,6 +3606,152 @@ async function renderGDrivePage(B) {
       renderGDrivePage(B);
     } catch (e) { toast('Error: ' + e.message, false); }
   });
+
+  // v3.11.7-fix (Issue #5): Multi-PC Sync actions
+  $('#rfSyncFull')?.addEventListener('click', () => _doMultiPcSync(B, 'full'));
+  $('#rfSyncPush')?.addEventListener('click', () => _doMultiPcSync(B, 'push'));
+  $('#rfSyncPull')?.addEventListener('click', () => _doMultiPcSync(B, 'pull'));
+
+  // v3.11.7-fix (Issue #5): Render profile list inline
+  _renderSyncProfileListInline(B);
+  $('#rfSyncProfAdd')?.addEventListener('click', () => _addSyncProfileInline(B));
+  $('#rfSyncProfTest')?.addEventListener('click', () => _testSyncProfileInline(B));
+}
+
+// v3.11.7-fix (Issue #5): Helper — jalankan aksi Multi-PC Sync (push/pull/full)
+async function _doMultiPcSync(B, action) {
+  const btnMap = { full: 'rfSyncFull', push: 'rfSyncPush', pull: 'rfSyncPull' };
+  const btn = $('#' + btnMap[action]);
+  const orig = btn?.textContent || '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Memproses...'; }
+  _showGDriveResult(B, true, '⏳ Multi-PC ' + action + ' sedang berjalan... mohon tunggu.');
+  try {
+    const msgType = action === 'full' ? 'SYNC_FULL' : action === 'push' ? 'SYNC_PUSH' : 'SYNC_PULL';
+    const res = await browser.runtime.sendMessage({ type: msgType });
+    if (res?.ok) {
+      let msg = '';
+      if (action === 'push') {
+        msg = '✓ Push berhasil · ' + (res.itemsCount || 0) + ' items + ' + (res.notesCount || 0) + ' catatan';
+      } else if (action === 'pull') {
+        msg = '✓ Pull berhasil · +' + (res.itemsAdded || 0) + ' items baru, ~' + (res.itemsUpdated || 0) + ' updated, +' + (res.notesAdded || 0) + ' catatan baru';
+      } else {
+        msg = '✓ Sync lengkap · push: ' + (res.itemsCount || 0) + ' items, pull: +' + (res.itemsAdded || 0) + ' baru';
+      }
+      _showGDriveResult(B, true, msg);
+      toast(msg);
+    } else {
+      const msg = '⚠ Gagal: ' + (res?.error || 'unknown') + (res?.detail ? ' · ' + res.detail : '');
+      _showGDriveResult(B, false, msg);
+      toast(msg, false);
+    }
+  } catch (e) {
+    _showGDriveResult(B, false, '⚠ Error: ' + e.message);
+    toast('⚠ Error: ' + e.message, false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+// v3.11.7-fix (Issue #5): Render profile list inline (bukan modal)
+async function _renderSyncProfileListInline(B) {
+  const listEl = $('#rfSyncProfileList');
+  if (!listEl) return;
+  let res;
+  try {
+    res = await browser.runtime.sendMessage({ type: 'SYNC_GET_PROFILES' });
+  } catch (e) {
+    listEl.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:6px">Gagal memuat profiles: ' + e.message + '</div>';
+    return;
+  }
+  if (!res?.ok) {
+    listEl.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:6px">Belum ada profile. Tambah di form bawah.</div>';
+    return;
+  }
+  const data = res.data;
+  if (!data.profiles || data.profiles.length === 0) {
+    listEl.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:6px">📋 Belum ada profile. Tambah di form bawah.</div>';
+    return;
+  }
+  listEl.innerHTML = data.profiles.map(p => {
+    const isActive = p.id === data.activeProfileId;
+    const lastSync = p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'belum';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:' + (isActive ? 'var(--primary-soft)' : 'var(--surface)') + '">'
+      + '<div style="font-size:14px">' + (isActive ? '🟢' : '⚪') + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-size:12px;font-weight:600">' + esc(p.name) + (isActive ? ' <span style="font-size:9px;background:var(--primary);color:#fff;padding:1px 5px;border-radius:999px;font-weight:700">AKTIF</span>' : '') + '</div>'
+      +   '<div style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Last: ' + lastSync + ' · ' + (p.lastSyncDirection || '-') + ' · ' + esc((p.url || '').slice(0, 40)) + '…</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:4px">'
+      +   (isActive ? '' : '<button class="btn btn-g" data-act="activate" data-id="' + p.id + '" style="padding:4px 8px;font-size:10px">Aktifkan</button>')
+      +   '<button class="btn btn-g" data-act="delete" data-id="' + p.id + '" style="padding:4px 8px;font-size:10px;background:#fee2e2;color:#991b1b">🗑</button>'
+      + '</div></div>';
+  }).join('');
+  listEl.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      if (act === 'activate') {
+        await browser.runtime.sendMessage({ type: 'SYNC_SET_ACTIVE', id });
+        toast('✓ Profile diaktifkan');
+        renderGDrivePage(B);
+      } else if (act === 'delete') {
+        if (!confirm('Hapus profile ini?')) return;
+        await browser.runtime.sendMessage({ type: 'SYNC_DELETE_PROFILE', id });
+        toast('Profile dihapus');
+        renderGDrivePage(B);
+      }
+    });
+  });
+}
+
+// v3.11.7-fix (Issue #5): Add profile inline
+async function _addSyncProfileInline(B) {
+  const name = ($('#rfSyncProfName').value || '').trim();
+  const url = ($('#rfSyncProfUrl').value || '').trim();
+  const token = ($('#rfSyncProfToken').value || '').trim();
+  const resultEl = $('#rfSyncProfResult');
+  if (!name || !url || !token) {
+    if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '⚠ Semua field wajib diisi'; resultEl.style.color = 'var(--red)'; }
+    return;
+  }
+  const res = await browser.runtime.sendMessage({ type: 'SYNC_ADD_PROFILE', profile: { name, url, token } });
+  if (res?.ok) {
+    $('#rfSyncProfName').value = '';
+    $('#rfSyncProfUrl').value = '';
+    $('#rfSyncProfToken').value = '';
+    if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '✓ Profile ditambahkan & diaktifkan'; resultEl.style.color = 'var(--green)'; }
+    toast('✓ Profile "' + name + '" ditambahkan');
+    renderGDrivePage(B);
+  } else {
+    if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '⚠ Gagal: ' + (res?.error || 'unknown'); resultEl.style.color = 'var(--red)'; }
+  }
+}
+
+// v3.11.7-fix (Issue #5): Test profile inline
+async function _testSyncProfileInline(B) {
+  const url = ($('#rfSyncProfUrl').value || '').trim();
+  const token = ($('#rfSyncProfToken').value || '').trim();
+  const resultEl = $('#rfSyncProfResult');
+  if (!url || !token) {
+    if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '⚠ Isi URL dan token dulu'; resultEl.style.color = 'var(--red)'; }
+    return;
+  }
+  const btn = $('#rfSyncProfTest');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '🔌 Menguji...';
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'SYNC_TEST_PROFILE', profile: { url, token } });
+    if (res?.ok) {
+      if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '✓ Koneksi OK · ' + (res.spreadsheetUrl || 'spreadsheet accessible'); resultEl.style.color = 'var(--green)'; }
+      toast('✓ Koneksi OK');
+    } else {
+      if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '⚠ ' + (res?.error || 'gagal'); resultEl.style.color = 'var(--red)'; }
+    }
+  } catch (e) {
+    if (resultEl) { resultEl.style.display = ''; resultEl.textContent = '⚠ ' + e.message; resultEl.style.color = 'var(--red)'; }
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
 }
 
 function _showGDriveResult(B, ok, msg) {

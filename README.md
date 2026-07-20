@@ -1,16 +1,17 @@
-# RecallFox v3.10.2
+# RecallFox v3.11.7 (Re-issue)
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.10.2 — 5 Fixes dari Log Troubleshooting Sesi 1**
-> - 🔧 **Issue #1**: Tombol "Full Backup ke GDrive" tidak bekerja — root cause: `buildBackupPayload()` di `lib/autobackup.js` tidak di-export, sehingga dynamic import di `background.js` return `undefined`. Fix: tambahkan keyword `export`.
-> - 📸 **Issue #2**: Screenshot fitur "Shot" tidak tersimpan di Google Drive (kolom `gdriveFileId`/`gdriveFileUrl` di spreadsheet selalu kosong) — root cause: upload fire-and-forget, hasil upload tidak pernah di-update ke vault item atau spreadsheet. Fix: setelah upload sukses, patch vault item + notify ulang ke GDrive sync supaya row spreadsheet di-update dengan link file Drive.
-> - 📦 **Issue #3**: Menu **Buat Bundle** tidak punya kolom "Filter per tipe" (padahal di Edit Bundle ada). Fix: tambahkan filter chips per tipe (Semua, Prompt, Konteks, Link, Media, Snapshot, Catatan) yang identik dengan Edit Bundle. Juga memastikan catatan tercentang masuk saat bundle di-copy atau disisipkan ke chat AI.
-> - 🔍 **Issue #4**: Fitur pencarian tidak menemukan teks yang ada (mis. "github" padahal ada link github di vault). Fix: perkuat `searchableTextFor()` agar mencari di semua field (linkUrl, linkTitle, body item bundle, title+body catatan bundle, gdriveFileUrl, snapshotDomain, dll). Plus tambah tombol **clear (X)** di ujung kanan kotak pencarian untuk hapus semua teks sekaligus.
-> - 🗂️ **Issue #5**: Menu **Edit Bundle** tidak bisa menautkan catatan (padahal Buat Bundle bisa). Fix: selaraskan — Edit Bundle sekarang punya section Catatan (dengan chip filter "Catatan"), field Warna label, field Prompt cepat inline, dan checkbox "Simpan sebagai item Prompt", identik dengan Buat Bundle.
+> **v3.11.7 (Re-issue) — 6 Fix dari Log Troubleshooting Sesi 5 + Multi-PC Sync dari v3.11.7 original**
+> - 🗜️ **Issue #1**: Dropdown kompresi screenshot (Lossless/Sedikit/Sedang/Tinggi). Default = "Tinggi" (JPEG q60, ~200-800KB) supaya upload GDrive selalu berhasil di bawah limit Apps Script ~10MB.
+> - 📐 **Issue #2**: Lebar sheet editor menyesuaikan sidebar — tombol Simpan tidak lagi terdorong ke kanan. Edit Bundle pakai 3 tombol flex:1 (Arsipkan|Batal|Simpan). Sheet & page dibatasi max-width 560px di sidebar mode.
+> - 🔒 **Issue #3**: Tombol **📋 Copy URL** di Web App URL (mudah install di PC lain) + **🔒 Lock Token** (default read-only, perlu Unlock untuk edit) + konfirmasi sebelum Generate token baru (anti ketimpa tidak sengaja).
+> - 🏷️ **Issue #4**: v3.11.6 ditandai sebagai **STABLE** release di GitHub (checkpoint pengembangan).
+> - 🔀 **Issue #5**: **Pengaturan sync DISATUKAN di sidebar** (RecallFox Vault → Alat → Sync Cloud). Tidak lagi terdobel antara sidebar GDrive Sync vs Settings page Multi-PC Sync. Semua operasi (Test, Sync, Push, Pull, Full Backup, Kelola Profile) di 1 tempat dengan penjelasan detil.
+> - 📝 **Issue #6**: Amend commit + recreate tag `v3.11.7` (bukan versi baru). Lihat [CHANGELOG-v3.11.7-fix.md](./CHANGELOG-v3.11.7-fix.md).
 >
-> Lihat [Changelog](#changelog) di bawah.
+> **Baseline:** v3.11.6 (Stable) · **Strategi:** amend commit `9faba8d` + recreate tag `v3.11.7`
 
 ## Install di Firefox
 

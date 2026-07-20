@@ -750,21 +750,21 @@
 
       <div class="rf-row">
         <div class="rf-row-label">
-          <div class="rf-row-title">Format gambar default</div>
-          <div class="rf-row-desc">PNG (lossless, besar) atau JPEG (kecil, ada kompresi)</div>
+          <div class="rf-row-title">Tingkat kompresi gambar</div>
+          <div class="rf-row-desc">
+            v3.11.7-fix (Issue #1): Tentukan ukuran & kualitas screenshot. Default <b>Tinggi (JPEG q60)</b> supaya upload ke Google Drive berhasil di bawah limit Apps Script (~10MB).
+            <br><b>Lossless (PNG)</b>: kualitas maksimal, ukuran besar (puluhan MB) — upload GDrive kemungkinan gagal.
+            <br><b>Sedikit (JPEG q90)</b>: nyaris tanpa kompresi, 1–3 MB.
+            <br><b>Sedang (JPEG q75)</b>: balance, 500 KB – 1.5 MB.
+            <br><b>Tinggi (JPEG q60)</b>: paling kecil, 200 KB – 800 KB — <b>recommended</b> untuk GDrive sync.
+          </div>
         </div>
-        <select id="rf-set-shot-format">
-          <option value="png">PNG (lossless)</option>
-          <option value="jpeg">JPEG (lebih kecil)</option>
+        <select id="rf-set-shot-compression">
+          <option value="high">Tinggi (JPEG q60) — recommended untuk GDrive</option>
+          <option value="medium">Sedang (JPEG q75)</option>
+          <option value="low">Sedikit (JPEG q90)</option>
+          <option value="lossless">Lossless (PNG) — besar, GDrive bisa gagal</option>
         </select>
-      </div>
-
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Kualitas JPEG</div>
-          <div class="rf-row-desc">Hanya berlaku kalau format = JPEG (50–100)</div>
-        </div>
-        <input type="number" id="rf-set-shot-quality" min="50" max="100" step="5" value="90" style="width:80px;" />
       </div>
 
       <div class="rf-row">
@@ -1540,6 +1540,43 @@
         Tidak ada data yang dikirim ke server pihak ketiga.
         Firefox Sync (jika diaktifkan) dienkripsi end-to-end oleh Firefox sendiri.
       </p>
+    </section>
+
+    <!-- v3.11.7-fix (Issue #5): Multi-PC Sync DIPINDAH ke sidebar (RecallFox Vault)
+         untuk menyatukan pengaturan sync dalam satu tempat — minim klik.
+         Lihat: buka sidebar RecallFox → Alat → Sync Cloud (GDrive + Multi-PC). -->
+    <section class="rf-section">
+      <h2>🔄 Sync Cloud (GDrive + Multi-PC)</h2>
+      <p class="rf-section-desc">
+        Pengaturan sync Cloud telah <b>disatukan di sidebar RecallFox</b> (bukan di halaman ini)
+        supaya semua operasi sync — Test Koneksi, Push, Pull, Sync, Full Backup, Kelola Profile —
+        bisa dilakukan dari satu tempat dengan minimal klik.
+      </p>
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Buka Sync Cloud di Sidebar</div>
+          <div class="rf-row-desc">
+            Klik tombol di kanan untuk membuka sidebar RecallFox lalu pilih tab <b>Alat</b> → <b>Sync Cloud</b>.
+            Di sana Anda bisa: konfigurasi URL+Token, kelola profile multi-PC, push/pull/sync, full backup,
+            dan atur auto-sync.
+          </div>
+        </div>
+        <button id="rf-open-sidebar-sync" class="rf-btn rf-btn-primary">🦊 Buka Sidebar</button>
+      </div>
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Apa beda GDrive Sync vs Multi-PC Sync?</div>
+          <div class="rf-row-desc">
+            <b>GDrive Sync (one-way)</b>: Setiap kali Anda tambah/edit/hapus item vault, perubahan
+            langsung dikirim ke Spreadsheet (debounced 2 detik). Cocok untuk backup real-time.<br>
+            <b>Multi-PC Sync (bidirectional)</b>: Sinkronisasi penuh antar device — termasuk vault,
+            catatan, settings, habits, customizations. Pakai sheet "SyncState" terpisah. Cocok untuk
+            punya data sama di beberapa PC.<br>
+            Keduanya pakai URL Apps Script + Token yang sama. Bisa dipakai bersamaan.
+          </div>
+        </div>
+        <div></div>
+      </div>
     </section>
   </div>
 

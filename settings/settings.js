@@ -136,8 +136,8 @@ async function init() {
 
   // === Screenshot settings ===
   try {
-    setVal('rf-set-shot-format', s.screenshotFormat || 'png');
-    setVal('rf-set-shot-quality', s.screenshotJpegQuality || 90);
+    // v3.11.7-fix (Issue #1): Ganti format/quality → tingkat kompresi tunggal
+    setVal('rf-set-shot-compression', s.screenshotCompression || 'high');
     setVal('rf-set-shot-default-mode', s.screenshotDefaultMode || 'visible');
     setVal('rf-set-shot-max-height', s.screenshotMaxFullHeight || 16384);
     setChk('rf-set-shot-sync-full', !!s.screenshotSyncFullImage);
@@ -355,9 +355,8 @@ function bindEvents() {
     ['rf-set-cc-tabonly', 'clearCacheCurrentTabOnly', 'checked'],
     ['rf-set-cc-reload', 'clearCacheReload', 'checked'],
     ['rf-set-cc-notify', 'clearCacheNotify', 'checked'],
-    // Screenshot
-    ['rf-set-shot-format', 'screenshotFormat', 'value'],
-    ['rf-set-shot-quality', 'screenshotJpegQuality', 'value'],
+    // Screenshot (v3.11.7-fix Issue #1: format+quality → compression single dropdown)
+    ['rf-set-shot-compression', 'screenshotCompression', 'value'],
     ['rf-set-shot-default-mode', 'screenshotDefaultMode', 'value'],
     ['rf-set-shot-max-height', 'screenshotMaxFullHeight', 'value'],
     ['rf-set-shot-sync-full', 'screenshotSyncFullImage', 'checked'],
@@ -1612,4 +1611,46 @@ function renderShortcutEditor(containerId, shortcuts, defaultEmoji) {
       toast('Pintasan dihapus');
     });
   });
+}
+
+// ============================================================
+// v3.11.7: Multi-PC Sync — Profile Manager + Sync Actions
+// ============================================================
+
+// v3.11.7-fix (Issue #5): Multi-PC Sync UI dipindah ke sidebar (RecallFox Vault).
+// Di settings page sekarang hanya ada tombol "Buka Sidebar" yang membuka sidebar
+// RecallFox + arah ke tab Alat → Sync Cloud. Fungsi initMultiPCSync, doSyncAction,
+// openSyncProfileManager, renderSyncProfileList, addProfileFromForm, testProfileFromForm
+// DIPINDAH ke popup/popup.js supaya sidebar jadi satu pintu untuk semua sync.
+async function initSidebarSyncRedirect() {
+  try {
+    const btn = document.getElementById('rf-open-sidebar-sync');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      try {
+        // Buka sidebar RecallFox (Firefox-specific API)
+        if (browser.sidebarAction && browser.sidebarAction.open) {
+          await browser.sidebarAction.open();
+        } else if (browser.sidebar && browser.sidebar.open) {
+          await browser.sidebar.open();
+        } else {
+          alert('Sidebar tidak didukung di browser ini. Buka sidebar RecallFox manual dari toolbar Firefox.');
+          return;
+        }
+        // Tampilkan toast pengingat
+        toast('🦊 Buka tab "Alat" → "Sync Cloud" di sidebar');
+      } catch (e) {
+        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar Firefox, lalu pilih tab Alat → Sync Cloud.');
+      }
+    });
+  } catch (e) {
+    console.warn('[RecallFox] initSidebarSyncRedirect failed:', e);
+  }
+}
+
+// Call init on DOMContentLoaded (append to existing init)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => setTimeout(initSidebarSyncRedirect, 200));
+} else {
+  setTimeout(initSidebarSyncRedirect, 200);
 }

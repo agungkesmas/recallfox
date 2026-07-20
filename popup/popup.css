@@ -304,13 +304,19 @@ body.rf-sidebar-body .popup{
 /* Slide-in page (tool detail / note editor) */
 .page{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s cubic-bezier(.2,.8,.2,1);z-index:30}
 .page.in{transform:none}
+/* v3.11.7-fix (Issue #2): Page (slide-in) di sidebar dibatasi max-width + centered
+   supaya header, body, dan footer menyesuaikan lebar dengan rapi (tidak melebar penuh). */
+body.rf-sidebar-body .page{align-items:center}
+body.rf-sidebar-body .page-hd,
+body.rf-sidebar-body .page-body,
+body.rf-sidebar-body .page-foot{width:100%;max-width:560px}
 .page-hd{display:flex;align-items:center;gap:8px;padding:13px 13px;border-bottom:1px solid var(--border);flex:none}
 .backbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--text-2)}
 .backbtn:hover{background:var(--hover)}
 .backbtn svg{width:15px;height:15px}
 .page-hd .pt{font-size:13.5px;font-weight:700;flex:1;min-width:0}
 .page-body{flex:1;overflow-y:auto;padding:14px 13px}
-.page-foot{display:flex;align-items:center;gap:8px}
+.page-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px;margin-bottom:10px}
 .card h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:9px;font-weight:700}
 textarea.f,input.f,select.f{width:100%;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);font-family:inherit;font-size:12.5px;padding:8px 10px;outline:none;transition:.15s}
@@ -340,8 +346,12 @@ input[type=range]{width:100%;accent-color:var(--primary);height:26px}
 /* Bottom sheet */
 .scrim{position:absolute;inset:0;background:rgba(15,12,10,.4);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:.2s;z-index:40}
 .scrim.show{opacity:1;pointer-events:auto}
+/* v3.11.7-fix (Issue #2): Sheet di sidebar (body.rf-sidebar-body) dibatasi max-width
+   supaya tidak melebar penuh dan tombol Simpan tidak ketjut ke kanan ekstrim. */
 .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:18px 18px 0 0;box-shadow:var(--sh-xl);transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);z-index:41;max-height:80%;display:flex;flex-direction:column}
 .sheet.show{transform:none}
+body.rf-sidebar-body .sheet{left:50%;right:auto;transform:translate(-50%,105%);max-width:560px;width:100%;margin:0 auto}
+body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
 .sheet-grip{width:36px;height:4px;border-radius:4px;background:var(--border-strong);margin:8px auto 0;flex:none}
 .sheet-hd{display:flex;align-items:center;gap:8px;padding:12px 16px 6px;font-size:13px;font-weight:700}
 .sheet-hd .sh-sub{font-weight:400;color:var(--muted);font-size:11px}

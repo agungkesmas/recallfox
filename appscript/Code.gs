@@ -153,6 +153,31 @@ var SHEET_SCHEMA = {
  * GET /  → health check (informative untuk debugging Issue #2)
  */
 function doGet(e) {
+  // v3.11.7: Handle get_state action (untuk pull state dari cloud)
+  var action = (e && e.parameter && e.parameter.action) || '';
+  if (action === 'get_state') {
+    // Verifikasi token
+    var authHeader = '';
+    if (e && e.headers) {
+      authHeader = e.headers.Authorization || e.headers.authorization || '';
+    }
+    var bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    var token = '';
+    if (bearerMatch) {
+      token = bearerMatch[1];
+    } else if (e && e.parameter && e.parameter.token) {
+      token = e.parameter.token;
+    }
+    if (token !== CONFIG.TOKEN) {
+      return _jsonOut({ ok: false, error: 'INVALID_TOKEN' });
+    }
+    var data = { profile: e.parameter.profile || 'default' };
+    return _jsonOut(_handleGetState(data));
+  }
+  if (action === 'ping') {
+    return _jsonOut({ ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.10.0', version: '3.10.0' });
+  }
+
   var info = {
     ok: true,
     service: 'RecallFox GDrive Bridge',
@@ -263,9 +288,151 @@ function _dispatchAction(action, data) {
     case 'batch_volume':       return _handleBatchVolume(data);
     case 'full_backup':        return _handleFullBackup(data);
     case 'batch':              return _handleBatch(data);
+    // v3.11.7: Multi-PC bidirectional sync — push full state as JSON blob
+    case 'sync_state':         return _handleSyncState(data);
     case 'ping':               return { ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.10.0', version: '3.10.0' };
     default:                   return { ok: false, error: 'UNKNOWN_ACTION', action: action };
   }
+}
+
+// ============================== v3.11.7: SYNC STATE (Multi-PC) ==============================
+
+/**
+ * Handle sync_state action — upload full state as JSON blob ke sheet "SyncState".
+ * Multiple profiles supported: each profile = 1 row in SyncState sheet.
+ *
+ * Payload:
+ *   { action: 'sync_state', token, profile: 'Kantor', deviceId, deviceName, payload: {...} }
+ *
+ * Returns:
+ *   { ok: true, updatedAt, profile, deviceId }
+ */
+function _handleSyncState(data) {
+  if (!data || !data.payload) {
+    return { ok: false, error: 'NO_PAYLOAD' };
+  }
+  var profileName = data.profile || 'default';
+  var deviceId = data.deviceId || 'unknown';
+  var deviceName = data.deviceName || 'unknown';
+  var payload = data.payload;
+
+  // Validate payload size (Apps Script limit ~50MB, tapi praktis <5MB)
+  var payloadStr = JSON.stringify(payload);
+  if (payloadStr.length > 10 * 1024 * 1024) {  // 10MB limit
+    return { ok: false, error: 'PAYLOAD_TOO_LARGE', size: payloadStr.length };
+  }
+
+  var ss = _getSpreadsheet();
+  var sheet = ss.getSheetByName('SyncState');
+  if (!sheet) {
+    sheet = ss.insertSheet('SyncState');
+    sheet.appendRow(['profile', 'deviceId', 'deviceName', 'payload', 'updatedAt', 'payloadSize']);
+    sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  // Cari existing row by profile name
+  var lastRow = sheet.getLastRow();
+  var existingRow = -1;
+  if (lastRow > 1) {
+    var profileCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < profileCol.length; i++) {
+      if (profileCol[i][0] === profileName) {
+        existingRow = i + 2;  // +2 karena header di baris 1, index dimulai dari 0
+        break;
+      }
+    }
+  }
+
+  var updatedAt = new Date().toISOString();
+  var rowData = [profileName, deviceId, deviceName, payloadStr, updatedAt, payloadStr.length];
+
+  if (existingRow > 0) {
+    // Update existing row
+    sheet.getRange(existingRow, 1, 1, 6).setValues([rowData]);
+  } else {
+    // Append new row
+    sheet.appendRow(rowData);
+  }
+
+  // Auto-resize kolom profile
+  sheet.autoResizeColumn(1);
+
+  console.log('SyncState saved: profile=' + profileName + ', device=' + deviceName + ', size=' + payloadStr.length + ' bytes');
+
+  return {
+    ok: true,
+    updatedAt: updatedAt,
+    profile: profileName,
+    deviceId: deviceId,
+    payloadSize: payloadStr.length
+  };
+}
+
+/**
+ * Handle get_state action — return latest state untuk profile tertentu.
+ * Dipanggil via GET: ?action=get_state&profile=Kantor
+ *
+ * Returns:
+ *   { ok: true, payload: {...}, updatedAt, deviceName } ATAU { ok: false, error: 'NO_STATE' }
+ */
+function _handleGetState(data) {
+  var profileName = (data && data.profile) || 'default';
+
+  var ss = _getSpreadsheet();
+  var sheet = ss.getSheetByName('SyncState');
+  if (!sheet) {
+    return { ok: false, error: 'NO_SYNC_STATE_SHEET' };
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return { ok: false, error: 'NO_STATE', profile: profileName };
+  }
+
+  // Cari row by profile name
+  var profileCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  var foundRow = -1;
+  for (var i = 0; i < profileCol.length; i++) {
+    if (profileCol[i][0] === profileName) {
+      foundRow = i + 2;
+      break;
+    }
+  }
+
+  if (foundRow < 0) {
+    return { ok: false, error: 'PROFILE_NOT_FOUND', profile: profileName };
+  }
+
+  // Ambil payload + metadata
+  var rowData = sheet.getRange(foundRow, 1, 1, 6).getValues()[0];
+  var profileNameFromSheet = rowData[0];
+  var deviceId = rowData[1];
+  var deviceName = rowData[2];
+  var payloadStr = rowData[3];
+  var updatedAt = rowData[4];
+  var payloadSize = rowData[5];
+
+  if (!payloadStr) {
+    return { ok: false, error: 'EMPTY_PAYLOAD', profile: profileName };
+  }
+
+  var payload;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch (e) {
+    return { ok: false, error: 'PAYLOAD_PARSE_ERROR', detail: e.message };
+  }
+
+  return {
+    ok: true,
+    payload: payload,
+    updatedAt: updatedAt,
+    deviceId: deviceId,
+    deviceName: deviceName,
+    profile: profileNameFromSheet,
+    payloadSize: payloadSize
+  };
 }
 
 // ============================== BODY PARSING ==============================
