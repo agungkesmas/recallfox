@@ -88,6 +88,9 @@ async function init() {
     document.querySelectorAll('.rf-exercise-day').forEach(cb => {
       cb.checked = exerciseDays.includes(parseInt(cb.value, 10));
     });
+    // v3.11.6: Render pintasan web ngaji & olahraga
+    renderShortcutEditor('rf-set-quran-shortcuts', s.quranShortcuts, '📖');
+    renderShortcutEditor('rf-set-exercise-shortcuts', s.exerciseShortcuts, '🏃');
   } catch (e) { console.warn('[RecallFox] settings: habit tracker section failed:', e); }
 
   // === Element Blocker (v0.8.42) ===
@@ -1000,6 +1003,32 @@ function bindEvents() {
     });
   }
 
+  // v3.11.6: Binding tombol "Tambah pintasan" untuk ngaji & olahraga
+  const quranScAddBtn = document.getElementById('rf-set-quran-shortcut-add');
+  if (quranScAddBtn) {
+    quranScAddBtn.addEventListener('click', async () => {
+      const vault = await getVault();
+      const list = Array.isArray(vault.settings.quranShortcuts) ? vault.settings.quranShortcuts : [];
+      if (list.length >= 6) { toast('Maksimal 6 pintasan'); return; }
+      list.push({ name: 'Web baru', url: 'https://', emoji: '📖' });
+      await saveSettings({ quranShortcuts: list });
+      renderShortcutEditor('rf-set-quran-shortcuts', list, '📖');
+      toast('Pintasan ditambahkan — edit lalu tekan Simpan');
+    });
+  }
+  const exerciseScAddBtn = document.getElementById('rf-set-exercise-shortcut-add');
+  if (exerciseScAddBtn) {
+    exerciseScAddBtn.addEventListener('click', async () => {
+      const vault = await getVault();
+      const list = Array.isArray(vault.settings.exerciseShortcuts) ? vault.settings.exerciseShortcuts : [];
+      if (list.length >= 6) { toast('Maksimal 6 pintasan'); return; }
+      list.push({ name: 'Web baru', url: 'https://', emoji: '🏃' });
+      await saveSettings({ exerciseShortcuts: list });
+      renderShortcutEditor('rf-set-exercise-shortcuts', list, '🏃');
+      toast('Pintasan ditambahkan — edit lalu tekan Simpan');
+    });
+  }
+
   // Prayer: lat/lng/loc inputs (number/text)
   ['rf-set-prayer-lat', 'rf-set-prayer-lng', 'rf-set-prayer-loc'].forEach(id => {
     const el = document.getElementById(id);
@@ -1522,3 +1551,65 @@ browser.runtime.onMessage.addListener((msg) => {
     });
   }
 });
+
+// v3.11.6 (Issue 2 dari Google Doc): Editor pintasan web ngaji & olahraga
+// Render list of {name, url, emoji} dengan input fields + tombol hapus + tombol simpan per-row.
+// containerId: 'rf-set-quran-shortcuts' or 'rf-set-exercise-shortcuts'
+// shortcuts: array of { name, url, emoji }
+// defaultEmoji: emoji fallback kalau field emoji kosong
+function renderShortcutEditor(containerId, shortcuts, defaultEmoji) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const list = Array.isArray(shortcuts) ? shortcuts.slice(0, 6) : [];
+  if (list.length === 0) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:8px;background:var(--surface);border-radius:6px;">Belum ada pintasan. Klik tombol di bawah untuk menambah.</div>';
+    return;
+  }
+  const settingKey = containerId.includes('quran') ? 'quranShortcuts' : 'exerciseShortcuts';
+  container.innerHTML = list.map((sc, i) => {
+    const emoji = sc.emoji || defaultEmoji;
+    const name = (sc.name || '').replace(/"/g, '&quot;');
+    const url = (sc.url || '').replace(/"/g, '&quot;');
+    return '<div class="rf-shortcut-row" data-idx="' + i + '" style="display:grid;grid-template-columns:50px 1fr 2fr auto;gap:6px;align-items:center;padding:6px;background:var(--surface);border-radius:6px;border:1px solid var(--border);">'
+      + '<input type="text" class="rf-sc-emoji" value="' + emoji + '" maxlength="4" style="width:40px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:4px;font-size:14px;" title="Emoji (maks 4 karakter)">'
+      + '<input type="text" class="rf-sc-name" value="' + name + '" placeholder="Nama" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;" title="Nama pintasan">'
+      + '<input type="url" class="rf-sc-url" value="' + url + '" placeholder="https://..." style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;" title="URL lengkap">'
+      + '<button type="button" class="rf-sc-del" title="Hapus pintasan ini" style="padding:4px 8px;background:var(--danger-soft);color:var(--danger);border:none;border-radius:4px;cursor:pointer;font-size:14px;">🗑</button>'
+      + '</div>';
+  }).join('');
+
+  // Bind input changes (auto-save dengan debounce)
+  container.querySelectorAll('.rf-shortcut-row').forEach(row => {
+    const idx = parseInt(row.dataset.idx, 10);
+    let saveTimer = null;
+    const scheduleSave = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        const vault = await getVault();
+        const arr = Array.isArray(vault.settings[settingKey]) ? vault.settings[settingKey] : [];
+        if (idx >= arr.length) return;
+        arr[idx] = {
+          emoji: row.querySelector('.rf-sc-emoji').value.trim() || defaultEmoji,
+          name: row.querySelector('.rf-sc-name').value.trim() || 'Web',
+          url: row.querySelector('.rf-sc-url').value.trim() || 'https://'
+        };
+        await saveSettings({ [settingKey]: arr });
+        toast('Tersimpan', false);
+      }, 800);
+    };
+    row.querySelector('.rf-sc-emoji').addEventListener('input', scheduleSave);
+    row.querySelector('.rf-sc-name').addEventListener('input', scheduleSave);
+    row.querySelector('.rf-sc-url').addEventListener('input', scheduleSave);
+
+    // Bind delete button
+    row.querySelector('.rf-sc-del').addEventListener('click', async () => {
+      if (!confirm('Hapus pintasan ini?')) return;
+      const vault = await getVault();
+      const arr = Array.isArray(vault.settings[settingKey]) ? vault.settings[settingKey] : [];
+      arr.splice(idx, 1);
+      await saveSettings({ [settingKey]: arr });
+      renderShortcutEditor(containerId, arr, defaultEmoji);
+      toast('Pintasan dihapus');
+    });
+  });
+}

@@ -835,6 +835,11 @@ function itemSheet(id) {
       // v3.7.2 (Issue 1): Tambah/Pindah ke Bundle — assign ulang screenshot/prompt/dll ke bundle lain.
       + (it.type !== 'bundle' ? '<button class="act" data-a="bundle">' + ICONS.clipA + '<div>Tambah / pindah ke Bundle<div class="ad">Reassign item ke sesi troubleshooting lain</div></div></button>' : '<button class="act" data-a="editbundle">' + ICONS.edit + '<div>Edit bundle<div class="ad">Ubah nama, tambah / hapus anggota</div></div></button>')
       + (it.type === 'screenshot' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download gambar</div></button>' : '')
+      // v3.11.6 (Issue 1 dari Google Doc): Tombol Salin Gambar & Salin + Keterangan
+      // untuk item screenshot di Vault. Sebelumnya cuma ada "Lihat" dan "Download".
+      // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
+      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin Gambar<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
+      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">Gambar + URL, judul, waktu, mode</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
       const k = a.dataset.a;
@@ -846,6 +851,9 @@ function itemSheet(id) {
       else if (k === 'archive') { toggleArchive(it.id).then(() => { closeSheet(); toast(it.archived ? '📦 Dikeluarkan dari arsip' : '📦 Diarsipkan'); }); }
       else if (k === 'bundle') { closeSheet(); openReassignBundleSheet(it.id); }
       else if (k === 'dl') { closeSheet(); downloadScreenshot(it.id); }
+      // v3.11.6: Handler Salin Gambar & Salin + Keterangan untuk item screenshot
+      else if (k === 'copy-img') { closeSheet(); copyScreenshotToClipboard(it.id, false); }
+      else if (k === 'copy-bundle') { closeSheet(); copyScreenshotToClipboard(it.id, true); }
       else if (k === 'del') {
         b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
           + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
@@ -1062,6 +1070,33 @@ async function downloadScreenshot(id) {
   if (!item) return;
   const res = await browser.runtime.sendMessage({ type: 'DOWNLOAD_SCREENSHOT', id, title: item.title, format: item.screenshotFormat || 'png' });
   if (res?.ok) toast('🖼️ Download dimulai'); else toast('Gagal download: ' + (res?.error || ''), false);
+}
+
+// v3.11.6 (Issue 1 dari Google Doc): Salin screenshot dari Vault ke clipboard.
+// withCaption=false → salin gambar saja (image/png)
+// withCaption=true  → salin gambar + keterangan (image/png + text/html + text/plain)
+// Karena popup/sidebar tidak bisa akses navigator.clipboard.write dengan image
+// langsung di Firefox (perlu user gesture & secure context yang berbeda),
+// kita delegate ke background.js via message COPY_SCREENSHOT_TO_CLIPBOARD.
+// Background akan inject content script ke tab aktif untuk eksekusi clipboard.
+async function copyScreenshotToClipboard(id, withCaption) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  try {
+    toast(withCaption ? '📦 Menyalin gambar + keterangan…' : '📋 Menyalin gambar…');
+    const res = await browser.runtime.sendMessage({
+      type: 'COPY_SCREENSHOT_TO_CLIPBOARD',
+      id,
+      withCaption: !!withCaption
+    });
+    if (res?.ok) {
+      toast(res.message || (withCaption ? '✓ Gambar + keterangan tersalin' : '✓ Gambar tersalin'));
+    } else {
+      toast('Gagal salin: ' + (res?.error || 'unknown'), false);
+    }
+  } catch (e) {
+    toast('Error: ' + e.message, false);
+  }
 }
 
 // ============ Editor sheet (add / edit item) ============

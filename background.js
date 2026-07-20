@@ -153,6 +153,15 @@ browser.runtime.onStartup.addListener(async () => {
   // v0.8.36: HAPUS force-inject di onStartup juga — bikin duplikat + loop
 });
 
+// v3.11.6: Helper escapeHtml untuk background context (tidak punya DOM).
+// Dipakai saat build text/html payload untuk clipboard.
+function _escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 async function setupContextMenu() {
   await browser.menus.removeAll().catch(() => {});
 
@@ -1804,6 +1813,99 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       return { ok: true, downloadId: id };
     } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (msg.type === 'COPY_SCREENSHOT_TO_CLIPBOARD') {
+    // v3.11.6 (Issue 1 dari Google Doc): Salin screenshot dari Vault ke clipboard.
+    // Popup/sidebar tidak bisa akses navigator.clipboard.write dengan image di Firefox
+    // karena perlu user gesture di page context. Solusi: inject content script ke
+    // tab aktif yang eksekusi clipboard write di context page.
+    //
+    // msg: { id, withCaption: bool }
+    // Returns: { ok: bool, message?: string, error?: string }
+    try {
+      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
+      const dataUrl = await getScreenshotBlob(msg.id);
+      if (!dataUrl) return { ok: false, error: 'no_blob' };
+
+      const vault = await getVault();
+      const item = vault.items.find(i => i.id === msg.id);
+      if (!item) return { ok: false, error: 'item_not_found' };
+
+      // Build caption (URL, title, time, mode, dims)
+      const pageTitle = item.source?.title || item.title || 'screenshot';
+      const pageUrl = item.source?.url || '';
+      const capturedAt = item.source?.capturedAt || new Date().toISOString();
+      const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : 'Seluruh halaman');
+      const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+
+      const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
+        + (pageUrl ? 'Sumber: ' + pageUrl + '\n' : '')
+        + 'Waktu: ' + new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
+        + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+        + 'Disimpan di RecallFox Vault';
+
+      const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+        + '<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
+        + '<p style="margin:8px 0 2px"><strong>📸 ' + _escapeHtml(pageTitle) + '</strong></p>'
+        + (pageUrl ? '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + _escapeHtml(pageUrl) + '">' + _escapeHtml(pageUrl) + '</a></p>' : '')
+        + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
+        + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox Vault</p>'
+        + '</div>';
+
+      // Inject clipboard writer ke tab aktif
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      // Skip jika tab adalah about: atau file:// (tidak bisa inject)
+      if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
+        return { ok: false, error: 'cannot_inject_this_page' };
+      }
+
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: async (dataUrl, withCaption, textPlain, textHtml) => {
+          try {
+            // Konversi dataUrl → Blob
+            const resp = await fetch(dataUrl);
+            const blob = await resp.blob();
+            const pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
+
+            if (withCaption && typeof ClipboardItem !== 'undefined') {
+              // Multi-mime: image/png + text/html + text/plain
+              const item = new ClipboardItem({
+                'image/png': pngBlob,
+                'text/html': new Blob([textHtml], { type: 'text/html' }),
+                'text/plain': new Blob([textPlain], { type: 'text/plain' })
+              });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
+            } else if (typeof ClipboardItem !== 'undefined') {
+              // Image only
+              const item = new ClipboardItem({ 'image/png': pngBlob });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
+            } else {
+              // Fallback: browser.clipboard.setImageData (Firefox < 127)
+              const arrBuf = await pngBlob.arrayBuffer();
+              await browser.clipboard.setImageData(arrBuf, 'png');
+              if (withCaption) {
+                try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+              }
+              return { ok: true, message: '✓ Gambar tersalin (mode fallback)' };
+            }
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
+        },
+        args: [dataUrl, !!msg.withCaption, textPlain, textHtml]
+      });
+
+      const result = results?.[0]?.result;
+      if (result && result.ok) return result;
+      return { ok: false, error: result?.error || 'clipboard_write_failed' };
+    } catch (e) {
+      console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
       return { ok: false, error: e.message };
     }
   }
