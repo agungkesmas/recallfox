@@ -920,7 +920,7 @@
   }).observe(document.body, { childList: true, subtree: true });
 
   // Listen for setting changes & capture triggers from background
-  browser.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'OVERLAY_TOGGLED') {
       maybeInjectOverlay();
     }
@@ -928,7 +928,132 @@
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
     }
+    // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
+    // Audio tidak bisa di-play dari background service worker (MV3 restriction).
+    // Background kirim PLAY_ADZAN ke content script tab aktif, di sini kita mainkan.
+    if (msg.type === 'PLAY_ADZAN') {
+      try {
+        _playAdzanInPage(msg);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.warn('[RecallFox] Adzan playback failed in content script:', e.message);
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true; // async response
+    }
+    if (msg.type === 'STOP_ADZAN') {
+      try {
+        _stopAdzanInPage();
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true;
+    }
   });
+
+  // ===== Adzan audio player (in-page) =====
+  // v3.11.7-fix2: Pakai CDN publik IslamicFinder (gratis, sering dipakai aplikasi adzan).
+  // Audio di-play di context page (tab aktif), bukan di popup — supaya bisa bunyi walau
+  // popup RecallFox tertutup. Banner Stop di-show di pojok halaman.
+  let _adzanAudioEl = null;
+  let _adzanBannerEl = null;
+
+  const ADZAN_URLS_OVERLAY = {
+    default: 'https://www.islamicfinder.org/cms/audio/azan1/azan1.mp3',
+    short: 'https://www.islamicfinder.org/cms/audio/azan2/azan2.mp3'
+  };
+
+  function _stopAdzanInPage() {
+    if (_adzanAudioEl) {
+      try { _adzanAudioEl.pause(); _adzanAudioEl.currentTime = 0; } catch (e) {}
+      _adzanAudioEl = null;
+    }
+    if (_adzanBannerEl) {
+      try { _adzanBannerEl.remove(); } catch (e) {}
+      _adzanBannerEl = null;
+    }
+  }
+
+  function _playAdzanInPage(msg) {
+    _stopAdzanInPage();
+
+    let url;
+    if (msg.sound === 'custom' && msg.customUrl) {
+      url = msg.customUrl;
+    } else if (msg.sound === 'short') {
+      url = ADZAN_URLS_OVERLAY.short;
+    } else {
+      url = ADZAN_URLS_OVERLAY.default;
+    }
+
+    // Buat audio element
+    try {
+      _adzanAudioEl = new Audio(url);
+      _adzanAudioEl.volume = Math.max(0, Math.min(1, Number(msg.volume) || 0.7));
+      _adzanAudioEl.crossOrigin = 'anonymous';
+      _adzanAudioEl.play().catch(e => {
+        console.warn('[RecallFox] Adzan play blocked (autoplay policy):', e.message);
+        // Tampilkan banner saja — user klik play manual kalau autoplay blocked
+      });
+    } catch (e) {
+      console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+    }
+
+    // Banner Stop (fixed di pojok kanan bawah halaman, tidak nutupin konten utama)
+    _adzanBannerEl = document.createElement('div');
+    _adzanBannerEl.id = 'rf-adzan-banner';
+    _adzanBannerEl.style.cssText = [
+      'position:fixed',
+      'bottom:16px',
+      'right:16px',
+      'background:linear-gradient(135deg,#10b981,#059669)',
+      'color:#fff',
+      'padding:10px 14px',
+      'border-radius:10px',
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'z-index:2147483647',
+      'font-size:13px',
+      'box-shadow:0 4px 12px rgba(0,0,0,0.2)',
+      'font-family:inherit',
+      'max-width:calc(100vw - 32px)'
+    ].join(';');
+    _adzanBannerEl.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:18px">🕌</span>'
+      + '<div>'
+      +   '<div style="font-weight:600">Adzan — ' + (msg.prayer || 'waktu sholat') + ' telah masuk</div>'
+      +   '<div style="font-size:11px;opacity:0.85">Klik ⏹ Stop untuk menghentikan</div>'
+      + '</div>'
+      + '</div>'
+      + '<button id="rf-adzan-stop" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">⏹ Stop</button>';
+    document.body.appendChild(_adzanBannerEl);
+
+    // Bind tombol Stop
+    const stopBtn = _adzanBannerEl.querySelector('#rf-adzan-stop');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', _stopAdzanInPage);
+    }
+
+    // Auto-cleanup saat audio selesai
+    if (_adzanAudioEl) {
+      _adzanAudioEl.onended = () => _stopAdzanInPage();
+      _adzanAudioEl.onerror = () => {
+        console.warn('[RecallFox] Adzan audio error — kemungkinan URL tidak accessible');
+        _stopAdzanInPage();
+      };
+    }
+
+    // Auto-stop setelah 5 menit (safety, kalau audio tidak pernah ended)
+    setTimeout(() => {
+      if (_adzanAudioEl || _adzanBannerEl) {
+        console.log('[RecallFox] Adzan auto-stop after 5 minutes');
+        _stopAdzanInPage();
+      }
+    }, 5 * 60 * 1000);
+  }
 
   // Reposition FAB on window resize (keep it on-screen)
   window.addEventListener('resize', () => {

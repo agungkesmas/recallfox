@@ -1826,52 +1826,58 @@ async function doShot(mode) {
   } catch (e) { toast('Error: ' + e.message, false); }
 }
 
-// v3.11.7-fix (Issue #1): Shot picker sheet — pilih mode capture + tingkat kompresi
-// sebelum capture. Kompresi tinggi = JPEG q60 (default, recommended untuk GDrive sync).
+// v3.11.7-fix2 (Sesi 7, Issue #2): Shot picker sheet — SIMPLIFIED jadi 2 klik saja.
+// User feedback: "harusnya tidak jauh dari dua kali klik saja misal mau ganti kualitas,
+// terus langsung saja pilih salah satu dari Bagian Seluruh, Seleksi Terlihat, Halaman Area.
+// Tombol Batal dan Tangkap hilangkan saja, misal tidak jadi screenshot tinggal klik area
+// lain. atau ketika sudah mau selection area yang mau di screenshot tinggal pencet esc."
+//
+// Flow sekarang (2 klik):
+//   1. Klik tombol Shot (di hero tiles atau alat)
+//   2. Klik salah satu mode (Visible/Entire/Selection) → LANGSUNG capture pakai
+//      kompresi yang sedang dipilih di dropdown
+//
+// Untuk ganti kompresi: tinggal ubah dropdown dulu, lalu klik mode. Tidak perlu tombol
+// "Tangkap" terpisah. Tidak ada tombol "Batal" — ESC di sheet bawah bisa tutup sheet,
+// atau klik di luar sheet (di scrim).
 function openShotPickerSheet() {
   const s = currentVault?.settings || {};
   const currentComp = s.screenshotCompression || 'high';
-  openSheet('🖼️ Tangkap Layar', 'Pilih mode + tingkat kompresi', b => {
+  openSheet('🖼️ Tangkap Layar', 'Pilih mode tangkap · ESC atau klik luar untuk batal', b => {
     b.innerHTML = '<div class="sheet-form">'
-      + '<div><label>Mode tangkap</label>'
+      + '<div><label>Mode tangkap <span class="field-hint">(klik untuk langsung capture)</span></label>'
       +   '<div class="shot-mode-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:4px">'
-      +     '<button class="btn btn-g shot-mode-btn" data-mode="visible" style="padding:8px 4px;font-size:11px">📱<br>Bagian Terlihat</button>'
-      +     '<button class="btn btn-g shot-mode-btn" data-mode="entire" style="padding:8px 4px;font-size:11px">📄<br>Seluruh Halaman</button>'
-      +     '<button class="btn btn-g shot-mode-btn" data-mode="selection" style="padding:8px 4px;font-size:11px">✂️<br>Seleksi Area</button>'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="visible" style="padding:10px 4px;font-size:11px;line-height:1.3">📱<br>Bagian Terlihat</button>'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="entire" style="padding:10px 4px;font-size:11px;line-height:1.3">📄<br>Seluruh Halaman</button>'
+      +     '<button class="btn btn-g shot-mode-btn" data-mode="selection" style="padding:10px 4px;font-size:11px;line-height:1.3">✂️<br>Seleksi Area</button>'
       +   '</div></div>'
-      + '<div><label>Tingkat kompresi <span class="field-hint">(default untuk GDrive sync)</span></label>'
+      + '<div><label>Tingkat kompresi <span class="field-hint">(ubah dulu sebelum pilih mode)</span></label>'
       +   '<select class="f" id="shotComp" style="margin-top:4px">'
       +     '<option value="high"' + (currentComp === 'high' ? ' selected' : '') + '>Tinggi (JPEG q60) — recommended, ~200-800KB</option>'
       +     '<option value="medium"' + (currentComp === 'medium' ? ' selected' : '') + '>Sedang (JPEG q75) — ~500KB-1.5MB</option>'
       +     '<option value="low"' + (currentComp === 'low' ? ' selected' : '') + '>Sedikit (JPEG q90) — ~1-3MB</option>'
-      +     '<option value="lossless"' + (currentComp === 'lossless' ? ' selected' : '') + '>Lossless (PNG) — besar, GDrive bisa gagal</option>'
+      +     '<option value="lossless"' + (currentComp === 'lossless' ? ' selected' : '') + '>Lossless (PNG) — besar, kualitas terbaik</option>'
       +   '</select></div>'
-      + '<div class="hintbox" style="font-size:10.5px">💡 <b>Tinggi</b> = upload GDrive selalu berhasil (di bawah limit Apps Script ~10MB). <b>Lossless</b> = kualitas terbaik tapi ukuran besar.</div>'
-      + '<div class="btn-row"><button class="btn btn-g" id="shotCancel">Batal</button>'
-      +   '<button class="btn btn-p" id="shotCapture">' + ICONS.check + 'Tangkap</button></div></div>';
+      + '<div class="hintbox" style="font-size:10.5px">💡 <b>Tinggi</b> = upload GDrive selalu berhasil (di bawah limit Apps Script ~10MB). <b>Lossless</b> = kualitas terbaik tapi ukuran besar. Klik mode di atas untuk langsung capture — tidak perlu tombol lain.</div>'
+      + '</div>';
 
-    let selectedMode = null;
+    // v3.11.7-fix2: HAPUS tombol "Batal" dan "Tangkap". Klik mode = langsung capture.
+    // User bisa batal dengan: (1) ESC keyboard (closeSheet sudah handle), (2) klik di
+    // scrim (area di luar sheet, closeSheet sudah handle via scrim click handler).
+    // Untuk selection mode, ESC selama selection overlay juga batal capture (sudah ada).
+
     b.querySelectorAll('.shot-mode-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        b.querySelectorAll('.shot-mode-btn').forEach(x => x.classList.remove('btn-p'));
-        b.querySelectorAll('.shot-mode-btn').forEach(x => x.classList.add('btn-g'));
-        btn.classList.remove('btn-g');
-        btn.classList.add('btn-p');
-        selectedMode = btn.dataset.mode;
+      btn.addEventListener('click', async () => {
+        const selectedMode = btn.dataset.mode;
+        const comp = b.querySelector('#shotComp').value;
+        // Save compression ke settings supaya captureFullPage pakai compression baru
+        if (comp !== currentComp) {
+          await saveSettings({ screenshotCompression: comp });
+        }
+        closeSheet();
+        // Trigger shot dengan mode terpilih — langsung capture, tanpa konfirmasi tambahan
+        doShot(selectedMode);
       });
-    });
-    b.querySelector('#shotCancel').addEventListener('click', closeSheet);
-    b.querySelector('#shotCapture').addEventListener('click', async () => {
-      if (!selectedMode) { toast('Pilih mode tangkap dulu', false); return; }
-      const comp = b.querySelector('#shotComp').value;
-      // Save compression ke settings supaya captureFullPage pakai compression baru
-      if (comp !== currentComp) {
-        await saveSettings({ screenshotCompression: comp });
-        toast('💡 Kompresi default diubah ke: ' + comp);
-      }
-      closeSheet();
-      // Trigger shot dengan mode terpilih
-      doShot(selectedMode);
     });
   });
 }
@@ -3248,7 +3254,25 @@ async function renderGDrivePage(B) {
     + '</div>'
 
     // ===== SECTION 1: Konfigurasi (URL + Token + Copy URL + Lock Token) =====
-    + '<div class="card"><h3>⚙️ Konfigurasi (URL + Token — dipakai untuk GDrive Sync & Multi-PC Sync)</h3>'
+    // v3.11.7-fix2 (Sesi 7, Issue #4): Perjelas label "Konfigurasi" — BUKAN login.
+    // User bingung: "ini tu masuk ke logika buat akun baru untuk konfigurasi dan multi
+    // pc sync ini untuk login? karena terasa tidak familiar penyebutannya. atau memang
+    // sebenarnya fungsinya beda?"
+    // Jawaban: INI BUKAN LOGIN. URL + Token adalah "jembatan" ke Google Apps Script
+    // Web App yang user deploy sendiri dari Spreadsheet sendiri. Tidak ada akun RecallFox,
+    // tidak ada server RecallFox. Data flow: addon ↔ Apps Script (milik user) ↔ Spreadsheet
+    // (milik user) ↔ Google Drive (milik user). Token = password yang user generate
+    // sendiri untuk memastikan hanya addon dengan token itu yang bisa akses Web App.
+    + '<div class="card"><h3>⚙️ Konfigurasi Sinkronisasi (URL Web App + Token Rahasia)</h3>'
+    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55">'
+    +   '<b>Bukan login akun.</b> Ini adalah jembatan ke <b>Google Apps Script milik Anda sendiri</b> '
+    +   '(yang Anda deploy dari Spreadsheet sendiri). '
+    +   '<br>· <b>URL Web App</b> = alamat Apps Script yang Anda deploy (Format: <code>https://script.google.com/macros/s/AKfyc.../exec</code>). '
+    +   '<br>· <b>Token</b> = password yang Anda generate sendiri di sini (32 karakter acak). Hanya addon dengan token ini yang bisa akses Web App Anda. '
+    +   '<br>· <b>Multi-PC Sync</b> = pakai URL + Token yang SAMA di PC lain supaya data sinkron antar perangkat. '
+    +   '<br>· <b>GDrive Sync</b> = one-way push data vault ke Spreadsheet + upload screenshot ke folder Drive. '
+    +   '<br>Data TIDAK melalui server RecallFox — langsung addon ↔ Apps Script Anda ↔ Spreadsheet/Drive Anda.'
+    + '</div>'
     + '<div style="margin:8px 0">'
     +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
     +     '<label style="font-size:11px;color:var(--muted)">Master switch — Aktifkan sync</label>'
@@ -5174,6 +5198,30 @@ function _stopAdzan() {
     try { _adzanBanner.remove(); } catch (e) {}
     _adzanBanner = null;
   }
+  // v3.11.7-fix2 (Sesi 7, Issue #5): Hide tombol Stop global di header
+  const stopBtn = document.getElementById('adzanStopBtn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  // v3.11.7-fix2: Juga broadcast STOP_ADZAN ke content script tab aktif (kalau adzan
+  // di-play di tab aktif, bukan di popup)
+  try {
+    browser.runtime.sendMessage({ type: 'STOP_ADZAN' }).catch(() => {});
+  } catch (e) {}
+}
+
+// v3.11.7-fix2 (Sesi 7, Issue #5): Toggle tombol Stop global di header saat adzan aktif.
+// Dipanggil dari _playAdzan (popup context) dan dari handler PLAY_ADZAN (saat background
+// kirim ke popup). Tombol muncul sebagai icon ⏹ hijau di header — mudah diakses tanpa
+// masuk settings.
+function _showAdzanStopButton() {
+  const stopBtn = document.getElementById('adzanStopBtn');
+  if (stopBtn) {
+    stopBtn.style.display = '';
+    // Bind click handler (sekali saja, tapi idempotent)
+    if (!stopBtn.dataset.bound) {
+      stopBtn.addEventListener('click', _stopAdzan);
+      stopBtn.dataset.bound = '1';
+    }
+  }
 }
 
 function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
@@ -5255,6 +5303,9 @@ function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
       _stopAdzan();
     }
   }, 5 * 60 * 1000);
+
+  // v3.11.7-fix2 (Sesi 7, Issue #5): Tampilkan tombol Stop global di header
+  _showAdzanStopButton();
 }
 
 // Listener untuk message PLAY_ADZAN dari background

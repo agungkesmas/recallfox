@@ -959,25 +959,50 @@ async function generateThumbnail(dataUrl, max) {
 // return the dataUrl.
 
 async function handleCaptureVisible(format, quality) {
+  // v3.11.7-fix2 (Sesi 7): Tambah fallback JPEG → PNG.
+  // User report: "gambar hanya bisa ditangkap di lossless (tanpa kompresi) jika dengan
+  // kompresi error". Root cause: di beberapa halaman (CSP strict, cross-origin iframe),
+  // Firefox captureVisibleTab dengan format=jpeg melempar error "Format image not supported"
+  // atau "Canvas tainted". Fallback: coba JPEG dulu, kalau gagal coba PNG lossless.
+  // User tetap dapat screenshot (walau ukuran lebih besar), bukan error total.
+  const tryCapture = async (fmt, q) => {
+    const opts = { format: fmt || 'png' };
+    if (fmt === 'jpeg') opts.quality = (q || 90) / 100;
+    return await browser.tabs.captureVisibleTab(undefined, opts);
+  };
+
   try {
-    const opts = { format: format || 'png' };
-    if (format === 'jpeg') opts.quality = (quality || 90) / 100;
-    const dataUrl = await browser.tabs.captureVisibleTab(undefined, opts);
-    return { ok: true, dataUrl };
+    const dataUrl = await tryCapture(format, quality);
+    return { ok: true, dataUrl, format: format || 'png' };
   } catch (e) {
-    console.error('[RecallFox] captureVisibleTab failed:', e.message);
+    console.error('[RecallFox] captureVisibleTab failed (format=' + format + '):', e.message);
+    // v3.11.7-fix2: Kalau JPEG gagal, fallback ke PNG lossless supaya tetap dapat screenshot
+    if (format === 'jpeg') {
+      console.log('[RecallFox] Fallback: coba PNG lossless karena JPEG gagal...');
+      try {
+        const dataUrl = await tryCapture('png', 100);
+        return { ok: true, dataUrl, format: 'png', fallback: true, originalError: e.message };
+      } catch (e2) {
+        console.error('[RecallFox] PNG fallback juga gagal:', e2.message);
+        // Lanjut ke retry logic di bawah untuk rate-limit
+      }
+    }
     // Firefox rate-limit error: "An unexpected error occurred" — wait and retry once
     if (e.message && (e.message.includes('unexpected') || e.message.includes('rate'))) {
       console.log('[RecallFox] Retrying captureVisibleTab after rate-limit delay…');
       await new Promise(r => setTimeout(r, 500));
       try {
-        const opts = { format: format || 'png' };
-        if (format === 'jpeg') opts.quality = (quality || 90) / 100;
-        const dataUrl = await browser.tabs.captureVisibleTab(undefined, opts);
-        return { ok: true, dataUrl };
+        const dataUrl = await tryCapture(format, quality);
+        return { ok: true, dataUrl, format: format || 'png' };
       } catch (e2) {
         console.error('[RecallFox] captureVisibleTab retry failed:', e2.message);
-        return { ok: false, error: e2.message };
+        // Last resort: coba PNG lossless
+        try {
+          const dataUrl = await tryCapture('png', 100);
+          return { ok: true, dataUrl, format: 'png', fallback: true };
+        } catch (e3) {
+          return { ok: false, error: e3.message };
+        }
       }
     }
     return { ok: false, error: e.message };
@@ -2328,17 +2353,54 @@ async function checkPrayerReminder() {
         const prayerKeyMap = { 'Subuh':'Fajr', 'Dzuhur':'Dhuhr', 'Ashar':'Asr', 'Magrib':'Maghrib', 'Isya':'Isha' };
         const prayerKey = prayerKeyMap[next.name] || next.name;
         if (adzanPrayers.includes(prayerKey) && adzanLastKey !== adzanKey) {
-          // Broadcast ke sidebar/popup untuk mainkan adzan (audio hanya bisa di context page/popup)
+          // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan tidak berfungsi karena sendMessage
+          // ke popup hanya sampai kalau popup terbuka. Fix: kirim ke CONTENT SCRIPT
+          // tab aktif (yang selalu ada kalau user browsing) + kirim ke popup juga
+          // sebagai fallback. Content script mainkan audio di context page.
           try {
-            await browser.runtime.sendMessage({
+            const adzanPayload = {
               type: 'PLAY_ADZAN',
               prayer: next.name,
               prayerKey: prayerKey,
               volume: settings.prayerAdzanVolume ?? 0.7,
               sound: settings.prayerAdzanSound || 'default',
               customUrl: settings.prayerAdzanCustomUrl || ''
-            }).catch(() => {}); // popup mungkin tidak aktif — silent fail
-            console.log('[RecallFox] Adzan broadcasted for', next.name);
+            };
+            // Strategy 1: kirim ke content script tab aktif (paling reliable)
+            let played = false;
+            try {
+              const activeTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+              for (const at of activeTabs) {
+                if (!at.url || !/^https?:\/\//.test(at.url)) continue;
+                if (/^(about:|moz-extension:|chrome:|file:)/.test(at.url)) continue;
+                try {
+                  const r = await browser.tabs.sendMessage(at.id, adzanPayload);
+                  if (r?.ok) { played = true; break; }
+                } catch (e) { /* tab mungkin tidak punya content script — skip */ }
+              }
+            } catch (e) {
+              console.warn('[RecallFox] Adzan ke active tab failed:', e.message);
+            }
+            // Strategy 2: fallback — kirim ke popup/sidebar (kalau terbuka)
+            if (!played) {
+              try {
+                await browser.runtime.sendMessage(adzanPayload).catch(() => {});
+              } catch (e) { /* popup mungkin tidak aktif — silent */ }
+            }
+            // Strategy 3: tampilkan notifikasi browser sebagai fallback terakhir
+            // supaya user tahu adzan masuk walau audio tidak bunyi
+            if (!played) {
+              try {
+                await browser.notifications.create({
+                  type: 'basic',
+                  title: '🕌 ' + next.name + ' telah masuk',
+                  message: 'Adzan tidak bisa diputar otomatis (popup tertutup & tab aktif tidak kompatibel). Buka RecallFox untuk test adzan manual.',
+                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  priority: 2
+                });
+              } catch (e) {}
+            }
+            console.log('[RecallFox] Adzan broadcasted for', next.name, '(played=' + played + ')');
             await saveSettings({ prayerAdzanLastPlayedKey: adzanKey });
           } catch (e) {
             console.warn('[RecallFox] Adzan broadcast failed:', e.message);

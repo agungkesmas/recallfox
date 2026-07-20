@@ -524,26 +524,43 @@ function bindEvents() {
       toast('✓ Tersimpan: waktu adzan');
     });
   });
-  // Test Adzan button — broadcast PLAY_ADZAN ke popup/sidebar aktif
+  // Test Adzan button — v3.11.7-fix2: kirim PLAY_ADZAN ke content script tab aktif
+  // (lebih reliable daripada popup-only). Kalau tab aktif tidak kompatibel, fallback
+  // ke popup/sidebar.
   const testAdzanBtn = document.getElementById('rf-set-prayer-adzan-test');
   if (testAdzanBtn) {
     testAdzanBtn.addEventListener('click', async () => {
       try {
         const s = await getSettings();
-        // Buka sidebar supaya ada yang receive PLAY_ADZAN
-        if (browser.sidebarAction && browser.sidebarAction.open) {
-          try { await browser.sidebarAction.open(); } catch (e) {}
-        }
-        // Broadcast PLAY_ADZAN (popup/sidebar yang aktif akan terima)
-        await browser.runtime.sendMessage({
+        const adzanPayload = {
           type: 'PLAY_ADZAN',
           prayer: 'Test',
           prayerKey: 'Test',
           volume: s.prayerAdzanVolume ?? 0.7,
           sound: s.prayerAdzanSound || 'default',
           customUrl: s.prayerAdzanCustomUrl || ''
-        }).catch(() => {});
-        toast('🔔 Adzan diputar di sidebar/popup yang aktif');
+        };
+        // Strategy 1: kirim ke tab aktif (paling reliable)
+        let played = false;
+        try {
+          const activeTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+          for (const at of activeTabs) {
+            if (!at.url || !/^https?:\/\//.test(at.url)) continue;
+            if (/^(about:|moz-extension:|chrome:|file:)/.test(at.url)) continue;
+            try {
+              const r = await browser.tabs.sendMessage(at.id, adzanPayload);
+              if (r?.ok) { played = true; break; }
+            } catch (e) { /* tab mungkin tidak punya content script — skip */ }
+          }
+        } catch (e) {}
+        // Strategy 2: buka sidebar + broadcast ke popup (fallback)
+        if (!played) {
+          if (browser.sidebarAction && browser.sidebarAction.open) {
+            try { await browser.sidebarAction.open(); } catch (e) {}
+          }
+          await browser.runtime.sendMessage(adzanPayload).catch(() => {});
+        }
+        toast(played ? '🔔 Adzan diputar di tab aktif' : '🔔 Adzan diputar di sidebar/popup (tab aktif tidak kompatibel)');
       } catch (e) {
         toast('Gagal test adzan: ' + e.message);
       }
