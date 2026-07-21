@@ -2323,6 +2323,44 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: e.message }); return;
     }
   }
+  // v3.11.13 (Sesi 12): DELETE_ITEMS_BATCH — hapus multiple item dari vault sekaligus.
+  // User feedback: "sudah bagus fitur batch nya harusnya ada batch delete juga, jadi
+  // bersih bersihnya gampang. apakah bisa ditambahkan?"
+  // Pakai deleteItem yang sudah ada (handle screenshot blob + bundle cleanup + GDrive sync).
+  if (msg.type === 'DELETE_ITEMS_BATCH') {
+    try {
+      const { ids } = msg;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        sendResponse({ ok: false, error: 'no_ids' }); return;
+      }
+      const { deleteItem } = await import('./lib/storage.js');
+      let deleted = 0;
+      let errors = [];
+      for (const id of ids) {
+        try {
+          await deleteItem(id);
+          deleted++;
+        } catch (e) {
+          console.warn('[RecallFox] deleteItem failed for', id, e.message);
+          errors.push({ id, error: e.message });
+        }
+      }
+      // Trigger sync sekali setelah semua hapus (lebih efisien daripada sync per item)
+      try {
+        const { pushToSync } = await import('./lib/storage.js');
+        await pushToSync();
+      } catch (e) { /* silent — sync opsional */ }
+      sendResponse({
+        ok: true,
+        deleted,
+        errors: errors.length > 0 ? errors : undefined,
+        message: '✓ ' + deleted + ' item dihapus' + (errors.length > 0 ? ' (' + errors.length + ' gagal)' : '')
+      }); return;
+    } catch (e) {
+      console.warn('[RecallFox] DELETE_ITEMS_BATCH failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
   if (msg.type === 'CAPTURE_SNAPSHOT') {
     // sent from snapshot modal in content script — save directly
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });

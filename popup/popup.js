@@ -563,6 +563,42 @@ async function vaultBatchCopyAction(withCaption) {
   }
 }
 
+// v3.11.13 (Sesi 12): Batch delete screenshot — bersih-bersih vault gampang.
+// User feedback: "sudah bagus fitur batch nya harusnya ada batch delete juga, jadi
+// bersih bersihnya gampang. apakah bisa ditambahkan?"
+async function vaultBatchDeleteAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 screenshot dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  // Konfirmasi supaya tidak salah hapus
+  if (!confirm('Hapus ' + ids.length + ' screenshot dari vault?\n\nScreenshot akan dihapus permanen beserta blob gambar. Tidak bisa di-undo.\n\nTip: Untuk backup dulu, klik Cancel lalu Copy + Keterangan, lalu paste ke Google Docs.')) {
+    return;
+  }
+  toast('🗑️ Menghapus ' + ids.length + ' screenshot...');
+  try {
+    const res = await browser.runtime.sendMessage({
+      type: 'DELETE_ITEMS_BATCH',
+      ids
+    });
+    if (res?.ok) {
+      toast('✓ ' + (res.deleted || ids.length) + ' screenshot dihapus');
+      vaultBatchSelected.clear();
+      vaultBatchMode = false;
+      const bar = $('#vaultBatchBar');
+      if (bar) bar.style.display = 'none';
+      await refreshVault();
+      // Re-render supaya checkbox hilang
+      renderList();
+    } else {
+      toast('Gagal: ' + (res?.error || 'unknown'), false);
+    }
+  } catch (e) {
+    toast('Error: ' + e.message, false);
+  }
+}
+
 function visibleItems() {
   const items = getVaultItems();
   // v3.7.2 (Issue 1): chip 'archive' menampilkan hanya item yang diarsipkan.
@@ -5075,6 +5111,9 @@ function bindEvents() {
   if (vaultBatchCopyBtn) vaultBatchCopyBtn.addEventListener('click', () => vaultBatchCopyAction(true));
   const vaultBatchCopyImgBtn = $('#vaultBatchCopyImg');
   if (vaultBatchCopyImgBtn) vaultBatchCopyImgBtn.addEventListener('click', () => vaultBatchCopyAction(false));
+  // v3.11.13 (Sesi 12): Batch delete button
+  const vaultBatchDeleteBtn = $('#vaultBatchDelete');
+  if (vaultBatchDeleteBtn) vaultBatchDeleteBtn.addEventListener('click', vaultBatchDeleteAction);
   const vaultBatchCancelBtn = $('#vaultBatchCancel');
   if (vaultBatchCancelBtn) vaultBatchCancelBtn.addEventListener('click', exitVaultBatchMode);
   // v3.9.0 (Issue 7): Batch mode untuk notes
