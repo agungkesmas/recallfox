@@ -249,7 +249,7 @@ body.rf-sidebar-body .popup{
 .note-act:hover{background:var(--surface-2)}
 /* v3.7.2 (Issue 5): note title (opsional) */
 .note-title{font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:3px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.note-body-txt{font-size:12px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;word-break:break-word}
+.note-body-txt{font-size:12px;line-height:1.5;max-height:4.5em;overflow:hidden;white-space:normal;word-break:break-word;overflow-wrap:anywhere}
 .note-meta{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:10px;color:var(--muted);flex-wrap:wrap}
 .note-meta .pin{color:var(--amber);font-size:11px}
 .note-meta .ngroup-tag{background:var(--surface-2);padding:1px 6px;border-radius:6px;color:var(--text-2);font-weight:600;font-size:9.5px}

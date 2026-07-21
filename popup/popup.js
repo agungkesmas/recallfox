@@ -512,10 +512,13 @@ let vaultBatchMode = false;
 const vaultBatchSelected = new Set();
 
 // v3.11.14: Chip yang support batch mode (semua chip kecuali 'all')
-const BATCH_SUPPORTED_CHIPS = new Set(['prompt', 'context', 'link', 'bundle', 'snapshot', 'screenshot', 'archive']);
+// v3.11.15: Sekarang chip 'all' JUGA support batch — user bisa pilih multiple item
+// dari berbagai tipe sekaligus. Tombol yang tampil disesuaikan dengan tipe item terpilih.
+const BATCH_SUPPORTED_CHIPS = new Set(['all', 'prompt', 'context', 'link', 'bundle', 'snapshot', 'screenshot', 'archive']);
 
 function updateBatchModeBtnVisibility() {
   // v3.11.14: Tombol batch tampil untuk SEMUA chip yang support batch (bukan hanya screenshot)
+  // v3.11.15: Sekarang juga tampil di chip 'all'
   const btn = $('#batchModeBtn');
   if (!btn) return;
   const supported = BATCH_SUPPORTED_CHIPS.has(currentChip);
@@ -536,6 +539,8 @@ function updateBatchModeBtnVisibility() {
 // - Prompt/Context/Link/Snapshot: Copy Teks, Hapus
 // - Bundle: Copy Bundle, Hapus
 // - Archive: Unarsip, Hapus permanen
+// v3.11.15: Di chip 'all', tampilkan tombol berdasarkan TIPE ITEM yang terpilih.
+// Jika multiple tipe terpilih, tampilkan semua tombol yang relevant.
 function updateVaultBatchBarButtons() {
   const bar = $('#vaultBatchBar');
   if (!bar) return;
@@ -551,20 +556,51 @@ function updateVaultBatchBarButtons() {
     if (b) b.style.display = 'none';
   });
 
-  if (currentChip === 'screenshot') {
+  // v3.11.15: Di chip 'all', tentukan tipe item yang terpilih
+  let selectedTypes = new Set();
+  if (currentChip === 'all' && vaultBatchSelected.size > 0) {
+    for (const id of vaultBatchSelected) {
+      const item = currentVault?.items?.find(i => i.id === id);
+      if (item) selectedTypes.add(item.type);
+      // Cek juga bundle
+      const bundle = currentVault?.bundles?.find(b => b.id === id);
+      if (bundle) selectedTypes.add('bundle');
+    }
+  } else {
+    selectedTypes.add(currentChip === 'archive' ? 'archive' : currentChip);
+  }
+
+  // Tentukan tombol yang tampil berdasarkan tipe terpilih
+  const hasScreenshot = selectedTypes.has('screenshot');
+  const hasBundle = selectedTypes.has('bundle');
+  const hasArchive = selectedTypes.has('archive');
+  const hasText = ['prompt', 'context', 'link', 'snapshot'].some(t => selectedTypes.has(t));
+
+  if (currentChip === 'archive' || hasArchive) {
+    if (unarchiveBtn) unarchiveBtn.style.display = '';
+  }
+  if (hasScreenshot) {
     if (copyCaptionBtn) copyCaptionBtn.style.display = '';
     if (copyImgBtn) copyImgBtn.style.display = '';
-    if (deleteBtn) deleteBtn.style.display = '';
-  } else if (currentChip === 'bundle') {
+  }
+  if (hasBundle) {
     if (copyBundleBtn) copyBundleBtn.style.display = '';
-    if (deleteBtn) deleteBtn.style.display = '';
-  } else if (currentChip === 'archive') {
-    if (unarchiveBtn) unarchiveBtn.style.display = '';
-    if (deleteBtn) deleteBtn.style.display = '';
-  } else {
-    // prompt, context, link, snapshot
+  }
+  if (hasText) {
     if (copyTextBtn) copyTextBtn.style.display = '';
-    if (deleteBtn) deleteBtn.style.display = '';
+  }
+  // Hapus selalu tampil (untuk semua tipe)
+  if (deleteBtn) deleteBtn.style.display = '';
+
+  // Update tombol delete label untuk archive
+  if (deleteBtn) {
+    if (currentChip === 'archive') {
+      deleteBtn.textContent = '🗑️ Hapus Permanen';
+      deleteBtn.title = 'Hapus permanen item terpilih dari vault';
+    } else {
+      deleteBtn.textContent = '🗑️ Hapus';
+      deleteBtn.title = 'Hapus item terpilih dari vault';
+    }
   }
 }
 
@@ -590,6 +626,9 @@ function exitVaultBatchMode() {
 function updateVaultBatchCount() {
   const countEl = $('#vaultBatchCount');
   if (countEl) countEl.textContent = vaultBatchSelected.size + ' dipilih';
+  // v3.11.15: Update tombol batch bar setelah count berubah — penting untuk chip 'all'
+  // dimana tombol yang tampil tergantung tipe item terpilih.
+  try { updateVaultBatchBarButtons(); } catch (e) {}
 }
 
 // v3.11.14: Helper — dapatkan label tipe untuk pesan toast/dialog
@@ -2629,7 +2668,10 @@ async function renderNotes() {
   }
   list.innerHTML = groupChipsHtml + sorted.map(n => {
     const titleHtml = n.title ? '<div class="note-title">' + esc(n.title) + '</div>' : '';
-    const preview = (n.body || '').slice(0, 200).replace(/\n+/g, ' ');
+    // v3.11.15: Preview yang lebih baik — ganti newline dengan spasi (bukan biarkan pre-wrap
+    // yang bikin area kosong di kiri). Naikkan limit dari 200 → 400 karakter supaya context
+    // lebih lengkap. CSS .note-body-txt pakai max-height:4.5em untuk clamp visual.
+    const preview = (n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
     const previewHtml = preview ? esc(preview) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
     // v3.9.0 (Issue 7): In batch mode, show checkbox instead of quick actions
@@ -5220,6 +5262,9 @@ async function refreshVault() {
   // tanpa user harus klik tab Catatan dulu.
   try { currentNotes = await getNotes(); } catch (e) { currentNotes = []; }
   renderVault();
+  // v3.11.15: Update visibility tombol batch setelah refresh vault — sebelumnya
+  // tidak dipanggil, sehingga tombol batch bisa inconsistent setelah hapus/edit item.
+  try { updateBatchModeBtnVisibility(); } catch (e) {}
 }
 async function init() {
   try { await initTheme(); } catch (e) { console.warn('initTheme failed:', e); }
