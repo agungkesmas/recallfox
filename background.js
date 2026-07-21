@@ -7,6 +7,11 @@
 //   4. Sync trigger (debounced)
 //   5. Sync listener (merge changes from other devices)
 
+// v3.11.11 (Issue #1): Helper escape HTML untuk COPY_SCREENSHOTS_BATCH
+function escHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 import {
   pushToSync,
   mergeSyncIntoLocal,
@@ -1622,6 +1627,17 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Issue #4 fallback: GET_PAGE_CONTEXT_VIA_BG — kalau content script tidak ter-inject
   // (mis. tab about: atau halaman restricted), background inject script on-demand.
+  // v3.11.11 (Sesi 10, Issue #2): FIX bug loading terus tanpa hasil.
+  //   Root cause v3.11.10:
+  //   (a) Di dalam browser.scripting.executeScript.func, code pakai `sendResponse(...)`
+  //       — sendResponse TIDAK tersedia di context page inject (hanya di listener context).
+  //       Function inject harus RETURN value, bukan call sendResponse.
+  //   (b) Setelah executeScript, listener pakai `return results?.[0]?.result;` —
+  //       return value dari async IIFE, BUKAN call sendResponse. Firefox expect
+  //       sendResponse tapi tidak pernah dipanggil → popup loading terus.
+  //   Fix:
+  //   (a) Hapus sendResponse dari dalam executeScript.func — pakai return value.
+  //   (b) Setelah executeScript, call sendResponse(results?.[0]?.result); return;
   if (msg.type === 'GET_PAGE_CONTEXT_VIA_BG') {
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -1632,6 +1648,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const results = await browser.scripting.executeScript({
         target: { tabId: tab.id },
         func: (maxLen) => {
+          // v3.11.11: JANGAN pakai sendResponse di sini — return value saja.
+          // Function ini di-inject ke page context, bukan listener context.
           try {
             const main = document.querySelector('main')
                       || document.querySelector('[role="main"]')
@@ -1651,12 +1669,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               meta: { wordCount: text ? text.split(/\s+/).length : 0, charCount: text.length }
             };
           } catch (e) {
-            sendResponse({ ok: false, error: e.message }); return;
+            return { ok: false, error: e.message };
           }
         },
         args: [msg.maxLen || 8000]
       });
-      return results?.[0]?.result || { ok: false, error: 'no_result' };
+      // v3.11.11: Pakai sendResponse (bukan return) supaya popup dapat response.
+      const result = results?.[0]?.result || { ok: false, error: 'no_result' };
+      sendResponse(result); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
     }
@@ -2110,6 +2130,159 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
     } catch (e) {
       console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.11.11 (Issue #1): COPY_SCREENSHOTS_BATCH — copy multiple screenshot + keterangan
+  // User feedback: "apakah bisa dipilih beberapa di menu ini dan kopinya sekalian baik
+  // gambar maupun keterangannya sekaligus? tapi kamu pikirkan formatnya yang sangat rapih
+  // sehingga ketika dipaste tu orang atau ai bacanya ngerti."
+  //
+  // Strategi: inject content script ke tab aktif, kirim semua dataUrl + metadata,
+  // content script tulis clipboard dengan format:
+  //   - text/plain: markdown rapi dengan section per screenshot
+  //   - text/html: HTML dengan <img> + <h3> + <p> per screenshot
+  //   - Image gambar tetap di-clipboard sebagai blob (kalau Firefox support)
+  //
+  // Format markdown (text/plain):
+  //   # Screenshot Bundle — RecallFox
+  //   Tanggal: 21 Jul 2026, 14:30 · Total: 3 screenshot
+  //
+  //   ## 1. Judul Screenshot 1
+  //   **Sumber:** https://example.com/page1
+  //   **Waktu:** Selasa, 21 Jul 2026 06:31
+  //   **Mode:** Area · 648×268 px
+  //   **Tag:** bug, ui
+  //
+  //   [Gambar 1 — lihat di clipboard gambar]
+  //
+  //   ---
+  //
+  //   ## 2. Judul Screenshot 2
+  //   ...
+  if (msg.type === 'COPY_SCREENSHOTS_BATCH') {
+    try {
+      const { ids, withCaption } = msg;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        sendResponse({ ok: false, error: 'no_ids' }); return;
+      }
+      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
+      const vault = await getVault();
+      const screenshots = [];
+      for (const id of ids) {
+        const item = vault.items.find(i => i.id === id);
+        if (!item || item.type !== 'screenshot') continue;
+        const dataUrl = await getScreenshotBlob(id);
+        if (!dataUrl) continue;
+        screenshots.push({ item, dataUrl });
+      }
+      if (screenshots.length === 0) {
+        sendResponse({ ok: false, error: 'no_valid_screenshots' }); return;
+      }
+
+      // Build markdown + HTML
+      const now = new Date();
+      const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+      let mdParts = [
+        '# Screenshot Bundle — RecallFox',
+        'Tanggal: ' + dateStr + ' · Total: ' + screenshots.length + ' screenshot',
+        ''
+      ];
+      let htmlParts = [
+        '<h1>📷 Screenshot Bundle — RecallFox</h1>',
+        '<p><em>Tanggal: ' + escHtml(dateStr) + ' · Total: ' + screenshots.length + ' screenshot</em></p>'
+      ];
+      for (let i = 0; i < screenshots.length; i++) {
+        const { item, dataUrl } = screenshots[i];
+        const pageTitle = item.source?.title || item.title || 'screenshot';
+        const pageUrl = item.source?.url || '';
+        const capturedAt = item.source?.capturedAt || item.createdAt || now.toISOString();
+        const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : (item.screenshotMode === 'entire' ? 'Seluruh halaman' : '-'));
+        const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+        const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '');
+        const capturedDate = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
+        const num = i + 1;
+
+        // Markdown
+        mdParts.push('## ' + num + '. ' + pageTitle);
+        if (pageUrl) mdParts.push('**Sumber:** ' + pageUrl);
+        mdParts.push('**Waktu:** ' + capturedDate);
+        mdParts.push('**Mode:** ' + modeLabel + ' · ' + dims);
+        if (tags) mdParts.push('**Tag:** ' + tags);
+        if (withCaption) {
+          mdParts.push('');
+          mdParts.push('![Screenshot ' + num + '](' + dataUrl + ')');
+        } else {
+          mdParts.push('');
+          mdParts.push('[Gambar ' + num + ' — lihat di clipboard gambar]');
+        }
+        mdParts.push('');
+        if (i < screenshots.length - 1) mdParts.push('---');
+
+        // HTML
+        htmlParts.push('<hr>');
+        htmlParts.push('<h2>' + num + '. ' + escHtml(pageTitle) + '</h2>');
+        htmlParts.push('<p>');
+        if (pageUrl) htmlParts.push('<strong>Sumber:</strong> <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a><br>');
+        htmlParts.push('<strong>Waktu:</strong> ' + escHtml(capturedDate) + '<br>');
+        htmlParts.push('<strong>Mode:</strong> ' + escHtml(modeLabel) + ' · ' + escHtml(dims));
+        if (tags) htmlParts.push('<br><strong>Tag:</strong> ' + escHtml(tags));
+        htmlParts.push('</p>');
+        if (withCaption) {
+          htmlParts.push('<img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;height:auto;border:1px solid #ccc;border-radius:4px">');
+        }
+      }
+
+      const mdText = mdParts.join('\n');
+      const htmlText = htmlParts.join('\n');
+
+      // Inject content script ke tab aktif untuk write clipboard
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      if (!tab.url || !/^https?:\/\//.test(tab.url)) {
+        sendResponse({ ok: false, error: 'not_http_page' }); return;
+      }
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (mdText, htmlText, withCaption, screenshotCount) => {
+          try {
+            // v3.11.11: Gunakan Clipboard API dengan multiple MIME types
+            const clipboardItems = [];
+            const mimeTypes = [];
+            if (withCaption) {
+              mimeTypes.push('text/html');
+            }
+            mimeTypes.push('text/plain');
+
+            // Build ClipboardItem
+            const blobData = {};
+            blobData['text/plain'] = new Blob([mdText], { type: 'text/plain' });
+            if (withCaption) {
+              blobData['text/html'] = new Blob([htmlText], { type: 'text/html' });
+            }
+            const item = new ClipboardItem(blobData);
+            return navigator.clipboard.write([item]).then(() => ({
+              ok: true,
+              message: '✓ ' + screenshotCount + ' screenshot tersalin (markdown' + (withCaption ? ' + HTML + gambar' : '') + ')'
+            })).catch(e => ({
+              ok: false,
+              error: 'clipboard_write_failed: ' + e.message
+            }));
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
+        },
+        args: [mdText, htmlText, withCaption, screenshots.length]
+      });
+      const result = await results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        // Function return Promise — await di listener
+        const awaited = await result;
+        sendResponse(awaited); return;
+      }
+      sendResponse(result || { ok: false, error: 'no_result' }); return;
+    } catch (e) {
+      console.warn('[RecallFox] COPY_SCREENSHOTS_BATCH failed:', e);
       sendResponse({ ok: false, error: e.message }); return;
     }
   }

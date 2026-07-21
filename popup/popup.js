@@ -431,7 +431,7 @@ function renderChips() {
     if (c[0] !== 'all' && c[0] !== 'archive' && n === 0) return '';
     return '<button class="chip' + (currentChip === c[0] ? ' on' : '') + '" data-chip="' + c[0] + '" data-cat="' + c[0] + '">' + c[1] + '<span class="n">' + n + '</span></button>';
   }).join('');
-  $$('#chips .chip').forEach(ch => ch.addEventListener('click', () => { currentChip = ch.dataset.chip; renderVault(); }));
+  $$('#chips .chip').forEach(ch => ch.addEventListener('click', () => { currentChip = ch.dataset.chip; updateBatchModeBtnVisibility(); renderVault(); }));
   const visibleItemsForMeta = items.filter(i => !i.archived && !(i._bundle && i._bundle.archived));
   const favs = visibleItemsForMeta.filter(i => i.favorite).length;
   const uses = visibleItemsForMeta.reduce((a, b) => a + (b.useCount || b.uses || 0), 0);
@@ -496,6 +496,73 @@ function searchableTextFor(it) {
   return parts.join(' ').toLowerCase();
 }
 
+// ============================================================================
+// v3.11.11 (Issue #1): Batch mode untuk screenshot — select multiple + copy sekaligus
+// User feedback: "saya kan sedang sering melakukan beberapa kali screnshot dan paste
+// dalam keseharian bekerja. apakah bisa dipilih beberapa di menu ini dan kopinya sekalian
+// baik gambar maupun keterangannya sekaligus? tapi kamu pikirkan formatnya yang sangat
+// rapih sehingga ketika dipaste tu orang atau ai bacanya ngerti."
+// ============================================================================
+let vaultBatchMode = false;
+const vaultBatchSelected = new Set();
+
+function updateBatchModeBtnVisibility() {
+  // Tombol batch hanya tampil saat chip=screenshot
+  const btn = $('#batchModeBtn');
+  if (!btn) return;
+  btn.style.display = (currentChip === 'screenshot') ? '' : 'none';
+  // Kalau keluar dari chip screenshot saat batch mode aktif, exit otomatis
+  if (currentChip !== 'screenshot' && vaultBatchMode) {
+    exitVaultBatchMode();
+  }
+}
+
+function toggleVaultBatchMode() {
+  vaultBatchMode = !vaultBatchMode;
+  vaultBatchSelected.clear();
+  const bar = $('#vaultBatchBar');
+  if (bar) bar.style.display = vaultBatchMode ? 'flex' : 'none';
+  if (!vaultBatchMode) {
+    document.querySelectorAll('.vault-batch-check').forEach(c => c.checked = false);
+  }
+  renderList();
+  updateVaultBatchCount();
+  toast(vaultBatchMode ? '☑️ Mode batch aktif — klik screenshot untuk pilih' : 'Mode batch dimatikan');
+}
+
+function exitVaultBatchMode() {
+  if (!vaultBatchMode) return;
+  toggleVaultBatchMode();
+}
+
+function updateVaultBatchCount() {
+  const countEl = $('#vaultBatchCount');
+  if (countEl) countEl.textContent = vaultBatchSelected.size + ' dipilih';
+}
+
+async function vaultBatchCopyAction(withCaption) {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 screenshot dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  toast(withCaption ? '📋 Menyalin ' + ids.length + ' screenshot + keterangan...' : '🖼️ Menyalin ' + ids.length + ' gambar...');
+  try {
+    const res = await browser.runtime.sendMessage({
+      type: 'COPY_SCREENSHOTS_BATCH',
+      ids,
+      withCaption: !!withCaption
+    });
+    if (res?.ok) {
+      toast(res.message || ('✓ ' + ids.length + ' screenshot tersalin'));
+    } else {
+      toast('Gagal: ' + (res?.error || 'unknown'), false);
+    }
+  } catch (e) {
+    toast('Error: ' + e.message, false);
+  }
+}
+
 function visibleItems() {
   const items = getVaultItems();
   // v3.7.2 (Issue 1): chip 'archive' menampilkan hanya item yang diarsipkan.
@@ -556,7 +623,14 @@ function renderList() {
       const cta = currentAiDomain ? ICONS.zap + 'Sisipkan ↵' : ICONS.copy + 'Salin ↵';
       ctaHtml = '<span class="cta-pill">' + cta + '</span>';
     }
+    // v3.11.11 (Issue #1): Tambah checkbox batch mode kalau batch mode aktif + item=screenshot
+    let batchCheckboxHtml = '';
+    if (vaultBatchMode && it.type === 'screenshot') {
+      const checked = vaultBatchSelected.has(it.id) ? ' checked' : '';
+      batchCheckboxHtml = '<input type="checkbox" class="vault-batch-check" data-id="' + it.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;margin-right:4px">';
+    }
     return '<div class="item" data-id="' + it.id + '" tabindex="0">'
+      + batchCheckboxHtml
       + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
       + '<div class="item-main">'
       + '<div class="item-title">' + fav + arch + esc(it.title) + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
@@ -568,6 +642,26 @@ function renderList() {
       + '</div></div>';
   }).join('');
   bindItemClicks();
+  // v3.11.11 (Issue #1): Bind batch checkbox change handlers
+  if (vaultBatchMode) {
+    document.querySelectorAll('.vault-batch-check').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const id = cb.dataset.id;
+        if (cb.checked) vaultBatchSelected.add(id);
+        else vaultBatchSelected.delete(id);
+        updateVaultBatchCount();
+      });
+      // Click item juga toggle checkbox kalau batch mode aktif
+      cb.closest('.item')?.addEventListener('click', (e) => {
+        if (e.target === cb) return; // checkbox sudah handle sendiri
+        cb.checked = !cb.checked;
+        if (cb.checked) vaultBatchSelected.add(cb.dataset.id);
+        else vaultBatchSelected.delete(cb.dataset.id);
+        updateVaultBatchCount();
+      });
+    });
+  }
 }
 function bindItemClicks() {
   $$('#list .item').forEach(el => {
@@ -1360,10 +1454,19 @@ function saveKonteksSheet() {
       + '<div><label>Tujuan <span class="field-hint">membantu AI memahami peran konteks ini</span></label><select class="f" id="cTujuan">' + tujuanOpts + '</select></div>'
       + '<div><label>Judul</label><input class="f" id="cT" placeholder="mis. Konteks proyek POS kasir…"></div>'
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="cTag" placeholder="pos, arsitektur"></div>'
+      // v3.11.11 (Issue #2): Perjelas UX "Ambil dari halaman aktif".
+      // User bingung: "fitur ambil konten ini kyknya eror karena loading terus tanpa
+      // menghasilkan apa apa. kamu cek logika awal bangun 'simpan konteks' dan apa sih
+      // ambil konten tu? baru perbaiki alogaritma nya dan caranya berinteraksi dengan
+      // pengguna."
+      // Fix: tambah hintbox penjelasan apa itu "Ambil Konten" + expected behavior.
+      + '<div class="hintbox" style="margin:0 0 6px;font-size:11px;line-height:1.5">'
+      +   '<b>💡 Ambil dari halaman aktif</b> = ekstrak teks utama dari tab yang sedang dibuka (mis. artikel Wikipedia, dokumentasi, blog). Hasilnya otomatis dimasukkan ke field Konteks di bawah. Bisa diklik berkali-kali untuk gabungkan beberapa halaman.'
+      + '</div>'
       + '<div style="display:flex;gap:6px;margin-bottom:4px">'
-      +   '<button class="btn btn-g" id="cGrabPage" style="flex:1;padding:6px 8px;font-size:11px">' + ICONS.spark + ' Ambil dari halaman aktif</button>'
-      +   '<button class="btn btn-g" id="cAiSummarize" style="flex:1;padding:6px 8px;font-size:11px">🤖 Ringkas dengan AI</button>'
-      +   '<button class="btn btn-g" id="cFromTemplate" style="flex:1;padding:6px 8px;font-size:11px">📄 Dari template</button>'
+      +   '<button class="btn btn-g" id="cGrabPage" style="flex:1;padding:6px 8px;font-size:11px" title="Ekstrak teks utama dari tab aktif → masukkan ke field Konteks">' + ICONS.spark + ' Ambil dari halaman aktif</button>'
+      +   '<button class="btn btn-g" id="cAiSummarize" style="flex:1;padding:6px 8px;font-size:11px" title="AI meringkas halaman aktif jadi 200-300 kata">🤖 Ringkas dengan AI</button>'
+      +   '<button class="btn btn-g" id="cFromTemplate" style="flex:1;padding:6px 8px;font-size:11px" title="Pilih template konteks siap pakai">📄 Dari template</button>'
       + '</div>'
       + '<div><label>Konteks</label><textarea class="f" id="cBody" rows="6" placeholder="Proyek ini pakai React + TypeScript, state Zustand…\n\nTujuan: ...\nStack: ...\nKonvensi: ..."></textarea>'
       // v3.10.0 (Issue 5): Compose + Parafrase untuk konteks
@@ -4940,6 +5043,15 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
+  // v3.11.11 (Issue #1): Batch mode untuk screenshot di vault
+  const vaultBatchModeBtnEl = $('#batchModeBtn');
+  if (vaultBatchModeBtnEl) vaultBatchModeBtnEl.addEventListener('click', toggleVaultBatchMode);
+  const vaultBatchCopyBtn = $('#vaultBatchCopy');
+  if (vaultBatchCopyBtn) vaultBatchCopyBtn.addEventListener('click', () => vaultBatchCopyAction(true));
+  const vaultBatchCopyImgBtn = $('#vaultBatchCopyImg');
+  if (vaultBatchCopyImgBtn) vaultBatchCopyImgBtn.addEventListener('click', () => vaultBatchCopyAction(false));
+  const vaultBatchCancelBtn = $('#vaultBatchCancel');
+  if (vaultBatchCancelBtn) vaultBatchCancelBtn.addEventListener('click', exitVaultBatchMode);
   // v3.9.0 (Issue 7): Batch mode untuk notes
   $('#noteBatchBtn').addEventListener('click', toggleNotesBatchMode);
   const batchArchiveBtn = $('#notesBatchArchive');

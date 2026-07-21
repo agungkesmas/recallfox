@@ -76,9 +76,16 @@
 
   <!-- View: Beranda (Vault) -->
   <div class="view" id="vaultView">
-    <div class="vault-hd">
+        <div class="vault-hd">
       <span class="t">Vault</span><span class="meta" id="vaultMeta"></span>
+      <button class="addbtn" id="batchModeBtn" title="Mode batch: pilih multiple screenshot untuk copy sekaligus" style="display:none;margin-right:4px">☑️ Batch</button>
       <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Baru</button>
+        </div>
+    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:8px;font-size:11px">
+      <span id="vaultBatchCount">0 dipilih</span>
+      <button class="btn btn-p" id="vaultBatchCopy" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
+      <button class="btn btn-g" id="vaultBatchCopyImg" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
+      <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="chips" id="chips"></div>
     <div class="list" id="list"></div>
