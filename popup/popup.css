@@ -547,6 +547,20 @@ body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
 .habit-setting summary::after{content:'⌄';float:right;color:var(--muted);font-size:18px}
 .habit-setting[open] summary{border-bottom:1px solid var(--border)}
 .habit-config{padding:14px 16px}
+
+/* v3.11.24 (Sesi 14, Issue #1): Collapsible sections untuk halaman sync.
+   User feedback: "HALAMAN INI TERLALU PANJANG harusnya pake fitur yang kalau
+   dipencet tu memanjang melihatkan detilnya jadi ada dua login menggunakan
+   email dan menggunakan apps script/drive sync. inget harus collapsible." */
+.rf-collapsible{margin-bottom:10px;border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+.rf-collapsible>summary{list-style:none;padding:12px 14px;cursor:pointer;font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px;user-select:none}
+.rf-collapsible>summary::-webkit-details-marker{display:none}
+.rf-collapsible>summary::after{content:'⌄';margin-left:auto;color:var(--muted);font-size:18px;transition:transform .2s}
+.rf-collapsible[open]>summary{border-bottom:1px solid var(--border);background:var(--surface-2)}
+.rf-collapsible[open]>summary::after{transform:rotate(180deg)}
+.rf-collapsible>summary .rf-coll-icon{font-size:16px}
+.rf-collapsible>summary .rf-coll-status{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary)}
+.rf-collapsible-body{padding:12px 14px}
 /* v3.11.3: Rename .habit-row → .habit-config-row di sini supaya tidak konflik
    dengan .habit-row (flex, untuk tombol Ngaji/Olahraga di strip-detail).
    Sebelumnya, .habit-row grid (line 523) override .habit-row flex (line 125)

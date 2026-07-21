@@ -4190,6 +4190,7 @@ async function renderGDrivePage(B) {
 }
 
 // v3.11.21: Helper — jalankan Supabase sync (push/pull/full)
+// v3.11.24: Tampilkan errors dengan detail supaya user tahu kenapa 0 item
 async function _doSupabaseSync(B, action) {
   const btnMap = { full: 'rfSupaFullSync', push: 'rfSupaPush', pull: 'rfSupaPull' };
   const btn = $('#' + btnMap[action]);
@@ -4204,7 +4205,27 @@ async function _doSupabaseSync(B, action) {
       if (action === 'push') {
         const s = res.stats || {};
         msg = '✓ Push berhasil · ' + (s.items || 0) + ' items, ' + (s.notes || 0) + ' catatan, ' + (s.screenshots || 0) + ' screenshot, ' + (s.settings || 0) + ' settings';
-        if (s.errors && s.errors.length > 0) msg += ' (' + s.errors.length + ' error)';
+        // v3.11.24: Tampilkan detail kalau 0 item padahal vault tidak kosong
+        if ((s.items || 0) === 0 && (s.notes || 0) === 0) {
+          const debug = res.debug || {};
+          msg += '\n\n⚠️ 0 item ter-push! Debug info:';
+          msg += '\n· Vault items: ' + (debug.vaultItems ?? 'unknown');
+          msg += '\n· Bundles: ' + (debug.bundles ?? 'unknown');
+          msg += '\n· Notes: ' + (debug.notes ?? 'unknown');
+          msg += '\n· Settings: ' + (debug.settingsKeys ?? 'unknown');
+          msg += '\n· User ID: ' + (debug.userId || 'null');
+          msg += '\n· Duration: ' + (debug.duration ?? 'unknown') + 'ms';
+          msg += '\n\nKemungkinan: (1) belum login Supabase, (2) RLS policy reject insert, (3) table belum dibuat di Supabase. Cek console background (about:debugging → Inspect) untuk log detail.';
+        }
+        if (s.errors && s.errors.length > 0) {
+          msg += '\n\n❌ ' + s.errors.length + ' error:';
+          // Tampilkan 5 error pertama
+          const shown = s.errors.slice(0, 5);
+          for (const e of shown) {
+            msg += '\n· ' + (e.type || e.id || e.key || '?') + ': ' + e.error;
+          }
+          if (s.errors.length > 5) msg += '\n· ... dan ' + (s.errors.length - 5) + ' lainnya';
+        }
       } else if (action === 'pull') {
         const s = res.stats || {};
         msg = '✓ Pull berhasil · +' + (s.itemsAdded || 0) + ' items baru, ~' + (s.itemsUpdated || 0) + ' updated, +' + (s.notesAdded || 0) + ' catatan baru';
@@ -4213,13 +4234,21 @@ async function _doSupabaseSync(B, action) {
         msg = '✓ Sync lengkap · push: ' + (p.items || 0) + ' items, pull: +' + (l.itemsAdded || 0) + ' baru';
       }
       _showSupaResult(B, true, msg);
-      toast(msg);
+      toast(action === 'push' ? '✓ Push: ' + (res.stats?.items || 0) + ' items' : msg);
       if (action !== 'push') {
         // Refresh vault kalau ada pull
         await refreshVault();
       }
     } else {
-      const msg = '⚠ Gagal: ' + (res?.error || 'unknown');
+      let msg = '⚠ Gagal: ' + (res?.error || 'unknown');
+      // v3.11.24: Tambah hint untuk error umum
+      if (res?.error === 'not_logged_in') {
+        msg += '\n\n💡 Anda belum login Supabase. Klik "Login Email/Password" di section Supabase di atas.';
+      } else if (res?.error === 'no_user_id') {
+        msg += '\n\n💡 Session tidak valid. Logout lalu login ulang.';
+      } else if (res?.error?.includes('http_40')) {
+        msg += '\n\n💡 HTTP error — kemungkinan RLS policy atau table belum dibuat. Jalankan supabase-schema.sql di Supabase SQL Editor.';
+      }
       _showSupaResult(B, false, msg);
       toast(msg, false);
     }
