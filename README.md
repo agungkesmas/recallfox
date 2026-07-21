@@ -1,17 +1,22 @@
-# RecallFox v3.11.7 (Re-issue)
+# RecallFox v3.11.14
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.11.7 (Re-issue) — 6 Fix dari Log Troubleshooting Sesi 5 + Multi-PC Sync dari v3.11.7 original**
-> - 🗜️ **Issue #1**: Dropdown kompresi screenshot (Lossless/Sedikit/Sedang/Tinggi). Default = "Tinggi" (JPEG q60, ~200-800KB) supaya upload GDrive selalu berhasil di bawah limit Apps Script ~10MB.
-> - 📐 **Issue #2**: Lebar sheet editor menyesuaikan sidebar — tombol Simpan tidak lagi terdorong ke kanan. Edit Bundle pakai 3 tombol flex:1 (Arsipkan|Batal|Simpan). Sheet & page dibatasi max-width 560px di sidebar mode.
-> - 🔒 **Issue #3**: Tombol **📋 Copy URL** di Web App URL (mudah install di PC lain) + **🔒 Lock Token** (default read-only, perlu Unlock untuk edit) + konfirmasi sebelum Generate token baru (anti ketimpa tidak sengaja).
-> - 🏷️ **Issue #4**: v3.11.6 ditandai sebagai **STABLE** release di GitHub (checkpoint pengembangan).
-> - 🔀 **Issue #5**: **Pengaturan sync DISATUKAN di sidebar** (RecallFox Vault → Alat → Sync Cloud). Tidak lagi terdobel antara sidebar GDrive Sync vs Settings page Multi-PC Sync. Semua operasi (Test, Sync, Push, Pull, Full Backup, Kelola Profile) di 1 tempat dengan penjelasan detil.
-> - 📝 **Issue #6**: Amend commit + recreate tag `v3.11.7` (bukan versi baru). Lihat [CHANGELOG-v3.11.7-fix.md](./CHANGELOG-v3.11.7-fix.md).
+> **v3.11.14 — 2 fix dari Log Troubleshooting Sesi terakhir**
+> - ☑️ **Issue #1**: **Toggle batch diselaraskan ke SEMUA tipe item** — sebelumnya hanya Screenshot. Sekarang Prompt, Konteks, Link, Bundle, Snapshot, Screenshot, dan Arsip semua punya mode batch. Aksi per tipe:
+>   - Screenshot: Copy + Keterangan, Copy Gambar Saja, Hapus
+>   - Prompt/Konteks/Link/Snapshot: Copy Teks (format rapi `## Judul [Tipe]\nIsi`), Hapus
+>   - Bundle: Copy Bundle (gabungan semua anggota + catatan + inline prompt), Hapus
+>   - Arsip: Unarsip (keluarkan dari arsip), Hapus permanen
+> - 📐 **Issue #2**: **Tombol hapus/batal/konfirmasi tidak lagi ketutupan di sidebar sempit**. Tambah responsive CSS rules untuk w-sm (≤360px), w-xs (≤280px), w-xxs (≤220px) di:
+>   - `vaultBatchBar` & `notesBatchBar` — tombol wrap dengan benar, padding & font-size mengecil
+>   - `confirmstrip` (konfirmasi hapus) — teks full width di atas, tombol Batal/Hapus 50/50 di bawah
+>   - `page-foot` (catatan editor 5 tombol) — 2 tombol per baris di sidebar sempit
+>   - `sheet-form .btn-row` (Buat/Edit Bundle, dll) — tombol wrap 50/50 atau full width
+>   - `.btn-row` & `.confirmstrip` sekarang `flex-wrap: wrap` by default
 >
-> **Baseline:** v3.11.6 (Stable) · **Strategi:** amend commit `9faba8d` + recreate tag `v3.11.7`
+> **Baseline:** v3.11.13 · **Lihat:** [CHANGELOG-v3.11.14.md](./CHANGELOG-v3.11.14.md)
 
 ## Install di Firefox
 

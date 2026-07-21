@@ -78,14 +78,18 @@
   <div class="view" id="vaultView">
         <div class="vault-hd">
       <span class="t">Vault</span><span class="meta" id="vaultMeta"></span>
-      <button class="addbtn" id="batchModeBtn" title="Mode batch: pilih multiple screenshot untuk copy sekaligus" style="display:none;margin-right:4px">☑️ Batch</button>
+      <button class="addbtn" id="batchModeBtn" title="Mode batch: pilih multiple item untuk aksi sekaligus" style="display:none;margin-right:4px">☑️ Batch</button>
       <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Baru</button>
         </div>
-    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:8px;font-size:11px">
+    <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
+    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
       <span id="vaultBatchCount">0 dipilih</span>
-      <button class="btn btn-p" id="vaultBatchCopy" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
-      <button class="btn btn-g" id="vaultBatchCopyImg" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
-      <button class="btn btn-d" id="vaultBatchDelete" title="Hapus screenshot terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-p" id="vaultBatchCopy" title="Copy screenshot + keterangan" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
+      <button class="btn btn-g" id="vaultBatchCopyImg" title="Copy gambar saja" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
+      <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
+      <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
+      <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
+      <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
       <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="chips" id="chips"></div>
@@ -101,7 +105,8 @@
       <button class="addbtn" id="noteAddBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Catatan Baru</button>
     </div>
     <!-- v3.9.0 (Issue 7): Batch action bar (hidden by default, shown when batch mode active) -->
-    <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:8px;font-size:11px">
+    <!-- v3.11.14: Tambah flex-wrap supaya tombol tidak ketutupan di sidebar sempit -->
+    <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
       <span id="notesBatchCount">0 dipilih</span>
       <button class="btn btn-g" id="notesBatchArchive" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
       <button class="btn btn-d" id="notesBatchDelete" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>

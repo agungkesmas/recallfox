@@ -578,3 +578,221 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   width:12px;
   height:12px;
 }
+
+/* ============================================================
+   v3.11.14 (Issue #2): Responsive rules untuk batch bar, confirmstrip,
+   page-foot, btn-row — supaya tombol tidak ketutupan di sidebar sempit.
+   User feedback: "tombol hapusnya ketutong, harusnya ada logika mengikuti
+   sidebar ketika dikecilin tu tetap keliatan tombol hapus dan batalnya.
+   di menu lain juga sama untuk edit, tambah dsb itu tombolnya sering
+   ketutupan begini. harusnya ada logika mengikuti lebar sidebar."
+   ============================================================ */
+
+/* w-sm (≤360px): batch bar tombol lebih kecil + flex-wrap aktif */
+.popup.w-sm #vaultBatchBar,
+.popup.w-sm #notesBatchBar{
+  padding:5px 8px;
+  gap:4px;
+}
+.popup.w-sm #vaultBatchBar .btn,
+.popup.w-sm #notesBatchBar .btn{
+  padding:3px 6px;
+  font-size:10px;
+}
+.popup.w-sm #vaultBatchBar #vaultBatchCount,
+.popup.w-sm #notesBatchBar #notesBatchCount{
+  font-size:10px;
+}
+
+/* w-sm: confirmstrip (konfirmasi hapus dll) — tombol rapi */
+.popup.w-sm .confirmstrip{
+  padding:8px 6px;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.popup.w-sm .confirmstrip > span{
+  flex:1 1 100%;
+  min-width:0;
+  font-size:11.5px;
+}
+.popup.w-sm .confirmstrip .btn{
+  flex:1;
+  padding:6px 8px;
+  font-size:11px;
+}
+
+/* w-sm: page-foot (catatan editor 5 tombol) — wrap rapi */
+.popup.w-sm .page-foot{
+  gap:5px;
+  padding:8px 10px;
+}
+.popup.w-sm .page-foot .btn{
+  flex:1 1 calc(50% - 5px);
+  min-width:0;
+  padding:6px 4px;
+  font-size:10.5px;
+  gap:3px;
+}
+.popup.w-sm .page-foot .btn svg{
+  width:11px;
+  height:11px;
+}
+
+/* w-sm: btn-row di sheet-form (Buat Bundle, Edit Bundle, dll) — wrap kalau sempit */
+.popup.w-sm .sheet-form .btn-row{
+  flex-wrap:wrap;
+  gap:5px;
+}
+.popup.w-sm .sheet-form .btn-row .btn{
+  flex:1 1 calc(50% - 5px);
+  min-width:0;
+  padding:6px 6px;
+  font-size:10.5px;
+}
+
+/* w-sm: sheet-form fields lebih kecil */
+.popup.w-sm .sheet-form{
+  padding:6px 8px;
+  gap:7px;
+}
+.popup.w-sm .sheet-form .f{
+  font-size:11.5px;
+  padding:6px 8px;
+}
+
+/* ============================================================
+   w-xs (≤280px): batch bar lebih kompak, tombol icon-only bila perlu
+   ============================================================ */
+.popup.w-xs #vaultBatchBar,
+.popup.w-xs #notesBatchBar{
+  padding:4px 6px;
+  gap:3px;
+}
+.popup.w-xs #vaultBatchBar .btn,
+.popup.w-xs #notesBatchBar .btn{
+  padding:3px 5px;
+  font-size:9.5px;
+}
+.popup.w-xs #vaultBatchBar #vaultBatchCount,
+.popup.w-xs #notesBatchBar #notesBatchCount{
+  font-size:9.5px;
+  flex:1 1 100%;
+  margin-bottom:2px;
+}
+
+/* w-xs: confirmstrip — tombol full width */
+.popup.w-xs .confirmstrip{
+  padding:6px 4px;
+  gap:4px;
+  flex-wrap:wrap;
+}
+.popup.w-xs .confirmstrip > span{
+  flex:1 1 100%;
+  min-width:0;
+  font-size:11px;
+  margin-bottom:4px;
+}
+.popup.w-xs .confirmstrip .btn{
+  flex:1 1 calc(50% - 4px);
+  padding:6px 4px;
+  font-size:10.5px;
+}
+
+/* w-xs: page-foot — 2 tombol per baris */
+.popup.w-xs .page-foot{
+  gap:4px;
+  padding:6px 8px;
+}
+.popup.w-xs .page-foot .btn{
+  flex:1 1 calc(50% - 4px);
+  min-width:0;
+  padding:5px 3px;
+  font-size:10px;
+  gap:2px;
+}
+.popup.w-xs .page-foot .btn svg{
+  width:10px;
+  height:10px;
+}
+
+/* w-xs: sheet-form btn-row */
+.popup.w-xs .sheet-form .btn-row{
+  flex-wrap:wrap;
+  gap:4px;
+}
+.popup.w-xs .sheet-form .btn-row .btn{
+  flex:1 1 calc(50% - 4px);
+  min-width:0;
+  padding:5px 4px;
+  font-size:10px;
+}
+
+/* ============================================================
+   w-xxs (≤220px): super kompak, icon-only bila perlu
+   ============================================================ */
+.popup.w-xxs #vaultBatchBar,
+.popup.w-xxs #notesBatchBar{
+  padding:3px 4px;
+  gap:3px;
+}
+.popup.w-xxs #vaultBatchBar .btn,
+.popup.w-xxs #notesBatchBar .btn{
+  padding:3px 4px;
+  font-size:9px;
+  flex:1 1 calc(50% - 3px);
+}
+.popup.w-xxs #vaultBatchBar #vaultBatchCount,
+.popup.w-xxs #notesBatchBar #notesBatchCount{
+  font-size:9px;
+  flex:1 1 100%;
+}
+
+.popup.w-xxs .confirmstrip{
+  padding:5px 3px;
+  gap:3px;
+}
+.popup.w-xxs .confirmstrip > span{
+  font-size:10.5px;
+  margin-bottom:3px;
+}
+.popup.w-xxs .confirmstrip .btn{
+  padding:5px 3px;
+  font-size:10px;
+}
+
+.popup.w-xxs .page-foot{
+  gap:3px;
+  padding:5px 6px;
+}
+.popup.w-xxs .page-foot .btn{
+  flex:1 1 calc(50% - 3px);
+  padding:4px 2px;
+  font-size:9.5px;
+}
+
+.popup.w-xxs .sheet-form .btn-row .btn{
+  flex:1 1 100%;
+  padding:5px 4px;
+  font-size:10px;
+}
+
+/* ============================================================
+   v3.11.14: General responsive — pastikan .btn-row selalu wrap bila sempit
+   dan tombol tidak overflow. Berlaku untuk semua lebar.
+   ============================================================ */
+.btn-row{
+  flex-wrap:wrap;
+}
+.btn-row .btn{
+  min-width:0;
+}
+
+/* confirmstrip default flex-wrap (sebelumnya tidak) */
+.confirmstrip{
+  flex-wrap:wrap;
+}
+
+/* page-foot default sudah flex-wrap, pastikan min-width:0 */
+.page-foot .btn{
+  min-width:0;
+}

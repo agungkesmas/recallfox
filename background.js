@@ -2326,22 +2326,35 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.13 (Sesi 12): DELETE_ITEMS_BATCH — hapus multiple item dari vault sekaligus.
   // User feedback: "sudah bagus fitur batch nya harusnya ada batch delete juga, jadi
   // bersih bersihnya gampang. apakah bisa ditambahkan?"
-  // Pakai deleteItem yang sudah ada (handle screenshot blob + bundle cleanup + GDrive sync).
+  // v3.11.14: Generalisasi — handle JUGA bundle (sebelumnya hanya item).
+  // Pakai deleteItem/deleteBundle yang sudah ada (handle screenshot blob + bundle cleanup + GDrive sync).
   if (msg.type === 'DELETE_ITEMS_BATCH') {
     try {
       const { ids } = msg;
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      const { deleteItem } = await import('./lib/storage.js');
+      const { deleteItem, deleteBundle, getVault } = await import('./lib/storage.js');
+      // Ambil vault sekali untuk cek apakah id adalah item atau bundle
+      const vault = await getVault();
+      const itemIdSet = new Set((vault.items || []).map(i => i.id));
+      const bundleIdSet = new Set((vault.bundles || []).map(b => b.id));
       let deleted = 0;
       let errors = [];
       for (const id of ids) {
         try {
-          await deleteItem(id);
-          deleted++;
+          if (itemIdSet.has(id)) {
+            await deleteItem(id);
+            deleted++;
+          } else if (bundleIdSet.has(id)) {
+            await deleteBundle(id);
+            deleted++;
+          } else {
+            // Sudah tidak ada (mungkin sudah dihapus di iterasi sebelumnya)
+            errors.push({ id, error: 'not_found' });
+          }
         } catch (e) {
-          console.warn('[RecallFox] deleteItem failed for', id, e.message);
+          console.warn('[RecallFox] delete failed for', id, e.message);
           errors.push({ id, error: e.message });
         }
       }
@@ -2353,6 +2366,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({
         ok: true,
         deleted,
+        failed: errors.length,
         errors: errors.length > 0 ? errors : undefined,
         message: '✓ ' + deleted + ' item dihapus' + (errors.length > 0 ? ' (' + errors.length + ' gagal)' : '')
       }); return;

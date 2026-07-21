@@ -503,17 +503,68 @@ function searchableTextFor(it) {
 // baik gambar maupun keterangannya sekaligus? tapi kamu pikirkan formatnya yang sangat
 // rapih sehingga ketika dipaste tu orang atau ai bacanya ngerti."
 // ============================================================================
+// v3.11.14 (Sesi terakhir): Generalisasi batch mode — support SEMUA tipe item
+// (prompt, context, link, bundle, snapshot, screenshot, archive).
+// User feedback: "toggle batch itu sudah ada di batch select media. tinggal tiru aja.
+// selarasin di menu lainnya juga misal prompt, link, bundle dan arsip"
+// ============================================================================
 let vaultBatchMode = false;
 const vaultBatchSelected = new Set();
 
+// v3.11.14: Chip yang support batch mode (semua chip kecuali 'all')
+const BATCH_SUPPORTED_CHIPS = new Set(['prompt', 'context', 'link', 'bundle', 'snapshot', 'screenshot', 'archive']);
+
 function updateBatchModeBtnVisibility() {
-  // Tombol batch hanya tampil saat chip=screenshot
+  // v3.11.14: Tombol batch tampil untuk SEMUA chip yang support batch (bukan hanya screenshot)
   const btn = $('#batchModeBtn');
   if (!btn) return;
-  btn.style.display = (currentChip === 'screenshot') ? '' : 'none';
-  // Kalau keluar dari chip screenshot saat batch mode aktif, exit otomatis
-  if (currentChip !== 'screenshot' && vaultBatchMode) {
+  const supported = BATCH_SUPPORTED_CHIPS.has(currentChip);
+  btn.style.display = supported ? '' : 'none';
+  // Update title sesuai chip aktif
+  const chipLabel = CHIPS.find(c => c[0] === currentChip)?.[1] || 'item';
+  btn.title = 'Mode batch: pilih multiple ' + chipLabel.toLowerCase() + ' untuk aksi sekaligus';
+  // Kalau keluar dari chip yang support batch saat batch mode aktif, exit otomatis
+  if (!supported && vaultBatchMode) {
     exitVaultBatchMode();
+  }
+  // v3.11.14: Update tombol-tombol di batch bar sesuai chip aktif
+  updateVaultBatchBarButtons();
+}
+
+// v3.11.14: Tampilkan/sembunyikan tombol di vaultBatchBar sesuai chip aktif.
+// - Screenshot: Copy + Keterangan, Copy Gambar Saja, Hapus
+// - Prompt/Context/Link/Snapshot: Copy Teks, Hapus
+// - Bundle: Copy Bundle, Hapus
+// - Archive: Unarsip, Hapus permanen
+function updateVaultBatchBarButtons() {
+  const bar = $('#vaultBatchBar');
+  if (!bar) return;
+  const copyCaptionBtn = $('#vaultBatchCopy');        // Copy + Keterangan (screenshot only)
+  const copyImgBtn = $('#vaultBatchCopyImg');         // Copy Gambar Saja (screenshot only)
+  const copyTextBtn = $('#vaultBatchCopyText');       // Copy Teks (prompt/context/link/snapshot)
+  const copyBundleBtn = $('#vaultBatchCopyBundle');   // Copy Bundle (bundle only)
+  const unarchiveBtn = $('#vaultBatchUnarchive');     // Unarsip (archive only)
+  const deleteBtn = $('#vaultBatchDelete');           // Hapus (semua)
+
+  // Reset semua
+  [copyCaptionBtn, copyImgBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
+    if (b) b.style.display = 'none';
+  });
+
+  if (currentChip === 'screenshot') {
+    if (copyCaptionBtn) copyCaptionBtn.style.display = '';
+    if (copyImgBtn) copyImgBtn.style.display = '';
+    if (deleteBtn) deleteBtn.style.display = '';
+  } else if (currentChip === 'bundle') {
+    if (copyBundleBtn) copyBundleBtn.style.display = '';
+    if (deleteBtn) deleteBtn.style.display = '';
+  } else if (currentChip === 'archive') {
+    if (unarchiveBtn) unarchiveBtn.style.display = '';
+    if (deleteBtn) deleteBtn.style.display = '';
+  } else {
+    // prompt, context, link, snapshot
+    if (copyTextBtn) copyTextBtn.style.display = '';
+    if (deleteBtn) deleteBtn.style.display = '';
   }
 }
 
@@ -527,7 +578,8 @@ function toggleVaultBatchMode() {
   }
   renderList();
   updateVaultBatchCount();
-  toast(vaultBatchMode ? '☑️ Mode batch aktif — klik screenshot untuk pilih' : 'Mode batch dimatikan');
+  const chipLabel = CHIPS.find(c => c[0] === currentChip)?.[1] || 'item';
+  toast(vaultBatchMode ? '☑️ Mode batch aktif — klik ' + chipLabel.toLowerCase() + ' untuk pilih' : 'Mode batch dimatikan');
 }
 
 function exitVaultBatchMode() {
@@ -538,6 +590,134 @@ function exitVaultBatchMode() {
 function updateVaultBatchCount() {
   const countEl = $('#vaultBatchCount');
   if (countEl) countEl.textContent = vaultBatchSelected.size + ' dipilih';
+}
+
+// v3.11.14: Helper — dapatkan label tipe untuk pesan toast/dialog
+function _batchItemTypeLabel() {
+  const chipLabel = CHIPS.find(c => c[0] === currentChip)?.[1] || 'item';
+  return chipLabel.toLowerCase();
+}
+
+// v3.11.14: Copy text untuk prompt/context/link/snapshot — format rapi
+// Sama seperti injectBundle tapi untuk multiple item, dipisah ---
+async function vaultBatchCopyTextAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 item dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const items = ids.map(id => currentVault.items.find(i => i.id === id)).filter(Boolean);
+  if (items.length === 0) {
+    toast('Tidak ada item valid terpilih', false);
+    return;
+  }
+  toast('📋 Menyalin ' + items.length + ' item...');
+  const parts = items.map(it => {
+    const T = TYPE[it.type] || { label: it.type };
+    const header = '## ' + (it.title || it.type) + ' [' + T.label + ']';
+    if (it.type === 'link') return header + '\n' + (it.linkUrl || it.body || '');
+    return header + '\n' + (it.body || '');
+  });
+  const fullText = parts.join('\n\n---\n\n');
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + items.length + ' item tersalin ke clipboard');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      toast('✓ ' + items.length + ' item tersalin ke clipboard');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.11.14: Copy bundle — gabungkan semua bundle terpilih jadi 1 teks
+async function vaultBatchCopyBundleAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 bundle dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const bundles = ids.map(id => currentVault.bundles.find(b => b.id === id)).filter(Boolean);
+  if (bundles.length === 0) {
+    toast('Tidak ada bundle valid terpilih', false);
+    return;
+  }
+  toast('📋 Menyalin ' + bundles.length + ' bundle...');
+  const parts = bundles.map(bundle => {
+    const items = (bundle.injectOrder || bundle.itemIds || [])
+      .map(iid => currentVault.items.find(i => i.id === iid))
+      .filter(Boolean);
+    const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
+    const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+    const sections = [];
+    sections.push('# 📦 Bundle: ' + (bundle.name || 'Bundle tanpa nama'));
+    if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
+      sections.push('## Prompt Cepat [Prompt]\n' + bundle.inlinePrompt.trim());
+    }
+    for (const i of items) {
+      const T = TYPE[i.type] || { label: i.type };
+      const header = '## ' + (i.title || i.type) + ' [' + T.label + ']';
+      if (i.type === 'link') sections.push(header + '\n' + (i.linkUrl || i.body || ''));
+      else sections.push(header + '\n' + (i.body || ''));
+    }
+    for (const n of notes) {
+      sections.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + (n.body || ''));
+    }
+    return sections.join('\n\n');
+  });
+  const fullText = parts.join('\n\n---\n\n');
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.11.14: Unarsip — keluarkan item dari arsip (untuk chip 'archive')
+async function vaultBatchUnarchiveAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 item dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const typeLabel = _batchItemTypeLabel();
+  if (!confirm('Keluarkan ' + ids.length + ' ' + typeLabel + ' dari arsip?')) return;
+  toast('📦 Mengeluarkan ' + ids.length + ' ' + typeLabel + ' dari arsip...');
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      // Cek apakah id adalah item atau bundle
+      const item = currentVault.items.find(i => i.id === id);
+      const bundle = currentVault.bundles.find(b => b.id === id);
+      if (item) {
+        await updateItem(id, { archived: false });
+        ok++;
+      } else if (bundle) {
+        await updateBundle(id, { archived: false });
+        ok++;
+      } else {
+        fail++;
+      }
+    } catch (e) {
+      console.warn('Unarsip failed for', id, e.message);
+      fail++;
+    }
+  }
+  vaultBatchSelected.clear();
+  vaultBatchMode = false;
+  const bar = $('#vaultBatchBar');
+  if (bar) bar.style.display = 'none';
+  await refreshVault();
+  renderList();
+  toast('✓ ' + ok + ' item dikeluarkan dari arsip' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
 }
 
 async function vaultBatchCopyAction(withCaption) {
@@ -564,26 +744,32 @@ async function vaultBatchCopyAction(withCaption) {
 }
 
 // v3.11.13 (Sesi 12): Batch delete screenshot — bersih-bersih vault gampang.
-// User feedback: "sudah bagus fitur batch nya harusnya ada batch delete juga, jadi
-// bersih bersihnya gampang. apakah bisa ditambahkan?"
+// v3.11.14: Generalisasi untuk SEMUA tipe item (prompt, link, bundle, archive, dll).
+// User feedback Sesi 12: "sudah bagus fitur batch nya harusnya ada batch delete juga,
+// jadi bersih bersihnya gampang. apakah bisa ditambahkan?"
 async function vaultBatchDeleteAction() {
   if (vaultBatchSelected.size === 0) {
-    toast('Pilih minimal 1 screenshot dulu');
+    toast('Pilih minimal 1 item dulu');
     return;
   }
   const ids = Array.from(vaultBatchSelected);
+  const typeLabel = _batchItemTypeLabel();
   // Konfirmasi supaya tidak salah hapus
-  if (!confirm('Hapus ' + ids.length + ' screenshot dari vault?\n\nScreenshot akan dihapus permanen beserta blob gambar. Tidak bisa di-undo.\n\nTip: Untuk backup dulu, klik Cancel lalu Copy + Keterangan, lalu paste ke Google Docs.')) {
+  const isArchive = currentChip === 'archive';
+  const confirmMsg = isArchive
+    ? 'Hapus ' + ids.length + ' ' + typeLabel + ' permanen dari vault?\n\nItem di arsip akan dihapus permanen. Tidak bisa di-undo.'
+    : 'Hapus ' + ids.length + ' ' + typeLabel + ' dari vault?\n\nItem akan dihapus permanen. Tidak bisa di-undo.';
+  if (!confirm(confirmMsg)) {
     return;
   }
-  toast('🗑️ Menghapus ' + ids.length + ' screenshot...');
+  toast('🗑️ Menghapus ' + ids.length + ' ' + typeLabel + '...');
   try {
     const res = await browser.runtime.sendMessage({
       type: 'DELETE_ITEMS_BATCH',
       ids
     });
     if (res?.ok) {
-      toast('✓ ' + (res.deleted || ids.length) + ' screenshot dihapus');
+      toast('✓ ' + (res.deleted || ids.length) + ' ' + typeLabel + ' dihapus' + (res.failed ? ' (' + res.failed + ' gagal)' : ''));
       vaultBatchSelected.clear();
       vaultBatchMode = false;
       const bar = $('#vaultBatchBar');
@@ -660,8 +846,10 @@ function renderList() {
       ctaHtml = '<span class="cta-pill">' + cta + '</span>';
     }
     // v3.11.11 (Issue #1): Tambah checkbox batch mode kalau batch mode aktif + item=screenshot
+    // v3.11.14: Generalisasi — checkbox muncul untuk SEMUA tipe item saat batch mode aktif.
+    // Termasuk prompt, context, link, bundle, snapshot, screenshot, dan archive.
     let batchCheckboxHtml = '';
-    if (vaultBatchMode && it.type === 'screenshot') {
+    if (vaultBatchMode) {
       const checked = vaultBatchSelected.has(it.id) ? ' checked' : '';
       batchCheckboxHtml = '<input type="checkbox" class="vault-batch-check" data-id="' + it.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;margin-right:4px">';
     }
@@ -5105,12 +5293,20 @@ function bindEvents() {
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
   // v3.11.11 (Issue #1): Batch mode untuk screenshot di vault
+  // v3.11.14: Generalisasi — batch mode untuk SEMUA tipe (prompt, link, bundle, archive, dll)
   const vaultBatchModeBtnEl = $('#batchModeBtn');
   if (vaultBatchModeBtnEl) vaultBatchModeBtnEl.addEventListener('click', toggleVaultBatchMode);
   const vaultBatchCopyBtn = $('#vaultBatchCopy');
   if (vaultBatchCopyBtn) vaultBatchCopyBtn.addEventListener('click', () => vaultBatchCopyAction(true));
   const vaultBatchCopyImgBtn = $('#vaultBatchCopyImg');
   if (vaultBatchCopyImgBtn) vaultBatchCopyImgBtn.addEventListener('click', () => vaultBatchCopyAction(false));
+  // v3.11.14: Tombol batch baru untuk tipe lain
+  const vaultBatchCopyTextBtn = $('#vaultBatchCopyText');
+  if (vaultBatchCopyTextBtn) vaultBatchCopyTextBtn.addEventListener('click', vaultBatchCopyTextAction);
+  const vaultBatchCopyBundleBtn = $('#vaultBatchCopyBundle');
+  if (vaultBatchCopyBundleBtn) vaultBatchCopyBundleBtn.addEventListener('click', vaultBatchCopyBundleAction);
+  const vaultBatchUnarchiveBtn = $('#vaultBatchUnarchive');
+  if (vaultBatchUnarchiveBtn) vaultBatchUnarchiveBtn.addEventListener('click', vaultBatchUnarchiveAction);
   // v3.11.13 (Sesi 12): Batch delete button
   const vaultBatchDeleteBtn = $('#vaultBatchDelete');
   if (vaultBatchDeleteBtn) vaultBatchDeleteBtn.addEventListener('click', vaultBatchDeleteAction);
