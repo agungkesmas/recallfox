@@ -642,7 +642,10 @@ function renderList() {
       + '</div></div>';
   }).join('');
   bindItemClicks();
-  // v3.11.11 (Issue #1): Bind batch checkbox change handlers
+  // v3.11.11 (Issue #1) + v3.11.12 (Sesi 11, Issue #2): Bind batch checkbox handlers.
+  // V3.11.12: HANYA bind change handler untuk checkbox itself.
+  // Click handler untuk toggle via item body dipindah ke bindItemClicks (return early
+  // kalau batch mode aktif) — supaya tidak double-trigger dengan primaryAction (buka viewer).
   if (vaultBatchMode) {
     document.querySelectorAll('.vault-batch-check').forEach(cb => {
       cb.addEventListener('change', (e) => {
@@ -652,13 +655,9 @@ function renderList() {
         else vaultBatchSelected.delete(id);
         updateVaultBatchCount();
       });
-      // Click item juga toggle checkbox kalau batch mode aktif
-      cb.closest('.item')?.addEventListener('click', (e) => {
-        if (e.target === cb) return; // checkbox sudah handle sendiri
-        cb.checked = !cb.checked;
-        if (cb.checked) vaultBatchSelected.add(cb.dataset.id);
-        else vaultBatchSelected.delete(cb.dataset.id);
-        updateVaultBatchCount();
+      // Click di checkbox jangan propagate ke item (supaya tidak trigger primaryAction)
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
       });
     });
   }
@@ -666,6 +665,32 @@ function renderList() {
 function bindItemClicks() {
   $$('#list .item').forEach(el => {
     el.addEventListener('click', e => {
+      // v3.11.12 (Sesi 11, Issue #2): Fix klik checkbox malah buka gambar viewer.
+      // User feedback: "ketika klik centang untuk memilih daftar gambar, eh malah
+      // buka gambarnya jg jadinya kebanyakan tab."
+      // Root cause: bindItemClicks punya click handler yang buka screenshot viewer.
+      // Saya tambah click handler untuk toggle checkbox. Karena kedua handler di elemen
+      // yang sama, klik item = toggle checkbox DAN buka viewer.
+      // Fix: kalau batch mode aktif, return early — biar handler checkbox (di renderList)
+      // yang handle. Click di luar checkbox saat batch mode = tidak buka viewer.
+      if (vaultBatchMode) {
+        // Cek apakah yang diklik adalah checkbox atau tombol aksi (data-* action)
+        // Kalau ya, biar handler masing-masing yang handle (stopPropagation sudah ada)
+        // Kalau bukan, return early — tidak buka viewer saat batch mode aktif
+        const isActionBtn = e.target.closest('[data-link-action],[data-bundle-action],[data-shot-action],.morebtn,.vault-batch-check');
+        if (!isActionBtn) {
+          // Klik di area item (bukan tombol aksi) — toggle checkbox kalau ada
+          const cb = el.querySelector('.vault-batch-check');
+          if (cb) {
+            cb.checked = !cb.checked;
+            if (cb.checked) vaultBatchSelected.add(cb.dataset.id);
+            else vaultBatchSelected.delete(cb.dataset.id);
+            updateVaultBatchCount();
+          }
+          return; // JANGAN buka viewer
+        }
+        // Kalau klik tombol aksi, biar handler di bawah yang handle
+      }
       // v3.6: Cek apakah user klik tombol aksi Link khusus (data-link-action)
       const linkBtn = e.target.closest('[data-link-action]');
       if (linkBtn) {

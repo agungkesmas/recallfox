@@ -2181,6 +2181,16 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       // Build markdown + HTML
+      // v3.11.12 (Sesi 11, Issue #1): FIX gambar tidak muncul saat paste.
+      // V3.11.11 bug: markdown berisi '![Screenshot N](data:image/png;base64,...)' —
+      // data URL panjang, banyak editor strip itu. Plus text/html dengan <img src="data:...">
+      // juga di-strip oleh beberapa editor (Google Docs text mode, Notion, dll).
+      // V3.11.12 fix:
+      //   - text/plain: HANYA metadata + placeholder '[Gambar N]' (NO data URL)
+      //   - text/html: <img src="data:..."> untuk setiap screenshot (rich text editor render)
+      //   - image/png: blob gambar pertama (untuk paste ke Paint/Photoshop/image editor)
+      // Plus: kirim juga array dataUrl ke content script supaya bisa tulis multiple
+      // image/png sebagai ClipboardItem terpisah (kalau browser support).
       const now = new Date();
       const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
       let mdParts = [
@@ -2192,6 +2202,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         '<h1>📷 Screenshot Bundle — RecallFox</h1>',
         '<p><em>Tanggal: ' + escHtml(dateStr) + ' · Total: ' + screenshots.length + ' screenshot</em></p>'
       ];
+      const dataUrls = []; // untuk kirim ke content script (image/png blobs)
       for (let i = 0; i < screenshots.length; i++) {
         const { item, dataUrl } = screenshots[i];
         const pageTitle = item.source?.title || item.title || 'screenshot';
@@ -2202,24 +2213,21 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '');
         const capturedDate = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
         const num = i + 1;
+        dataUrls.push(dataUrl);
 
-        // Markdown
+        // v3.11.12: Markdown TANPA data URL (supaya plain text bersih, tidak ada base64 panjang)
         mdParts.push('## ' + num + '. ' + pageTitle);
         if (pageUrl) mdParts.push('**Sumber:** ' + pageUrl);
         mdParts.push('**Waktu:** ' + capturedDate);
         mdParts.push('**Mode:** ' + modeLabel + ' · ' + dims);
         if (tags) mdParts.push('**Tag:** ' + tags);
-        if (withCaption) {
-          mdParts.push('');
-          mdParts.push('![Screenshot ' + num + '](' + dataUrl + ')');
-        } else {
-          mdParts.push('');
-          mdParts.push('[Gambar ' + num + ' — lihat di clipboard gambar]');
-        }
+        mdParts.push('');
+        // Placeholder saja — gambar asli ada di HTML clipboard / image/png blob
+        mdParts.push('[📸 Gambar ' + num + ' — ' + dims + ']');
         mdParts.push('');
         if (i < screenshots.length - 1) mdParts.push('---');
 
-        // HTML
+        // v3.11.12: HTML dengan <img src="data:..."> — rich text editor akan render gambar
         htmlParts.push('<hr>');
         htmlParts.push('<h2>' + num + '. ' + escHtml(pageTitle) + '</h2>');
         htmlParts.push('<p>');
@@ -2228,9 +2236,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         htmlParts.push('<strong>Mode:</strong> ' + escHtml(modeLabel) + ' · ' + escHtml(dims));
         if (tags) htmlParts.push('<br><strong>Tag:</strong> ' + escHtml(tags));
         htmlParts.push('</p>');
-        if (withCaption) {
-          htmlParts.push('<img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;height:auto;border:1px solid #ccc;border-radius:4px">');
-        }
+        // Tetap pakai data URL di HTML — banyak editor (Google Docs rich, Gmail, Word) support
+        htmlParts.push('<img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;height:auto;border:1px solid #ccc;border-radius:4px;margin:8px 0">');
       }
 
       const mdText = mdParts.join('\n');
@@ -2242,37 +2249,67 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!tab.url || !/^https?:\/\//.test(tab.url)) {
         sendResponse({ ok: false, error: 'not_http_page' }); return;
       }
+      // v3.11.12: Kirim dataUrls juga supaya content script bisa fetch blob untuk image/png
       const results = await browser.scripting.executeScript({
         target: { tabId: tab.id },
-        func: (mdText, htmlText, withCaption, screenshotCount) => {
+        func: async (mdText, htmlText, withCaption, screenshotCount, dataUrls) => {
           try {
-            // v3.11.11: Gunakan Clipboard API dengan multiple MIME types
-            const clipboardItems = [];
-            const mimeTypes = [];
-            if (withCaption) {
-              mimeTypes.push('text/html');
-            }
-            mimeTypes.push('text/plain');
+            // v3.11.12: Strategy clipboard yang lebih robust
+            // 1. ClipboardItem utama: text/plain (markdown) + text/html (HTML dengan <img>)
+            // 2. Kalau hanya 1 screenshot: tambah image/png blob supaya paste ke Paint jalan
+            // 3. Kalau multiple: tetap cuma 1 ClipboardItem (browser limit image/png per write)
 
-            // Build ClipboardItem
-            const blobData = {};
-            blobData['text/plain'] = new Blob([mdText], { type: 'text/plain' });
+            const blobData = {
+              'text/plain': new Blob([mdText], { type: 'text/plain' })
+            };
             if (withCaption) {
               blobData['text/html'] = new Blob([htmlText], { type: 'text/html' });
             }
+
+            // v3.11.12: Tambah image/png untuk screenshot pertama (supaya paste ke image editor jalan)
+            // Firefox support image/png di ClipboardItem
+            let imageAdded = false;
+            if (dataUrls && dataUrls.length > 0) {
+              try {
+                // Fetch data URL jadi blob
+                const response = await fetch(dataUrls[0]);
+                const blob = await response.blob();
+                if (blob.type.startsWith('image/')) {
+                  // Convert ke PNG kalau perlu (clipboard API hanya support image/png)
+                  if (blob.type === 'image/png') {
+                    blobData['image/png'] = blob;
+                    imageAdded = true;
+                  } else {
+                    // Convert JPEG/other ke PNG via canvas
+                    const img = await createImageBitmap(blob);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    if (pngBlob) {
+                      blobData['image/png'] = pngBlob;
+                      imageAdded = true;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('[RecallFox] image/png blob conversion failed:', e.message);
+              }
+            }
+
             const item = new ClipboardItem(blobData);
-            return navigator.clipboard.write([item]).then(() => ({
-              ok: true,
-              message: '✓ ' + screenshotCount + ' screenshot tersalin (markdown' + (withCaption ? ' + HTML + gambar' : '') + ')'
-            })).catch(e => ({
-              ok: false,
-              error: 'clipboard_write_failed: ' + e.message
-            }));
+            await navigator.clipboard.write([item]);
+            const msg = '✓ ' + screenshotCount + ' screenshot tersalin (' +
+              (withCaption ? 'markdown + HTML' : 'markdown') +
+              (imageAdded ? ' + gambar pertama sebagai PNG' : '') + ')';
+            return { ok: true, message: msg, imageAdded };
           } catch (e) {
-            return { ok: false, error: e.message };
+            return { ok: false, error: 'clipboard_write_failed: ' + e.message };
           }
         },
-        args: [mdText, htmlText, withCaption, screenshots.length]
+        args: [mdText, htmlText, withCaption, screenshots.length, dataUrls]
       });
       const result = await results?.[0]?.result;
       if (result && typeof result.then === 'function') {
