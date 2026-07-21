@@ -243,10 +243,9 @@ body.rf-sidebar-body .popup{
 .note-card:hover{transform:translateY(-1px);box-shadow:var(--sh-sm);border-color:var(--border-strong);border-left-color:var(--nc)}
 .note-card:active{transform:scale(.99)}
 .note-card-main{flex:1;min-width:0}
-.note-card-actions{opacity:0;transition:.15s;align-self:flex-start}
-.note-card:hover .note-card-actions{opacity:1}
-.note-act{border-radius:6px;transition:.12s}
-.note-act:hover{background:var(--surface-2)}
+/* v3.11.16: .note-card-actions & .note-act dihapus — user request "bagian ijo nya itu di
+   hilangkan, jadi teksnya bisa lebih lebar. kan udah ada toggle batch".
+   Sekarang teks note-card-main pakai full width tanpa elemen pengganggu di kiri. */
 /* v3.7.2 (Issue 5): note title (opsional) */
 .note-title{font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:3px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .note-body-txt{font-size:12px;line-height:1.5;max-height:4.5em;overflow:hidden;white-space:normal;word-break:break-word;overflow-wrap:anywhere}

@@ -2674,18 +2674,18 @@ async function renderNotes() {
     const preview = (n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
     const previewHtml = preview ? esc(preview) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
-    // v3.9.0 (Issue 7): In batch mode, show checkbox instead of quick actions
+    // v3.11.16 (Issue dari Google Doc): Hapus note-card-actions (3 tombol ✏️📦🗑️ yang muncul
+    // saat hover) — bikin teks catatan sempit karena ada area kosong di kiri.
+    // User: "bagian ijo nya itu di hilangkan, jadi teksnya bisa lebih lebar. kan udah ada toggle batch"
+    // Sekarang: di non-batch mode, tidak ada elemen di kiri teks → teks full width.
+    // Aksi individual tetap tersedia: klik note → buka editor (ada Hapus/Arsip/Pin di footer).
+    // Aksi massal: pakai toggle batch (sudah ada).
     let batchHtml = '';
     if (notesBatchMode) {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
       batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer"></div>';
-    } else {
-      batchHtml = '<div class="note-card-actions" style="display:flex;gap:4px;flex-shrink:0;opacity:0;transition:.15s;align-self:flex-start">'
-        + '<button class="note-act" data-act="edit" data-nid="' + n.id + '" title="Edit" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">✏️</button>'
-        + '<button class="note-act" data-act="archive" data-nid="' + n.id + '" title="Arsipkan" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">📦</button>'
-        + '<button class="note-act" data-act="delete" data-nid="' + n.id + '" title="Hapus" style="background:transparent;border:none;padding:4px 6px;cursor:pointer;font-size:14px">🗑️</button>'
-        + '</div>';
     }
+    // v3.11.16: else branch dihapus — tidak ada note-card-actions lagi.
     return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary)"' : '') + '>'
       + batchHtml
       + '<div class="note-card-main">'
@@ -2705,19 +2705,16 @@ async function renderNotes() {
       renderNotes();
       return;
     }
-    // Cek apakah yang diklik adalah action button
-    const actBtn = e.target.closest('.note-act');
-    if (actBtn) {
-      e.stopPropagation();
-      handleNoteQuickAction(actBtn.dataset.act, actBtn.dataset.nid);
-      return;
-    }
+    // v3.11.16: note-act buttons sudah dihapus — klik note-card langsung buka editor.
+    // Aksi Hapus/Arsip/Pin ada di footer editor. Aksi massal pakai toggle batch.
     openNoteEditor(c.dataset.nid);
   }));
   bindGroupChips();
 }
 
 // v3.9.0 (Issue 7): Quick action handler untuk note (dari list, tanpa buka editor)
+// v3.11.16: DEPRECATED — note-card-actions sudah dihapus. Fungsi tetap dipertahankan
+// untuk backward-compat (kalau ada kode lain yang panggil), tapi tidak digunakan lagi.
 async function handleNoteQuickAction(action, noteId) {
   const n = currentNotes.find(x => x.id === noteId);
   if (!n) return;
