@@ -2153,20 +2153,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (result && typeof result.then === 'function') {
         // Function return Promise — await di listener
         const awaited = await result;
-        // v3.11.21: Handle fallback untuk browser tanpa ClipboardItem
+        // v3.11.22 (Issue #1 fix): HAPUS fallback browser.clipboard.setImageData.
+        // Background script di Firefox MV3 TIDAK punya browser.clipboard API.
+        // Error user: "can't access property 'setImageData', browser clipboard is undefined".
+        // Solusi: kalau ClipboardItem tidak support (Firefox < 127), pakai download file
+        // sebagai fallback (lebih reliable daripada clipboard.setImageData).
         if (awaited?.needsFallback) {
-          // Background context: pakai browser.clipboard.setImageData (Firefox-only API)
+          // v3.11.22: Download screenshot sebagai file PNG (fallback kalau clipboard tidak support)
           try {
-            const { getScreenshotBlob } = await import('./lib/storage.js');
-            const dataUrl2 = await getScreenshotBlob(msg.id);
-            const resp2 = await fetch(dataUrl2);
-            const blob2 = await resp2.blob();
-            const arrBuf = await blob2.arrayBuffer();
-            await browser.clipboard.setImageData(arrBuf, 'png');
+            const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+            const objectUrl = URL.createObjectURL(blob);
+            const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+            await browser.downloads.download({
+              url: objectUrl,
+              filename: filename,
+              saveAs: false
+            });
+            // Revoke URL after delay
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
             if (msg.withCaption) {
+              // Copy caption ke clipboard sebagai text fallback
               try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
             }
-            sendResponse({ ok: true, message: '✓ Gambar tersalin (mode fallback)' }); return;
+            sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads (clipboard tidak support di browser ini). Caption disalin ke clipboard.' }); return;
           } catch (e) {
             sendResponse({ ok: false, error: 'fallback_failed: ' + e.message }); return;
           }
@@ -2174,6 +2183,26 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(awaited); return;
       }
       if (result && result.ok) { sendResponse(result); return; }
+      // v3.11.22: Kalau clipboard write gagal tapi kita punya dataUrl, download sebagai file
+      if (result && result.error && result.error.includes('clipboard')) {
+        try {
+          const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+          const objectUrl = URL.createObjectURL(blob);
+          const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+          await browser.downloads.download({
+            url: objectUrl,
+            filename: filename,
+            saveAs: false
+          });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          if (msg.withCaption) {
+            try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+          }
+          sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads (clipboard write gagal, pakai file). Caption disalin.' }); return;
+        } catch (e) {
+          sendResponse({ ok: false, error: 'download_fallback_failed: ' + e.message }); return;
+        }
+      }
       sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
     } catch (e) {
       console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
