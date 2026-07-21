@@ -1490,7 +1490,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           gdriveLastError: meta.lastError
         });
       } catch (e) {}
-      return result;
+      sendResponse(result); return;
     } catch (e) {
       console.error('[RecallFox] GDRIVE_FULL_BACKUP error:', e);
       sendResponse({ ok: false, error: e.message }); return;
@@ -1499,7 +1499,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'GDRIVE_TEST') {
     try {
       const result = await gdriveTestConnection();
-      return result;
+      sendResponse(result); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
     }
@@ -1567,7 +1567,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pushStateToCloud(profile);
-      return result;
+      sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_PULL') {
@@ -1588,7 +1588,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (e) {}
         browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
       }
-      return result;
+      sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_FULL') {
@@ -1608,14 +1608,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (e) {}
         browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
       }
-      return result;
+      sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_TEST_PROFILE') {
     try {
       const { testProfileConnection } = await import('./lib/sync-profile.js');
       const result = await testProfileConnection(msg.profile);
-      return result;
+      sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_STATUS') {
@@ -2126,7 +2126,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
 
       const result = results?.[0]?.result;
-      if (result && result.ok) return result;
+      if (result && result.ok) { sendResponse(result); return; }
       sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
     } catch (e) {
       console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
@@ -2410,7 +2410,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     console.log('[RecallFox/AD] Manual discard triggered');
     const result = await checkAutoDiscard();
     console.log('[RecallFox/AD] Manual result:', JSON.stringify(result));
-    return result;
+    sendResponse(result); return;
   }
 
   if (msg.type === 'AD_FORCE_DISCARD_ALL') {
@@ -2444,7 +2444,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       result.error = e.message;
       console.error('[RecallFox/AD] FORCE error:', e);
     }
-    return result;
+    sendResponse(result); return;
   }
 
   // v0.9.7: CG_SAVE_SETTING — juga pindahkan ke sini
