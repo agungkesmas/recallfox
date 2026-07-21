@@ -176,8 +176,8 @@ function doGet(e) {
     } else if (e && e.parameter && e.parameter.token) {
       token = e.parameter.token;
     }
-    if (token !== CONFIG.TOKEN) {
-      return _jsonOut({ ok: false, error: 'INVALID_TOKEN' });
+    if (token !== CONFIG.AUTH_TOKEN) {
+      return _jsonOut({ ok: false, error: 'INVALID_TOKEN', detail: 'Token mismatch. Expected AUTH_TOKEN, got: ' + token.slice(0, 8) + '...' });
     }
     var data = { profile: e.parameter.profile || 'default' };
     return _jsonOut(_handleGetState(data));
@@ -316,65 +316,79 @@ function _dispatchAction(action, data) {
  *   { ok: true, updatedAt, profile, deviceId }
  */
 function _handleSyncState(data) {
-  if (!data || !data.payload) {
-    return { ok: false, error: 'NO_PAYLOAD' };
-  }
-  var profileName = data.profile || 'default';
-  var deviceId = data.deviceId || 'unknown';
-  var deviceName = data.deviceName || 'unknown';
-  var payload = data.payload;
+  try {
+    if (!data || !data.payload) {
+      console.error('_handleSyncState: NO_PAYLOAD, data keys =', data ? Object.keys(data) : 'null');
+      return { ok: false, error: 'NO_PAYLOAD' };
+    }
+    var profileName = data.profile || 'default';
+    var deviceId = data.deviceId || 'unknown';
+    var deviceName = data.deviceName || 'unknown';
+    var payload = data.payload;
 
-  // Validate payload size (Apps Script limit ~50MB, tapi praktis <5MB)
-  var payloadStr = JSON.stringify(payload);
-  if (payloadStr.length > 10 * 1024 * 1024) {  // 10MB limit
-    return { ok: false, error: 'PAYLOAD_TOO_LARGE', size: payloadStr.length };
-  }
+    console.log('_handleSyncState: profile=' + profileName + ', device=' + deviceName + ', payload keys=' + Object.keys(payload).join(','));
 
-  var ss = _getSpreadsheet();
-  var sheet = ss.getSheetByName('SyncState');
-  if (!sheet) {
-    sheet = ss.insertSheet('SyncState');
-    sheet.appendRow(['profile', 'deviceId', 'deviceName', 'payload', 'updatedAt', 'payloadSize']);
-    sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
-    sheet.setFrozenRows(1);
-  }
+    // Validate payload size (Apps Script limit ~50MB, tapi praktis <5MB)
+    var payloadStr = JSON.stringify(payload);
+    if (payloadStr.length > 10 * 1024 * 1024) {  // 10MB limit
+      return { ok: false, error: 'PAYLOAD_TOO_LARGE', size: payloadStr.length };
+    }
+    console.log('_handleSyncState: payload size = ' + payloadStr.length + ' bytes');
 
-  // Cari existing row by profile name
-  var lastRow = sheet.getLastRow();
-  var existingRow = -1;
-  if (lastRow > 1) {
-    var profileCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (var i = 0; i < profileCol.length; i++) {
-      if (profileCol[i][0] === profileName) {
-        existingRow = i + 2;  // +2 karena header di baris 1, index dimulai dari 0
-        break;
+    var ss = _getSpreadsheet();
+    if (!ss) {
+      console.error('_handleSyncState: Cannot access spreadsheet');
+      return { ok: false, error: 'SPREADSHEET_ACCESS_FAILED' };
+    }
+    var sheet = ss.getSheetByName('SyncState');
+    if (!sheet) {
+      console.log('_handleSyncState: Creating SyncState sheet...');
+      sheet = ss.insertSheet('SyncState');
+      sheet.appendRow(['profile', 'deviceId', 'deviceName', 'payload', 'updatedAt', 'payloadSize']);
+      sheet.getRange(1, 1, 1, 6).setFontWeight('bold');
+      sheet.setFrozenRows(1);
+    }
+
+    // Cari existing row by profile name
+    var lastRow = sheet.getLastRow();
+    var existingRow = -1;
+    if (lastRow > 1) {
+      var profileCol = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (var i = 0; i < profileCol.length; i++) {
+        if (profileCol[i][0] === profileName) {
+          existingRow = i + 2;  // +2 karena header di baris 1, index dimulai dari 0
+          break;
+        }
       }
     }
+
+    var updatedAt = new Date().toISOString();
+    var rowData = [profileName, deviceId, deviceName, payloadStr, updatedAt, payloadStr.length];
+
+    if (existingRow > 0) {
+      // Update existing row
+      sheet.getRange(existingRow, 1, 1, 6).setValues([rowData]);
+    } else {
+      // Append new row
+      sheet.appendRow(rowData);
+    }
+
+    // Auto-resize kolom profile
+    sheet.autoResizeColumn(1);
+
+    console.log('SyncState saved: profile=' + profileName + ', device=' + deviceName + ', size=' + payloadStr.length + ' bytes');
+
+    return {
+      ok: true,
+      updatedAt: updatedAt,
+      profile: profileName,
+      deviceId: deviceId,
+      payloadSize: payloadStr.length
+    };
+  } catch (err) {
+    console.error('_handleSyncState ERROR: ' + err.message + '\nStack: ' + err.stack);
+    return { ok: false, error: 'SYNC_STATE_FAILED', detail: err.message, stack: err.stack };
   }
-
-  var updatedAt = new Date().toISOString();
-  var rowData = [profileName, deviceId, deviceName, payloadStr, updatedAt, payloadStr.length];
-
-  if (existingRow > 0) {
-    // Update existing row
-    sheet.getRange(existingRow, 1, 1, 6).setValues([rowData]);
-  } else {
-    // Append new row
-    sheet.appendRow(rowData);
-  }
-
-  // Auto-resize kolom profile
-  sheet.autoResizeColumn(1);
-
-  console.log('SyncState saved: profile=' + profileName + ', device=' + deviceName + ', size=' + payloadStr.length + ' bytes');
-
-  return {
-    ok: true,
-    updatedAt: updatedAt,
-    profile: profileName,
-    deviceId: deviceId,
-    payloadSize: payloadStr.length
-  };
 }
 
 /**
