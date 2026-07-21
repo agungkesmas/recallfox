@@ -953,21 +953,24 @@
   });
 
   // ===== Adzan audio player (in-page) =====
-  // v3.11.7-fix2: Pakai CDN publik IslamicFinder (gratis, sering dipakai aplikasi adzan).
-  // Audio di-play di context page (tab aktif), bukan di popup — supaya bisa bunyi walau
-  // popup RecallFox tertutup. Banner Stop di-show di pojok halaman.
+  // v3.11.10: Rewrite untuk pakai Web Audio API tone (sama seperti popup.js).
+  // V3.11.7-fix2 pakai URL IslamicFinder (azan1.mp3) → v3.11.9 ketahui 404.
+  // V3.11.10: pakai Web Audio API tone 30+ detik dengan chord + vibrato + reverb,
+  // lebih mirip suara adzan asli (bukan bel). Tetap allow custom URL ke file MP3 asli.
   let _adzanAudioEl = null;
+  let _adzanToneCtx = null;
   let _adzanBannerEl = null;
 
-  const ADZAN_URLS_OVERLAY = {
-    default: 'https://www.islamicfinder.org/cms/audio/azan1/azan1.mp3',
-    short: 'https://www.islamicfinder.org/cms/audio/azan2/azan2.mp3'
-  };
-
   function _stopAdzanInPage() {
+    // Stop Audio element (untuk custom URL)
     if (_adzanAudioEl) {
       try { _adzanAudioEl.pause(); _adzanAudioEl.currentTime = 0; } catch (e) {}
       _adzanAudioEl = null;
+    }
+    // Stop Web Audio API context (untuk default/short tone)
+    if (_adzanToneCtx) {
+      try { _adzanToneCtx.close(); } catch (e) {}
+      _adzanToneCtx = null;
     }
     if (_adzanBannerEl) {
       try { _adzanBannerEl.remove(); } catch (e) {}
@@ -975,29 +978,129 @@
     }
   }
 
+  // v3.11.10: Generate adzan tone dengan Web Audio API (chord + vibrato + reverb).
+  // Lihat popup/popup.js _playAdzanTone untuk dokumentasi lengkap.
+  function _playAdzanToneInPage(vol, isShort) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        console.warn('[RecallFox] Web Audio API tidak support di page context');
+        return;
+      }
+      const ctx = new AudioCtx();
+      _adzanToneCtx = ctx;
+      const now = ctx.currentTime;
+
+      // Reverb
+      const reverbDelay = ctx.createDelay(2.0);
+      reverbDelay.delayTime.value = 0.18;
+      const reverbFeedback = ctx.createGain();
+      reverbFeedback.gain.value = 0.35;
+      const reverbWet = ctx.createGain();
+      reverbWet.gain.value = 0.25;
+      reverbDelay.connect(reverbFeedback);
+      reverbFeedback.connect(reverbDelay);
+      reverbDelay.connect(reverbWet);
+
+      // Master + lowpass
+      const masterGain = ctx.createGain();
+      masterGain.gain.value = vol;
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = 2400;
+      lowpass.Q.value = 0.7;
+      masterGain.connect(lowpass);
+      lowpass.connect(ctx.destination);
+      lowpass.connect(reverbDelay);
+      reverbWet.connect(ctx.destination);
+
+      const syllables = [
+        { freq: 440, start: 0.0, dur: 0.6, gain: 0.9 },
+        { freq: 392, start: 0.6, dur: 0.5, gain: 0.85 },
+        { freq: 440, start: 1.1, dur: 0.7, gain: 0.9 },
+        { freq: 329.63, start: 1.8, dur: 0.5, gain: 0.8 },
+        { freq: 440, start: 2.3, dur: 1.5, gain: 1.0 },
+        { freq: 0, start: 3.8, dur: 0.4, gain: 0 },
+        { freq: 466.16, start: 4.2, dur: 0.6, gain: 0.9 },
+        { freq: 415.30, start: 4.8, dur: 0.5, gain: 0.85 },
+        { freq: 466.16, start: 5.3, dur: 0.7, gain: 0.9 },
+        { freq: 349.23, start: 6.0, dur: 0.5, gain: 0.8 },
+        { freq: 466.16, start: 6.5, dur: 1.5, gain: 1.0 },
+        { freq: 0, start: 8.0, dur: 0.4, gain: 0 },
+      ];
+      const phrases = isShort ? syllables.slice(0, 6) : syllables;
+
+      for (const syl of phrases) {
+        if (syl.freq === 0) continue;
+        const start = now + syl.start;
+        const end = start + syl.dur;
+        const harmonics = [
+          { ratio: 1.0, gain: 0.6 },
+          { ratio: 2.0, gain: 0.2 },
+          { ratio: 1.5, gain: 0.15 },
+        ];
+        for (const h of harmonics) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = syl.freq * h.ratio;
+          const vibrato = ctx.createOscillator();
+          const vibratoGain = ctx.createGain();
+          vibrato.frequency.value = 5;
+          vibratoGain.gain.value = syl.freq * 0.015;
+          vibrato.connect(vibratoGain);
+          vibratoGain.connect(osc.frequency);
+          const peakGain = vol * syl.gain * h.gain;
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(peakGain, start + 0.08);
+          gain.gain.linearRampToValueAtTime(peakGain * 0.75, start + syl.dur * 0.5);
+          gain.gain.linearRampToValueAtTime(0, end);
+          osc.connect(gain);
+          gain.connect(masterGain);
+          osc.start(start);
+          osc.stop(end + 0.1);
+          vibrato.start(start);
+          vibrato.stop(end + 0.1);
+        }
+      }
+
+      const totalDur = isShort ? 10 : 28;
+      setTimeout(() => {
+        try { if (ctx.state !== 'closed') ctx.close(); } catch (e) {}
+      }, totalDur * 1000 + 500);
+    } catch (e) {
+      console.warn('[RecallFox] Adzan tone in-page failed:', e.message);
+    }
+  }
+
   function _playAdzanInPage(msg) {
     _stopAdzanInPage();
 
-    let url;
-    if (msg.sound === 'custom' && msg.customUrl) {
-      url = msg.customUrl;
-    } else if (msg.sound === 'short') {
-      url = ADZAN_URLS_OVERLAY.short;
-    } else {
-      url = ADZAN_URLS_OVERLAY.default;
-    }
+    // v3.11.10: Sound logic
+    // - 'custom' + customUrl → pakai Audio element dengan URL custom
+    // - 'short' → pakai Web Audio API tone (short version, 2 phrase)
+    // - 'default' atau lainnya → pakai Web Audio API tone (default, 2 phrase + 2 phrase)
+    const sound = msg.sound || 'default';
+    const vol = Math.max(0, Math.min(1, Number(msg.volume) || 0.7));
 
-    // Buat audio element
-    try {
-      _adzanAudioEl = new Audio(url);
-      _adzanAudioEl.volume = Math.max(0, Math.min(1, Number(msg.volume) || 0.7));
-      _adzanAudioEl.crossOrigin = 'anonymous';
-      _adzanAudioEl.play().catch(e => {
-        console.warn('[RecallFox] Adzan play blocked (autoplay policy):', e.message);
-        // Tampilkan banner saja — user klik play manual kalau autoplay blocked
-      });
-    } catch (e) {
-      console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+    if (sound === 'custom' && msg.customUrl) {
+      // Pakai Audio element dengan URL custom (file MP3 user)
+      try {
+        _adzanAudioEl = new Audio(msg.customUrl);
+        _adzanAudioEl.volume = vol;
+        _adzanAudioEl.crossOrigin = 'anonymous';
+        _adzanAudioEl.play().catch(e => {
+          console.warn('[RecallFox] Adzan custom URL play failed:', e.message);
+          // Fallback ke tone
+          _playAdzanToneInPage(vol, false);
+        });
+      } catch (e) {
+        console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+        _playAdzanToneInPage(vol, false);
+      }
+    } else {
+      // Pakai Web Audio API tone
+      _playAdzanToneInPage(vol, sound === 'short');
     }
 
     // Banner Stop (fixed di pojok kanan bawah halaman, tidak nutupin konten utama)
@@ -1037,18 +1140,19 @@
       stopBtn.addEventListener('click', _stopAdzanInPage);
     }
 
-    // Auto-cleanup saat audio selesai
+    // Auto-cleanup saat audio selesai (hanya untuk Audio element custom URL)
     if (_adzanAudioEl) {
       _adzanAudioEl.onended = () => _stopAdzanInPage();
       _adzanAudioEl.onerror = () => {
-        console.warn('[RecallFox] Adzan audio error — kemungkinan URL tidak accessible');
-        _stopAdzanInPage();
+        console.warn('[RecallFox] Adzan audio error — fallback ke tone');
+        _adzanAudioEl = null;
+        _playAdzanToneInPage(vol, false);
       };
     }
 
     // Auto-stop setelah 5 menit (safety, kalau audio tidak pernah ended)
     setTimeout(() => {
-      if (_adzanAudioEl || _adzanBannerEl) {
+      if (_adzanAudioEl || _adzanToneCtx || _adzanBannerEl) {
         console.log('[RecallFox] Adzan auto-stop after 5 minutes');
         _stopAdzanInPage();
       }

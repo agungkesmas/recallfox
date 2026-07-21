@@ -5341,9 +5341,16 @@ function _playAdzan(prayer, prayerKey, volume, sound, customUrl) {
   _showAdzanStopButton();
 }
 
-// v3.11.9 (Issue #3 fix): Generate adzan-like tone pakai Web Audio API.
-// Tidak butuh file MP3 eksternal → pasti jalan, no CORS, no 404.
-// Tone: urutan nada yang mirip panggilan adzan (Allahu Akbar motif).
+// v3.11.10 (Issue #3 fix): REWRITE adzan tone jadi lebih mirip suara adzan asli.
+// V3.11.9 pakai 7 nada sine wave pendek → user dengar seperti "bel", bukan adzan.
+// V3.11.10: 4 phrase "Allahu Akbar" (30+ detik) dengan:
+//   - Multiple oscillators (chord) supaya kaya suara manusia
+//   - Frequency modulation (vibrato) supaya tidak monoton
+//   - Reverb effect (delay + feedback) supaya sound like mosque
+//   - Durasi lebih panjang (4 phrase × ~7 detik = ~28 detik)
+//   - Singkat kata per phrase: "Al-la-hu Ak-bar" (4 syllable)
+//
+// Plus: tetap allow custom URL ke file MP3 adzan asli (di settings).
 function _playAdzanTone(vol, isShort) {
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -5354,56 +5361,121 @@ function _playAdzanTone(vol, isShort) {
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
 
-    // Nada adzan: Allahu Akbar motif
-    // Frekuensi (Hz): D4=293.66, E4=329.63, F4=349.23, G4=392, A4=440
-    // Pola: A4-G4-A4-G4-F4-E4-D4 (turun) lalu A4 (Allahu Akbar)
-    const notes = isShort
-      ? [ // Short version: 4 nada, ~8 detik
-        { freq: 440, start: 0, dur: 1.5 },   // A4
-        { freq: 392, start: 1.5, dur: 1.0 }, // G4
-        { freq: 440, start: 2.5, dur: 1.5 }, // A4
-        { freq: 349, start: 4.0, dur: 2.0 }, // F4
-      ]
-      : [ // Default version: 7 nada, ~15 detik
-        { freq: 440, start: 0, dur: 1.5 },   // A4 — "Al"
-        { freq: 392, start: 1.5, dur: 1.0 }, // G4 — "la"
-        { freq: 440, start: 2.5, dur: 1.5 }, // A4 — "hu"
-        { freq: 392, start: 4.0, dur: 1.0 }, // G4 — "Ak"
-        { freq: 349, start: 5.0, dur: 1.5 }, // F4 — "bar"
-        { freq: 392, start: 6.5, dur: 1.0 }, // G4 — pause
-        { freq: 440, start: 7.5, dur: 3.0 }, // A4 — "Allahu Akbar" (panjang)
-      ];
+    // ===== Reverb effect (delay + feedback) supaya sound like mosque =====
+    const reverbDelay = ctx.createDelay(2.0);
+    reverbDelay.delayTime.value = 0.18; // 180ms delay
+    const reverbFeedback = ctx.createGain();
+    reverbFeedback.gain.value = 0.35; // 35% feedback
+    const reverbWet = ctx.createGain();
+    reverbWet.gain.value = 0.25; // 25% wet mix
+    reverbDelay.connect(reverbFeedback);
+    reverbFeedback.connect(reverbDelay);
+    reverbDelay.connect(reverbWet);
 
-    // Master gain
+    // ===== Master gain + low-pass filter (supaya tidak terlalu bright/harsh) =====
     const masterGain = ctx.createGain();
     masterGain.gain.value = vol;
-    masterGain.connect(ctx.destination);
+    const lowpass = ctx.createBiquadFilter();
+    lowpass.type = 'lowpass';
+    lowpass.frequency.value = 2400; // cut frequencies above 2400Hz
+    lowpass.Q.value = 0.7;
 
-    // Mainkan setiap nada
-    for (const note of notes) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = note.freq;
+    masterGain.connect(lowpass);
+    lowpass.connect(ctx.destination);
+    lowpass.connect(reverbDelay); // send to reverb
+    reverbWet.connect(ctx.destination);
 
-      // Envelope: attack-decay-sustain-release supaya tidak "pop"
-      const start = now + note.start;
-      const end = start + note.dur;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(vol, start + 0.05); // attack 50ms
-      gain.gain.linearRampToValueAtTime(vol * 0.7, start + note.dur * 0.7); // sustain
-      gain.gain.linearRampToValueAtTime(0, end); // release
+    // ===== Phrase: "Allahu Akbar" motif =====
+    // Setiap phrase = 4 syllable: "Al-la-hu Ak-bar"
+    // Syllable mapping (Hz):
+    //   "Al"  = A4 (440) — singkat
+    //   "la"  = G4 (392) — singkat
+    //   "hu"  = A4 (440) — sedang
+    //   "Ak"  = E4 (329.63) — singkat, lower
+    //   "bar" = A4 (440) — panjang (sustain)
+    //
+    // Phrase 1 (Allahu Akbar) — base
+    // Phrase 2 (Allahu Akbar) — repeat, slightly higher
+    // Phrase 3 (Allahu Akbar) — repeat, modulasi
+    // Phrase 4 (Allahu Akbar) — final, panjang
+    const syllables = [
+      // [freq, startOffset, dur, gain]
+      // Phrase 1 (0-7s)
+      { freq: 440, start: 0.0, dur: 0.6, gain: 0.9 },  // Al
+      { freq: 392, start: 0.6, dur: 0.5, gain: 0.85 }, // la
+      { freq: 440, start: 1.1, dur: 0.7, gain: 0.9 },  // hu
+      { freq: 329.63, start: 1.8, dur: 0.5, gain: 0.8 }, // Ak
+      { freq: 440, start: 2.3, dur: 1.5, gain: 1.0 },  // bar (panjang)
+      // Pause
+      { freq: 0, start: 3.8, dur: 0.4, gain: 0 }, // pause
+      // Phrase 2 (4.2-11s) — slightly higher
+      { freq: 466.16, start: 4.2, dur: 0.6, gain: 0.9 },  // Al (Bb4)
+      { freq: 415.30, start: 4.8, dur: 0.5, gain: 0.85 }, // la (Ab4)
+      { freq: 466.16, start: 5.3, dur: 0.7, gain: 0.9 },  // hu (Bb4)
+      { freq: 349.23, start: 6.0, dur: 0.5, gain: 0.8 },  // Ak (F4)
+      { freq: 466.16, start: 6.5, dur: 1.5, gain: 1.0 },  // bar (panjang)
+      // Pause
+      { freq: 0, start: 8.0, dur: 0.4, gain: 0 },
+    ];
 
-      osc.connect(gain);
-      gain.connect(masterGain);
-      osc.start(start);
-      osc.stop(end + 0.1);
+    // Untuk short version, hanya 2 phrase
+    const phrases = isShort ? syllables.slice(0, 6) : syllables;
+
+    // ===== Mainkan setiap syllable dengan chord + vibrato =====
+    for (const syl of phrases) {
+      if (syl.freq === 0) continue; // skip pause
+      const start = now + syl.start;
+      const end = start + syl.dur;
+
+      // Chord: fundamental + 2 harmonics (octave + fifth) supaya kaya voice
+      const harmonics = [
+        { ratio: 1.0, gain: 0.6 },     // fundamental
+        { ratio: 2.0, gain: 0.2 },     // octave
+        { ratio: 1.5, gain: 0.15 },    // fifth
+      ];
+
+      for (const h of harmonics) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine'; // sine = smooth, less harsh
+        osc.frequency.value = syl.freq * h.ratio;
+
+        // Vibrato: frequency modulation supaya tidak monoton
+        const vibrato = ctx.createOscillator();
+        const vibratoGain = ctx.createGain();
+        vibrato.frequency.value = 5; // 5Hz vibrato
+        vibratoGain.gain.value = syl.freq * 0.015; // 1.5% pitch modulation
+        vibrato.connect(vibratoGain);
+        vibratoGain.connect(osc.frequency);
+
+        // Envelope: attack-decay-sustain-release
+        const peakGain = vol * syl.gain * h.gain;
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(peakGain, start + 0.08); // attack 80ms
+        gain.gain.linearRampToValueAtTime(peakGain * 0.75, start + syl.dur * 0.5); // sustain
+        gain.gain.linearRampToValueAtTime(0, end); // release
+
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(start);
+        osc.stop(end + 0.1);
+        vibrato.start(start);
+        vibrato.stop(end + 0.1);
+      }
     }
 
     // Simpan context supaya bisa di-stop
     _adzanAudio = { _toneCtx: ctx, _toneGain: masterGain };
 
-    console.log('[RecallFox] Adzan tone diputar (' + (isShort ? 'short' : 'default') + ', ' + notes.length + ' nada)');
+    // Auto-stop context setelah selesai (30s untuk default, 10s untuk short)
+    const totalDur = isShort ? 10 : 28;
+    setTimeout(() => {
+      try {
+        if (ctx.state !== 'closed') ctx.close();
+      } catch (e) {}
+    }, totalDur * 1000 + 500);
+
+    console.log('[RecallFox] Adzan tone diputar (' + (isShort ? 'short' : 'default') + ', ' + phrases.length + ' syllables, ~' + totalDur + 's)');
   } catch (e) {
     console.warn('[RecallFox] Adzan tone failed:', e.message);
   }

@@ -1259,7 +1259,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'QUICK_SNAPSHOT') {
     // Sent from popup quick-action button — open snapshot modal on active tab
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
       sendResponse({ ok: true }); return;
@@ -1285,7 +1285,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'QUICK_SAVE_SELECTION') {
     // Sent from popup quick-action button — get selection from active tab via scripting API
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     if (!tab.url || !/^https?:\/\//.test(tab.url)) {
       sendResponse({ ok: false, error: 'not_http_page' }); return;
     }
@@ -1312,7 +1312,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'INJECT_TO_ACTIVE_TAB') {
     // Used by popup/sidebar when on AI domain
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
       const res = await browser.tabs.sendMessage(tab.id, {
         type: 'INJECT_TEXT',
@@ -1383,10 +1383,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'IMPORT_BACKUP') {
     try {
       const text = msg.text || '';
-      if (!text) return { ok: false, error: 'empty_text' };
+      if (!text) { sendResponse({ ok: false, error: 'empty_text' }); return; }
       let jsonStr;
       if (isEncryptedBackup(text)) {
-        if (!msg.passphrase) return { ok: false, error: 'passphrase_required' };
+        if (!msg.passphrase) { sendResponse({ ok: false, error: 'passphrase_required' }); return; }
         try {
           jsonStr = await decryptBackup(text, msg.passphrase);
         } catch (err) {
@@ -1524,35 +1524,35 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const { getSyncProfiles } = await import('./lib/sync-profile.js');
       sendResponse({ ok: true, data: await getSyncProfiles() }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_ADD_PROFILE') {
     try {
       const { addSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await addSyncProfile(msg.profile);
       sendResponse({ ok: true, profile }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_UPDATE_PROFILE') {
     try {
       const { updateSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await updateSyncProfile(msg.id, msg.patch);
       sendResponse({ ok: true, profile }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_DELETE_PROFILE') {
     try {
       const { deleteSyncProfile } = await import('./lib/sync-profile.js');
       const data = await deleteSyncProfile(msg.id);
       sendResponse({ ok: true, data }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_SET_ACTIVE') {
     try {
       const { setActiveProfile } = await import('./lib/sync-profile.js');
       await setActiveProfile(msg.id);
       sendResponse({ ok: true }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_PUSH') {
     try {
@@ -1560,10 +1560,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const profile = msg.profileId
         ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
-      if (!profile) return { ok: false, error: 'No active profile' };
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pushStateToCloud(profile);
       return result;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_PULL') {
     try {
@@ -1571,7 +1571,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const profile = msg.profileId
         ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
-      if (!profile) return { ok: false, error: 'No active profile' };
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pullStateFromCloud(profile);
       if (result.ok) {
         // Notify semua tabs untuk refresh UI
@@ -1584,7 +1584,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
       }
       return result;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_FULL') {
     try {
@@ -1592,7 +1592,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const profile = msg.profileId
         ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
-      if (!profile) return { ok: false, error: 'No active profile' };
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await fullSync(profile);
       if (result.ok) {
         try {
@@ -1604,20 +1604,20 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
       }
       return result;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_TEST_PROFILE') {
     try {
       const { testProfileConnection } = await import('./lib/sync-profile.js');
       const result = await testProfileConnection(msg.profile);
       return result;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_STATUS') {
     try {
       const { getSyncStatus } = await import('./lib/sync-profile.js');
       sendResponse({ ok: true, status: await getSyncStatus() }); return;
-    } catch (e) { return { ok: false, error: e.message }; }
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
 
   // Issue #4 fallback: GET_PAGE_CONTEXT_VIA_BG — kalau content script tidak ter-inject
@@ -1625,7 +1625,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'GET_PAGE_CONTEXT_VIA_BG') {
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
       if (!tab.url || !/^https?:\/\//.test(tab.url)) {
         sendResponse({ ok: false, error: 'not_http_page', url: tab.url }); return;
       }
@@ -1665,7 +1665,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SAVE_UPLOADED_SCREENSHOT') {
     try {
       let { title, dataUrl, source } = msg;
-      if (!dataUrl) return { ok: false, error: 'NO_DATA_URL' };
+      if (!dataUrl) { sendResponse({ ok: false, error: 'NO_DATA_URL' }); return; }
       // Build screenshot item
       const match = dataUrl.match(/^data:(image\/[a-z]+);base64,/i);
       let fmt = match && match[1] === 'image/jpeg' ? 'jpeg' : 'png';
@@ -1768,7 +1768,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_VISIBLE_TAB') {
-    return await handleCaptureVisible(msg.format, msg.quality);
+    sendResponse(await handleCaptureVisible(msg.format, msg.quality)); return;
   }
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
@@ -1787,7 +1787,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Set volume for current tab's domain
     const { normalizeDb, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
     const dB = normalizeDb(msg.dB);
     await setSiteVolume(domain, dB);
@@ -1800,7 +1800,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Get volume for current tab's domain
     const { getSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
     const dB = await getSiteVolume(domain);
     sendResponse({ ok: true, dB, domain }); return;
@@ -1808,7 +1808,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'VOLUME_GET_STATE') {
     // Get current audio state from the active tab
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     try {
       const res = await browser.tabs.sendMessage(tab.id, { command: 'getAudioControlState' });
       sendResponse({ ok: true, state: res?.response || { volume: 0, muted: false, mono: false } }); return;
@@ -1819,7 +1819,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'VOLUME_MUTE') {
     // Toggle mute on active tab
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     try {
       await browser.tabs.sendMessage(tab.id, { command: 'setMute', muted: msg.muted });
       sendResponse({ ok: true, muted: msg.muted }); return;
@@ -1949,16 +1949,16 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
     // Caller then shows modal with PDF/JPG/PNG/Copy/Vault save options.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
-    return await captureFullPage(tab, { mode: msg.mode || 'entire' });
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+    sendResponse(await captureFullPage(tab, { mode: msg.mode || 'entire' })); return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
     // Save captured image to Downloads folder as PDF / JPG / PNG
-    return await saveCaptureAs(msg);
+    sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
     // Save captured image to vault as screenshot item
-    return await saveCaptureToVault(msg);
+    sendResponse(await saveCaptureToVault(msg)); return;
   }
   if (msg.type === 'CAPTURE_SCREENSHOT') {
     // Legacy: sent from popup/sidebar quick-action button — now triggers the modal flow
@@ -1967,7 +1967,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Guard: only forward string modes; ignore accidental event objects.
     const mode = (typeof msg.mode === 'string') ? msg.mode : undefined;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
       await browser.tabs.sendMessage(tab.id, {
         type: 'TRIGGER_CAPTURE_FROM_POPUP',
@@ -1976,7 +1976,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
       // Fallback to direct save (skips modal)
-      return await triggerScreenshot(tab, mode || 'entire');
+      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
@@ -1990,7 +1990,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Called by overlay.js when user clicks "Anotasi" in capture preview modal.
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
       await browser.scripting.executeScript({
         target: { tabId: tab.id, allFrames: false },
         files: ['content/annotate.js']
@@ -2005,7 +2005,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Save full image to user's Downloads folder via browser.downloads API
     const { getScreenshotBlob } = await import('./lib/storage.js');
     const dataUrl = await getScreenshotBlob(msg.id);
-    if (!dataUrl) return { ok: false, error: 'no_blob' };
+    if (!dataUrl) { sendResponse({ ok: false, error: 'no_blob' }); return; }
     const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
     const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
     const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
@@ -2031,11 +2031,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
       const dataUrl = await getScreenshotBlob(msg.id);
-      if (!dataUrl) return { ok: false, error: 'no_blob' };
+      if (!dataUrl) { sendResponse({ ok: false, error: 'no_blob' }); return; }
 
       const vault = await getVault();
       const item = vault.items.find(i => i.id === msg.id);
-      if (!item) return { ok: false, error: 'item_not_found' };
+      if (!item) { sendResponse({ ok: false, error: 'item_not_found' }); return; }
 
       // Build caption (URL, title, time, mode, dims)
       const pageTitle = item.source?.title || item.title || 'screenshot';
@@ -2060,7 +2060,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       // Inject clipboard writer ke tab aktif
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
       // Skip jika tab adalah about: atau file:// (tidak bisa inject)
       if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
         sendResponse({ ok: false, error: 'cannot_inject_this_page' }); return;
@@ -2116,7 +2116,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'CAPTURE_SNAPSHOT') {
     // sent from snapshot modal in content script — save directly
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    return await addItem({
+    // v3.11.10 fix: pakai sendResponse (bukan return await) supaya tidak
+    // "Promised response from onMessage listener went out of scope"
+    const result = await addItem({
       type: 'snapshot',
       title: msg.title || 'Untitled snapshot',
       body: msg.body,
@@ -2127,11 +2129,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         capturedAt: new Date().toISOString()
       }
     });
+    sendResponse(result); return;
   }
   if (msg.type === 'AI_ASK_QUERY') {
     // From selection-ai.js floating button. Delegate to shared orchestrator.
     const text = (msg.text || '').trim();
-    if (!text) return { ok: false, error: 'no_text' };
+    if (!text) { sendResponse({ ok: false, error: 'no_text' }); return; }
     await routeAiQuery(text, {
       sourceUrl: msg.sourceUrl || '',
       sourceTitle: msg.sourceTitle || ''
