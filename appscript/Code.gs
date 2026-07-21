@@ -237,10 +237,20 @@ function doPost(e) {
       return _jsonOut({ ok: false, error: 'NO_ACTION' }, 400);
     }
 
-    // Handle multipart upload screenshot
-    if (action === 'upload_screenshot' && e.postData && e.postData.type &&
-        e.postData.type.indexOf('multipart/form-data') >= 0) {
-      result = _handleUploadScreenshot(e);
+    // Handle screenshot upload — support DUA format:
+    //   1. multipart/form-data (legacy, via FormData — RUSAK di Firefox MV3)
+    //   2. JSON+base64 (v3.11.20 fix — reliable, sama seperti sync_state)
+    if (action === 'upload_screenshot') {
+      if (e.postData && e.postData.type &&
+          e.postData.type.indexOf('multipart/form-data') >= 0) {
+        // Legacy multipart path (untuk backward compat)
+        result = _handleUploadScreenshot(e);
+      } else if (parsed && parsed.base64Data) {
+        // v3.11.20: JSON+base64 path (FIX untuk Firefox MV3)
+        result = _handleUploadScreenshotJson(parsed);
+      } else {
+        result = { ok: false, error: 'INVALID_UPLOAD_FORMAT', detail: 'Expected multipart/form-data or JSON with base64Data' };
+      }
     } else {
       // Handle JSON actions
       result = _dispatchAction(action, parsed);
@@ -708,6 +718,96 @@ function _handleUploadScreenshot(e) {
   } catch (err) {
     console.error('Upload screenshot error:', err);
     return { ok: false, error: 'UPLOAD_FAILED', detail: err.message };
+  }
+}
+
+// v3.11.20: Handle upload_screenshot via JSON+base64 (FIX untuk Firefox MV3)
+// Data: { action, token, metadata: {...}, mimeType, base64Data }
+// Metadata fields sama dengan _handleUploadScreenshot.
+function _handleUploadScreenshotJson(data) {
+  try {
+    if (!data) return { ok: false, error: 'NO_DATA' };
+    if (!data.base64Data) return { ok: false, error: 'NO_BASE64_DATA' };
+    if (!data.metadata) return { ok: false, error: 'NO_METADATA' };
+
+    // Verify token
+    var token = data.token || '';
+    if (token !== CONFIG.AUTH_TOKEN) {
+      return { ok: false, error: 'UNAUTHORIZED', detail: 'Token mismatch' };
+    }
+
+    var metadata = data.metadata;
+    if (!metadata.id) return { ok: false, error: 'NO_SCREENSHOT_ID' };
+
+    var mimeType = data.mimeType || 'image/png';
+    var base64Data = data.base64Data;
+
+    // Decode base64 → bytes → Blob
+    var bytes = Utilities.base64Decode(base64Data);
+    var fileBlob = Utilities.newBlob(bytes, mimeType, 'screenshot');
+
+    // Get Drive folder
+    var folder = DriveApp.getFolderById(CONFIG.SCREENSHOT_FOLDER_ID);
+    var safeTitle = (metadata.title || 'screenshot').replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 80);
+    var ext = (metadata.screenshotFormat || (mimeType === 'image/jpeg' ? 'jpeg' : 'png')).toLowerCase();
+    if (ext === 'jpeg') ext = 'jpg';
+    var fileName = 'rf_' + metadata.id + '_' + safeTitle + '.' + ext;
+
+    // Hapus file lama dengan nama sama (re-upload support)
+    var existing = folder.getFilesByName(fileName);
+    while (existing.hasNext()) {
+      var oldFile = existing.next();
+      oldFile.setTrashed(true);
+    }
+
+    // Create file di Drive
+    fileBlob.setName(fileName);
+    fileBlob.setContentType(mimeType);
+    var newFile = folder.createFile(fileBlob);
+    var fileId = newFile.getId();
+    var fileUrl = newFile.getUrl();
+    var fileSize = newFile.getSize();
+
+    console.log('Screenshot uploaded (JSON+base64):', fileName, fileSize, 'bytes');
+
+    // Build sheet row — same format with _handleUploadScreenshot
+    var sheetData = {
+      id: metadata.id,
+      type: 'screenshot',
+      title: metadata.title || ('Screenshot — ' + new Date().toISOString()),
+      source: _serialize(metadata.source || null),
+      screenshotMode: metadata.screenshotMode || 'visible',
+      screenshotWidth: metadata.screenshotWidth || 0,
+      screenshotHeight: metadata.screenshotHeight || 0,
+      screenshotFormat: metadata.screenshotFormat || ext,
+      screenshotBytes: fileSize,
+      thumbnailDataUrl: metadata.thumbnailDataUrl || '',
+      gdriveFileId: fileId,
+      gdriveFileUrl: fileUrl,
+      tags: _serialize(metadata.tags || []),
+      category: metadata.category || '',
+      favorite: metadata.favorite || false,
+      archived: metadata.archived || false,
+      useCount: metadata.useCount || 0,
+      lastUsedAt: metadata.lastUsedAt || null,
+      createdAt: metadata.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Upsert ke sheet 07_Screenshots
+    var sheet = _getSheet(CONFIG.SHEETS.SCREENSHOTS);
+    _upsertRow(sheet, sheetData, ['id']);
+
+    return {
+      ok: true,
+      gdriveFileId: fileId,
+      gdriveFileUrl: fileUrl,
+      gdriveFileName: fileName,
+      gdriveFileSize: fileSize
+    };
+  } catch (err) {
+    console.error('Upload screenshot (JSON) error:', err);
+    return { ok: false, error: 'UPLOAD_JSON_FAILED', detail: err.message };
   }
 }
 
