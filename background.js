@@ -2209,6 +2209,102 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: e.message }); return;
     }
   }
+  // v3.11.23 (Issue #1 fix): COPY_DATAURL_TO_CLIPBOARD — copy screenshot dari preview modal
+  // (overlay.js) yang belum disimpan ke vault. Terima dataUrl langsung, bukan item ID.
+  // Inject clipboard write ke tab aktif (page context punya user gesture + clipboard access).
+  if (msg.type === 'COPY_DATAURL_TO_CLIPBOARD') {
+    try {
+      const { dataUrl, withCaption, textPlain, textHtml } = msg;
+      if (!dataUrl) { sendResponse({ ok: false, error: 'no_dataurl' }); return; }
+
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
+        sendResponse({ ok: false, error: 'cannot_inject_this_page' }); return;
+      }
+
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: async (dataUrl, withCaption, textPlain, textHtml) => {
+          try {
+            const resp = await fetch(dataUrl);
+            const blob = await resp.blob();
+            let pngBlob;
+            if (blob.type === 'image/png') {
+              pngBlob = blob;
+            } else {
+              const img = await createImageBitmap(blob);
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              canvas.getContext('2d').drawImage(img, 0, 0);
+              pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            }
+            if (!pngBlob) return { ok: false, error: 'blob_conversion_failed' };
+
+            if (withCaption && typeof ClipboardItem !== 'undefined' && textPlain && textHtml) {
+              const item = new ClipboardItem({
+                'image/png': pngBlob,
+                'text/html': new Blob([textHtml], { type: 'text/html' }),
+                'text/plain': new Blob([textPlain], { type: 'text/plain' })
+              });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
+            } else if (typeof ClipboardItem !== 'undefined') {
+              const item = new ClipboardItem({ 'image/png': pngBlob });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
+            } else {
+              return { ok: false, error: 'ClipboardItem tidak support' };
+            }
+          } catch (e) {
+            return { ok: false, error: e.message || 'clipboard_write_failed' };
+          }
+        },
+        args: [dataUrl, !!withCaption, textPlain || '', textHtml || '']
+      });
+
+      const result = results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        const awaited = await result;
+        if (awaited?.ok) {
+          sendResponse(awaited); return;
+        }
+        // Fallback: download file
+        try {
+          const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+          const objectUrl = URL.createObjectURL(blob);
+          const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+          await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          if (withCaption && textPlain) {
+            try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+          }
+          sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads + keterangan disalin' }); return;
+        } catch (e) {
+          sendResponse({ ok: false, error: 'download_fallback_failed: ' + e.message }); return;
+        }
+      }
+      if (result && result.ok) { sendResponse(result); return; }
+      // Fallback: download file
+      try {
+        const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+        const objectUrl = URL.createObjectURL(blob);
+        const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+        await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        if (withCaption && textPlain) {
+          try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+        }
+        sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads + keterangan disalin' }); return;
+      } catch (e) {
+        sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
+      }
+    } catch (e) {
+      console.warn('[RecallFox] COPY_DATAURL_TO_CLIPBOARD failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
   // v3.11.11 (Issue #1): COPY_SCREENSHOTS_BATCH — copy multiple screenshot + keterangan
   // User feedback: "apakah bisa dipilih beberapa di menu ini dan kopinya sekalian baik
   // gambar maupun keterangannya sekaligus? tapi kamu pikirkan formatnya yang sangat rapih

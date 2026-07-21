@@ -779,84 +779,145 @@
           modalEl.style.display = '';
         }
       } else if (action === 'copy') {
-        // v3.11.5: Salin gambar saja ke clipboard (tanpa keterangan)
+        // v3.11.23 (Issue #1 fix): Salin gambar saja ke clipboard (tanpa keterangan)
+        // FIX: Sebelumnya fallback pakai browser.clipboard.setImageData yang TIDAK ADA
+        // di content script → error "browser clipboard is undefined".
+        // Sekarang: coba navigator.clipboard.write (works di Firefox 127+ dengan user gesture),
+        // kalau gagal → delegate ke background (inject clipboard write ke page context),
+        // kalau masih gagal → download file sebagai fallback.
         showStatus('Menyalin gambar ke clipboard…');
+        let copyOk = false;
         try {
           const blob = await (await fetch(lastCapture.dataUrl)).blob();
-          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-          showStatus('✓ Gambar tersalin ke clipboard');
-        } catch (e) {
-          try {
-            const arr = await (await fetch(lastCapture.dataUrl)).arrayBuffer();
-            await browser.clipboard.setImageData(arr, 'png');
+          // Normalisasi ke PNG (Firefox clipboard hanya support image/png)
+          let pngBlob = blob;
+          if (blob.type !== 'image/png') {
+            const img = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          }
+          if (typeof ClipboardItem !== 'undefined') {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
             showStatus('✓ Gambar tersalin ke clipboard');
-          } catch (e2) {
-            showStatus('✗ Gagal salin: ' + e2.message, true);
+            copyOk = true;
+          }
+        } catch (e) {
+          console.warn('[RecallFox] clipboard.write failed in overlay:', e.message);
+        }
+        if (!copyOk) {
+          // Fallback: delegate ke background (inject clipboard write ke page context)
+          try {
+            const res = await browser.runtime.sendMessage({
+              type: 'COPY_DATAURL_TO_CLIPBOARD',
+              dataUrl: lastCapture.dataUrl,
+              withCaption: false
+            });
+            if (res?.ok) {
+              showStatus(res.message || '✓ Gambar tersalin ke clipboard');
+              copyOk = true;
+            }
+          } catch (e) {
+            console.warn('[RecallFox] Background clipboard delegate failed:', e.message);
+          }
+        }
+        if (!copyOk) {
+          // Last resort: download file
+          try {
+            const a = document.createElement('a');
+            a.href = lastCapture.dataUrl;
+            a.download = 'screenshot-' + Date.now() + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            showStatus('✓ Gambar disimpan ke Downloads (clipboard tidak support)');
+          } catch (e) {
+            showStatus('✗ Gagal salin: ' + e.message, true);
           }
         }
 
       } else if (action === 'copy-bundle') {
-        // v3.11.5 (Issue 1 dari Google Doc): Salin gambar + keterangan lengkap
-        // User request: "salin dengan keterangan lengkap yang ditangkap sehingga
-        //   saya bisa paste gambar berikut keterangan gambarnya ditangkap di link
-        //   apa kapan dsb sesuai yang ada kalau pakai bundle aja"
-        // Strategi: pakai ClipboardItem dengan 2 mime type:
-        //   - image/png (gambar)
-        //   - text/html (HTML dengan <img> + keterangan)
-        //   - text/plain (fallback teks dengan link + waktu)
-        // Saat user paste ke chat Aplikasi yang support HTML (Telegram, Slack,
-        // Discord, Gmail compose) → gambar + keterangan muncul bersama.
-        // Saat paste ke editor teks biasa → keterangan teks muncul.
+        // v3.11.23 (Issue #1 fix): Salin gambar + keterangan lengkap
+        // FIX: Sama seperti 'copy' — hapus browser.clipboard.setImageData fallback.
         showStatus('Menyalin gambar + keterangan…');
+        const pageTitle = document.title || 'screenshot';
+        const pageUrl = location.href;
+        const capturedAt = new Date().toISOString();
+        const modeLabel = lastCapture.mode === 'visible' ? 'Viewport' : (lastCapture.mode === 'selection' ? 'Area' : 'Seluruh halaman');
+        const dims = lastCapture.width + '×' + lastCapture.height + ' px';
+
+        const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
+          + 'Sumber: ' + pageUrl + '\n'
+          + 'Waktu: ' + new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
+          + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+          + 'Ditangkap oleh RecallFox';
+
+        const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+          + '<p style="margin:0 0 6px"><img src="' + lastCapture.dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
+          + '<p style="margin:8px 0 2px"><strong>📸 ' + escapeHtml(pageTitle) + '</strong></p>'
+          + '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageUrl) + '</a></p>'
+          + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + escapeHtml(new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
+          + '<p style="margin:0;color:#78716c">🔧 ' + escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
+          + '</div>';
+
+        let copyOk = false;
         try {
           const blob = await (await fetch(lastCapture.dataUrl)).blob();
-          const pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
-
-          // Bangun keterangan teks (sesuai yang ada di bundle RecallFox)
-          const pageTitle = document.title || 'screenshot';
-          const pageUrl = location.href;
-          const capturedAt = new Date().toISOString();
-          const modeLabel = lastCapture.mode === 'visible' ? 'Viewport' : (lastCapture.mode === 'selection' ? 'Area' : 'Seluruh halaman');
-          const dims = lastCapture.width + '×' + lastCapture.height + ' px';
-
-          const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
-            + 'Sumber: ' + pageUrl + '\n'
-            + 'Waktu: ' + new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
-            + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
-            + 'Ditangkap oleh RecallFox';
-
-          const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
-            + '<p style="margin:0 0 6px"><img src="' + lastCapture.dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
-            + '<p style="margin:8px 0 2px"><strong>📸 ' + escapeHtml(pageTitle) + '</strong></p>'
-            + '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageUrl) + '</a></p>'
-            + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + escapeHtml(new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
-            + '<p style="margin:0;color:#78716c">🔧 ' + escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
-            + '</div>';
-
-          // Coba pakai ClipboardItem dengan multiple representations
-          const clipboardItem = new ClipboardItem({
-            'image/png': pngBlob,
-            'text/html': new Blob([textHtml], { type: 'text/html' }),
-            'text/plain': new Blob([textPlain], { type: 'text/plain' })
-          });
-          await navigator.clipboard.write([clipboardItem]);
-          showStatus('✓ Gambar + keterangan tersalin ke clipboard');
+          let pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
+          if (blob.type !== 'image/png') {
+            const img = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          }
+          if (typeof ClipboardItem !== 'undefined') {
+            const clipboardItem = new ClipboardItem({
+              'image/png': pngBlob,
+              'text/html': new Blob([textHtml], { type: 'text/html' }),
+              'text/plain': new Blob([textPlain], { type: 'text/plain' })
+            });
+            await navigator.clipboard.write([clipboardItem]);
+            showStatus('✓ Gambar + keterangan tersalin ke clipboard');
+            copyOk = true;
+          }
         } catch (e) {
-          // Fallback 1: coba salin gambar saja + teks plain secara terpisah
-          console.warn('[RecallFox] ClipboardItem multi-mime failed, fallback:', e);
+          console.warn('[RecallFox] clipboard.write bundle failed:', e.message);
+        }
+        if (!copyOk) {
+          // Fallback: delegate ke background
           try {
-            const arr = await (await fetch(lastCapture.dataUrl)).arrayBuffer();
-            await browser.clipboard.setImageData(arr, 'png');
-            // Coba juga tulis teks plain
-            try {
-              const textFallback = '📸 Screenshot dari ' + location.href + ' — ' + new Date().toLocaleString('id-ID');
-              await navigator.clipboard.writeText(textFallback);
-              showStatus('✓ Gambar tersalin (keterangan terpisah di clipboard teks)');
-            } catch (e2) {
-              showStatus('✓ Gambar tersalin (tanpa keterangan — browser tidak mendukung multi-mime)');
+            const res = await browser.runtime.sendMessage({
+              type: 'COPY_DATAURL_TO_CLIPBOARD',
+              dataUrl: lastCapture.dataUrl,
+              withCaption: true,
+              textPlain: textPlain,
+              textHtml: textHtml
+            });
+            if (res?.ok) {
+              showStatus(res.message || '✓ Gambar + keterangan tersalin');
+              copyOk = true;
             }
-          } catch (e3) {
-            showStatus('✗ Gagal salin: ' + e3.message, true);
+          } catch (e) {
+            console.warn('[RecallFox] Background clipboard delegate failed:', e.message);
+          }
+        }
+        if (!copyOk) {
+          // Last resort: copy text + download image
+          try {
+            await navigator.clipboard.writeText(textPlain);
+            const a = document.createElement('a');
+            a.href = lastCapture.dataUrl;
+            a.download = 'screenshot-' + Date.now() + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            showStatus('✓ Keterangan disalin + gambar di-download (clipboard image tidak support)');
+          } catch (e) {
+            showStatus('✗ Gagal salin: ' + e.message, true);
           }
         }
 
