@@ -3633,9 +3633,75 @@ async function renderGDrivePage(B) {
     multiPcColor = '#059669';
   }
 
+  // v3.11.21: Ambil status Supabase
+  let supabaseStatus = { loggedIn: false };
+  try {
+    const r = await browser.runtime.sendMessage({ type: 'SUPABASE_STATUS' });
+    if (r?.ok && r.status) supabaseStatus = r.status;
+  } catch (e) {}
+
   B.innerHTML =
+    // ===== SECTION 0: Supabase Login (v3.11.21) — Auto-sync, lebih mudah dari Apps Script =====
+    // User feedback: "saya frustasi dengan apps script yang tidak berhasil sudah dua hari
+    // untuk save gambar screenshot di drive. oleh karena itu buatkan databasenya menggunakan
+    // suppabase untuk menyimpan seluruh data yang dihasilkan di dalam addon"
+    '<div class="card" style="background:linear-gradient(135deg,#15803d,#166534);color:#f0fdf4;border:none">'
+    + '<div style="font-size:11px;opacity:.85">🟢 Supabase Cloud Sync (NEW — otomatis, lebih mudah)</div>'
+    + '<div style="font-size:13px;font-weight:600;margin:4px 0;color:#fff">'
+    + (supabaseStatus.loggedIn
+        ? '✅ Login: ' + esc(supabaseStatus.user?.email || 'user')
+        : '⛔ Belum login')
+    + '</div>'
+    + (supabaseStatus.loggedIn && supabaseStatus.lastSync
+        ? '<div style="font-size:11px;opacity:.85">Last sync: ' + esc(supabaseStatus.lastSync.direction || '-') + ' · ' + (supabaseStatus.lastSync.at ? new Date(supabaseStatus.lastSync.at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : 'belum') + '</div>'
+        : '<div style="font-size:11px;opacity:.85">Login sekali → semua data otomatis sync ke cloud</div>')
+    + '</div>'
+
+    // Supabase Login Form / User Info
+    + '<div class="card"><h3>🔐 Login Supabase</h3>'
+    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d">'
+    + '<b>Kenapa Supabase?</b> Apps Script ribet (URL + Token + deploy). Supabase cukup <b>login email/password</b> sekali → semua data (vault, catatan, screenshot, settings) <b>otomatis sync</b> ke cloud. Screenshot full image disimpan di Supabase Storage (tidak ke-limit Apps Script 10MB).<br>'
+    + '<b>Akun default:</b> agung.kesmas@gmail.com / Recallfox@2026<br>'
+    + '<b>Setup:</b> 1) Login email/password di bawah. 2) Klik "Push ke Cloud" untuk upload state lokal. 3) Di PC lain: login sama → klik "Pull dari Cloud".'
+    + '</div>';
+
+  if (supabaseStatus.loggedIn) {
+    // User sudah login — tampilkan info + tombol sync
+    B.innerHTML += '<div style="margin:8px 0;padding:10px;background:var(--surface-2);border-radius:8px">'
+      + '<div style="font-size:12px"><b>Email:</b> ' + esc(supabaseStatus.user?.email || '-') + '</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px"><b>User ID:</b> ' + esc(supabaseStatus.userId || '-') + '</div>'
+      + '</div>'
+      + '<div class="btn-row" style="flex-direction:column;gap:6px">'
+      +   '<button class="btn btn-p" id="rfSupaFullSync" style="width:100%;background:linear-gradient(135deg,#15803d,#166534)">🔄 Sync Full (push + pull)</button>'
+      +   '<div class="btn-row" style="gap:6px">'
+      +     '<button class="btn btn-g" id="rfSupaPush" style="flex:1">📤 Push ke Cloud</button>'
+      +     '<button class="btn btn-g" id="rfSupaPull" style="flex:1">📥 Pull dari Cloud</button>'
+      +   '</div>'
+      +   '<button class="btn btn-g" id="rfSupaLogout" style="width:100%;background:#fee2e2;color:#991b1b">🚪 Logout</button>'
+      + '</div>';
+  } else {
+    // Form login
+    B.innerHTML += '<div style="display:flex;flex-direction:column;gap:6px">'
+      +   '<input class="f" id="rfSupaEmail" type="email" placeholder="Email (mis. agung.kesmas@gmail.com)" value="agung.kesmas@gmail.com" style="font-size:12px">'
+      +   '<input class="f" id="rfSupaPass" type="password" placeholder="Password" value="Recallfox@2026" style="font-size:12px">'
+      +   '<button class="btn btn-p" id="rfSupaLogin" style="width:100%;background:linear-gradient(135deg,#15803d,#166534)">🔐 Login</button>'
+      +   '<div style="text-align:center;font-size:10px;color:var(--muted);margin:4px 0">— atau —</div>'
+      +   '<button class="btn btn-g" id="rfSupaGmail" style="width:100%;background:#fff;color:#1f2937;border:1px solid #d1d5db">'
+      +     '<span style="display:inline-flex;align-items:center;gap:6px">'
+      +       '<svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>'
+      +       'Login dengan Gmail'
+      +     '</span>'
+      +   '</button>'
+      +   '<button class="btn btn-g" id="rfSupaSignup" style="width:100%;font-size:11px">📝 Buat akun baru</button>'
+      +   '<button class="btn btn-g" id="rfSupaTestConn" style="width:100%;font-size:11px">🔌 Test Koneksi Supabase</button>'
+      + '</div>';
+  }
+
+  B.innerHTML += '<div id="rfSupaResult" style="margin-top:8px;font-size:11px;display:none"></div>'
+    + '</div>'
+
     // ===== HEADER: Status gabungan GDrive + Multi-PC =====
-    '<div class="card" style="background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border:none">'
+    + '<div class="card" style="background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#eff6ff;border:none">'
     + '<div style="font-size:11px;opacity:.85">Status GDrive Sync (one-way push)</div>'
     + '<div style="font-size:13px;font-weight:600;margin:4px 0;color:#fff">' + esc(statusBadge) + '</div>'
     + '<div style="font-size:11px;opacity:.85">Queue: ' + (syncStatus.queueLength || 0) + ' item · Gagal: ' + (syncStatus.meta?.totalFailed || 0) + '</div>'
@@ -4039,6 +4105,138 @@ async function renderGDrivePage(B) {
   _renderSyncProfileListInline(B);
   $('#rfSyncProfAdd')?.addEventListener('click', () => _addSyncProfileInline(B));
   $('#rfSyncProfTest')?.addEventListener('click', () => _testSyncProfileInline(B));
+
+  // v3.11.21: Supabase event bindings
+  $('#rfSupaLogin')?.addEventListener('click', async () => {
+    const email = ($('#rfSupaEmail')?.value || '').trim();
+    const password = $('#rfSupaPass')?.value || '';
+    if (!email || !password) { _showSupaResult(B, false, 'Email dan password wajib diisi'); return; }
+    _showSupaResult(B, true, '⏳ Login ke Supabase...');
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'SUPABASE_LOGIN', email, password });
+      if (res?.ok) {
+        _showSupaResult(B, true, '✅ Login berhasil! Email: ' + (res.user?.email || email));
+        toast('✅ Login Supabase berhasil');
+        renderGDrivePage(B);
+      } else {
+        _showSupaResult(B, false, '❌ Login gagal: ' + (res?.error || 'unknown'));
+      }
+    } catch (e) {
+      _showSupaResult(B, false, '❌ Error: ' + e.message);
+    }
+  });
+
+  $('#rfSupaSignup')?.addEventListener('click', async () => {
+    const email = ($('#rfSupaEmail')?.value || '').trim();
+    const password = $('#rfSupaPass')?.value || '';
+    if (!email || !password) { _showSupaResult(B, false, 'Email dan password wajib diisi'); return; }
+    if (!confirm('Buat akun Supabase baru?\n\nEmail: ' + email + '\n\nAkun akan dibuat di project RecallFox Supabase.')) return;
+    _showSupaResult(B, true, '⏳ Mendaftarkan akun...');
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'SUPABASE_SIGNUP', email, password });
+      if (res?.ok) {
+        if (res.needsConfirmation) {
+          _showSupaResult(B, true, '📧 Akun dibuat! Cek email untuk konfirmasi, lalu login.');
+        } else {
+          _showSupaResult(B, true, '✅ Akun dibuat & login otomatis!');
+          renderGDrivePage(B);
+        }
+      } else {
+        _showSupaResult(B, false, '❌ Signup gagal: ' + (res?.error || 'unknown'));
+      }
+    } catch (e) {
+      _showSupaResult(B, false, '❌ Error: ' + e.message);
+    }
+  });
+
+  $('#rfSupaGmail')?.addEventListener('click', async () => {
+    _showSupaResult(B, true, '⏳ Membuka Gmail login di tab baru...');
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'SUPABASE_GMAIL' });
+      _showSupaResult(B, true, '🔗 Tab baru dibuka. Login Gmail di sana, lalu kembali ke addon.');
+    } catch (e) {
+      _showSupaResult(B, false, '❌ Error: ' + e.message);
+    }
+  });
+
+  $('#rfSupaLogout')?.addEventListener('click', async () => {
+    if (!confirm('Logout dari Supabase? Data lokal tetap ada, tapi sync cloud berhenti.')) return;
+    try {
+      await browser.runtime.sendMessage({ type: 'SUPABASE_LOGOUT' });
+      toast('🚪 Logout Supabase berhasil');
+      renderGDrivePage(B);
+    } catch (e) {
+      toast('Error: ' + e.message, false);
+    }
+  });
+
+  $('#rfSupaPush')?.addEventListener('click', () => _doSupabaseSync(B, 'push'));
+  $('#rfSupaPull')?.addEventListener('click', () => _doSupabaseSync(B, 'pull'));
+  $('#rfSupaFullSync')?.addEventListener('click', () => _doSupabaseSync(B, 'full'));
+
+  $('#rfSupaTestConn')?.addEventListener('click', async () => {
+    _showSupaResult(B, true, '⏳ Test koneksi Supabase...');
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'SUPABASE_TEST_CONNECTION' });
+      if (res?.ok) {
+        _showSupaResult(B, true, '✅ Supabase accessible: ' + (res.url || ''));
+      } else {
+        _showSupaResult(B, false, '❌ Gagal: ' + (res?.error || 'unknown'));
+      }
+    } catch (e) {
+      _showSupaResult(B, false, '❌ Error: ' + e.message);
+    }
+  });
+}
+
+// v3.11.21: Helper — jalankan Supabase sync (push/pull/full)
+async function _doSupabaseSync(B, action) {
+  const btnMap = { full: 'rfSupaFullSync', push: 'rfSupaPush', pull: 'rfSupaPull' };
+  const btn = $('#' + btnMap[action]);
+  const orig = btn?.textContent || '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Memproses...'; }
+  _showSupaResult(B, true, '⏳ Supabase ' + action + ' sedang berjalan... mohon tunggu.');
+  try {
+    const msgType = action === 'full' ? 'SUPABASE_FULL_SYNC' : action === 'push' ? 'SUPABASE_PUSH' : 'SUPABASE_PULL';
+    const res = await browser.runtime.sendMessage({ type: msgType });
+    if (res?.ok) {
+      let msg = '';
+      if (action === 'push') {
+        const s = res.stats || {};
+        msg = '✓ Push berhasil · ' + (s.items || 0) + ' items, ' + (s.notes || 0) + ' catatan, ' + (s.screenshots || 0) + ' screenshot, ' + (s.settings || 0) + ' settings';
+        if (s.errors && s.errors.length > 0) msg += ' (' + s.errors.length + ' error)';
+      } else if (action === 'pull') {
+        const s = res.stats || {};
+        msg = '✓ Pull berhasil · +' + (s.itemsAdded || 0) + ' items baru, ~' + (s.itemsUpdated || 0) + ' updated, +' + (s.notesAdded || 0) + ' catatan baru';
+      } else {
+        const p = res.push?.stats || {}, l = res.pull?.stats || {};
+        msg = '✓ Sync lengkap · push: ' + (p.items || 0) + ' items, pull: +' + (l.itemsAdded || 0) + ' baru';
+      }
+      _showSupaResult(B, true, msg);
+      toast(msg);
+      if (action !== 'push') {
+        // Refresh vault kalau ada pull
+        await refreshVault();
+      }
+    } else {
+      const msg = '⚠ Gagal: ' + (res?.error || 'unknown');
+      _showSupaResult(B, false, msg);
+      toast(msg, false);
+    }
+  } catch (e) {
+    _showSupaResult(B, false, '⚠ Error: ' + e.message);
+    toast('⚠ Error: ' + e.message, false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+function _showSupaResult(B, ok, msg) {
+  const el = $('#rfSupaResult');
+  if (!el) return;
+  el.style.display = '';
+  el.innerHTML = (ok ? '✓ ' : '✕ ') + msg;
+  el.style.color = ok ? 'var(--green)' : 'var(--red)';
 }
 
 // v3.11.7-fix (Issue #5): Helper — jalankan aksi Multi-PC Sync (push/pull/full)

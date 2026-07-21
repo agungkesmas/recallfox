@@ -2046,6 +2046,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // karena perlu user gesture di page context. Solusi: inject content script ke
     // tab aktif yang eksekusi clipboard write di context page.
     //
+    // v3.11.21 FIX: Sebelumnya fungsi executeScript.func pakai sendResponse() di dalam
+    // func body — tapi sendResponse adalah background context function, TIDAK BISA
+    // diakses dari content script context. Akibatnya throw ReferenceError, ditangkap
+    // catch, lalu diteruskan sebagai 'clipboard_write_failed'.
+    // Fix: ganti sendResponse(...) ke return { ... } pattern (sama seperti
+    // COPY_SCREENSHOTS_BATCH yang sudah benar di v3.11.12).
+    //
     // msg: { id, withCaption: bool }
     // Returns: { ok: bool, message?: string, error?: string }
     try {
@@ -2089,11 +2096,31 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const results = await browser.scripting.executeScript({
         target: { tabId: tab.id, allFrames: false },
         func: async (dataUrl, withCaption, textPlain, textHtml) => {
+          // v3.11.21 FIX: PAKAI RETURN, bukan sendResponse.
+          // executeScript.func berjalan di content script context, tidak punya
+          // akses ke sendResponse (background-only). Pakai return value, akan
+          // diterima via results[0].result di background.
           try {
             // Konversi dataUrl → Blob
             const resp = await fetch(dataUrl);
             const blob = await resp.blob();
-            const pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
+            // Normalisasi ke PNG supaya clipboard API support (Firefox hanya image/png)
+            let pngBlob;
+            if (blob.type === 'image/png') {
+              pngBlob = blob;
+            } else {
+              // Convert JPEG/other ke PNG via canvas
+              const img = await createImageBitmap(blob);
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            }
+            if (!pngBlob) {
+              return { ok: false, error: 'blob_conversion_failed' };
+            }
 
             if (withCaption && typeof ClipboardItem !== 'undefined') {
               // Multi-mime: image/png + text/html + text/plain
@@ -2103,29 +2130,49 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 'text/plain': new Blob([textPlain], { type: 'text/plain' })
               });
               await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' }); return;
+              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
             } else if (typeof ClipboardItem !== 'undefined') {
               // Image only
               const item = new ClipboardItem({ 'image/png': pngBlob });
               await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, message: '✓ Gambar tersalin ke clipboard' }); return;
+              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
             } else {
-              // Fallback: browser.clipboard.setImageData (Firefox < 127)
-              const arrBuf = await pngBlob.arrayBuffer();
-              await browser.clipboard.setImageData(arrBuf, 'png');
-              if (withCaption) {
-                try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
-              }
-              sendResponse({ ok: true, message: '✓ Gambar tersalin (mode fallback)' }); return;
+              // Fallback: browser.clipboard.setImageData (Firefox < 127) — ini harus
+              // dilakukan di background context, bukan content script. Tapi karena
+              // kita sudah di content script, return signal supaya background handle.
+              return { ok: false, error: 'clipboard_item_unsupported', needsFallback: true, pngSize: pngBlob.size };
             }
           } catch (e) {
-            sendResponse({ ok: false, error: e.message }); return;
+            return { ok: false, error: e.message || 'clipboard_write_failed' };
           }
         },
         args: [dataUrl, !!msg.withCaption, textPlain, textHtml]
       });
 
       const result = results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        // Function return Promise — await di listener
+        const awaited = await result;
+        // v3.11.21: Handle fallback untuk browser tanpa ClipboardItem
+        if (awaited?.needsFallback) {
+          // Background context: pakai browser.clipboard.setImageData (Firefox-only API)
+          try {
+            const { getScreenshotBlob } = await import('./lib/storage.js');
+            const dataUrl2 = await getScreenshotBlob(msg.id);
+            const resp2 = await fetch(dataUrl2);
+            const blob2 = await resp2.blob();
+            const arrBuf = await blob2.arrayBuffer();
+            await browser.clipboard.setImageData(arrBuf, 'png');
+            if (msg.withCaption) {
+              try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+            }
+            sendResponse({ ok: true, message: '✓ Gambar tersalin (mode fallback)' }); return;
+          } catch (e) {
+            sendResponse({ ok: false, error: 'fallback_failed: ' + e.message }); return;
+          }
+        }
+        sendResponse(awaited); return;
+      }
       if (result && result.ok) { sendResponse(result); return; }
       sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
     } catch (e) {
@@ -2458,6 +2505,156 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }).catch(() => {});
     sendResponse({ ok: true }); return;
+  }
+
+  // ========================================================================
+  // v3.11.21: SUPABASE INTEGRATION — Auth + Sync
+  // User feedback: "buatkan databasenya menggunakan suppabase untuk menyimpan
+  // seluruh data yang dihasilkan di dalam addon seperti desain apps sync nya
+  // aja namun versi otomatis karena ini kan pake suppabase"
+  // ========================================================================
+
+  // SUPABASE_LOGIN — login email/password
+  if (msg.type === 'SUPABASE_LOGIN') {
+    try {
+      const { signInWithEmail } = await import('./lib/supabase-client.js');
+      const res = await signInWithEmail(msg.email, msg.password);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_SIGNUP — signup email/password baru
+  if (msg.type === 'SUPABASE_SIGNUP') {
+    try {
+      const { signUpWithEmail } = await import('./lib/supabase-client.js');
+      const res = await signUpWithEmail(msg.email, msg.password);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_GMAIL — login via Gmail OAuth (redirect)
+  if (msg.type === 'SUPABASE_GMAIL') {
+    try {
+      const { signInWithGmail } = await import('./lib/supabase-client.js');
+      const res = await signInWithGmail();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_LOGOUT
+  if (msg.type === 'SUPABASE_LOGOUT') {
+    try {
+      const { signOut } = await import('./lib/supabase-client.js');
+      await signOut();
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_STATUS — cek login status + user info
+  if (msg.type === 'SUPABASE_STATUS') {
+    try {
+      const { getSupabaseStatus } = await import('./lib/supabase-sync.js');
+      const status = await getSupabaseStatus();
+      sendResponse({ ok: true, status }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_PUSH — upload local state ke cloud
+  if (msg.type === 'SUPABASE_PUSH') {
+    try {
+      const { pushToSupabase } = await import('./lib/supabase-sync.js');
+      const res = await pushToSupabase();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_PULL — download cloud state ke local
+  if (msg.type === 'SUPABASE_PULL') {
+    try {
+      const { pullFromSupabase } = await import('./lib/supabase-sync.js');
+      const res = await pullFromSupabase();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_FULL_SYNC — push + pull
+  if (msg.type === 'SUPABASE_FULL_SYNC') {
+    try {
+      const { fullSync } = await import('./lib/supabase-sync.js');
+      const res = await fullSync();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_TEST_CONNECTION — test koneksi ke project (tanpa login)
+  if (msg.type === 'SUPABASE_TEST_CONNECTION') {
+    try {
+      const { testConnection } = await import('./lib/supabase-client.js');
+      const res = await testConnection();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_DELETE_ITEM — hapus item dari cloud saat item lokal dihapus
+  if (msg.type === 'SUPABASE_DELETE_ITEM') {
+    try {
+      const { deleteItemFromCloud } = await import('./lib/supabase-sync.js');
+      const res = await deleteItemFromCloud(msg.id);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_DELETE_NOTE — hapus note dari cloud
+  if (msg.type === 'SUPABASE_DELETE_NOTE') {
+    try {
+      const { deleteNoteFromCloud } = await import('./lib/supabase-sync.js');
+      const res = await deleteNoteFromCloud(msg.id);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_AUTO_SYNC — trigger push debounced (dipanggil otomatis saat vault berubah)
+  if (msg.type === 'SUPABASE_AUTO_SYNC') {
+    try {
+      const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+      triggerAutoSync();
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_OAUTH_CALLBACK — handle redirect dari Gmail OAuth (parse token dari URL hash)
+  if (msg.type === 'SUPABASE_OAUTH_CALLBACK') {
+    try {
+      const { handleOAuthCallback } = await import('./lib/supabase-client.js');
+      const res = await handleOAuthCallback();
+      sendResponse(res || { ok: false, error: 'no_callback_data' }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
   }
 
   })();

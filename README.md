@@ -1,22 +1,30 @@
-# RecallFox v3.11.14
+# RecallFox v3.11.21
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.11.14 — 2 fix dari Log Troubleshooting Sesi terakhir**
-> - ☑️ **Issue #1**: **Toggle batch diselaraskan ke SEMUA tipe item** — sebelumnya hanya Screenshot. Sekarang Prompt, Konteks, Link, Bundle, Snapshot, Screenshot, dan Arsip semua punya mode batch. Aksi per tipe:
->   - Screenshot: Copy + Keterangan, Copy Gambar Saja, Hapus
->   - Prompt/Konteks/Link/Snapshot: Copy Teks (format rapi `## Judul [Tipe]\nIsi`), Hapus
->   - Bundle: Copy Bundle (gabungan semua anggota + catatan + inline prompt), Hapus
->   - Arsip: Unarsip (keluarkan dari arsip), Hapus permanen
-> - 📐 **Issue #2**: **Tombol hapus/batal/konfirmasi tidak lagi ketutupan di sidebar sempit**. Tambah responsive CSS rules untuk w-sm (≤360px), w-xs (≤280px), w-xxs (≤220px) di:
->   - `vaultBatchBar` & `notesBatchBar` — tombol wrap dengan benar, padding & font-size mengecil
->   - `confirmstrip` (konfirmasi hapus) — teks full width di atas, tombol Batal/Hapus 50/50 di bawah
->   - `page-foot` (catatan editor 5 tombol) — 2 tombol per baris di sidebar sempit
->   - `sheet-form .btn-row` (Buat/Edit Bundle, dll) — tombol wrap 50/50 atau full width
->   - `.btn-row` & `.confirmstrip` sekarang `flex-wrap: wrap` by default
+> **v3.11.21 — 2 fix besar dari Log Troubleshooting Sesi terakhir**
+> - 🔧 **Issue #1 (Clipboard fix)**: Tombol "Salin Gambar" / "Salin + Keterangan" gagal dengan error `clipboard_write_failed`. Root cause: fungsi `executeScript.func` pakai `sendResponse()` di dalam func body — tapi `sendResponse` adalah background context function, TIDAK BISA diakses dari content script context. Fix: ganti ke `return { ... }` pattern (sama seperti `COPY_SCREENSHOTS_BATCH` yang sudah benar di v3.11.12).
+> - 🗄️ **Issue #2 (Migrasi Supabase)**: User frustasi dengan Apps Script yang tidak berhasil save screenshot ke Drive (2 hari). **Buat database Supabase** untuk simpan seluruh data addon — mirip desain Apps Sync tapi versi otomatis (cukup login email/password, tidak perlu URL+Token+deploy). Fitur:
+>   - **Login email/password** (default: `agung.kesmas@gmail.com` / `Recallfox@2026`)
+>   - **Login Gmail OAuth** (tombol Google)
+>   - **Auto-sync** — setiap vault berubah, push ke Supabase Cloud (debounced 5s)
+>   - **Push/Pull/Full Sync** manual
+>   - **Screenshot Storage** — upload gambar ke Supabase Storage bucket (tidak ke-limit Apps Script 10MB)
+>   - **SQL schema lengkap** (`supabase-schema.sql`) — 6 tables + RLS + triggers + storage bucket
+>   - **6 message handlers** di background.js: `SUPABASE_LOGIN`, `SUPABASE_SIGNUP`, `SUPABASE_GMAIL`, `SUPABASE_LOGOUT`, `SUPABASE_STATUS`, `SUPABASE_PUSH`, `SUPABASE_PULL`, `SUPABASE_FULL_SYNC`, `SUPABASE_TEST_CONNECTION`, `SUPABASE_DELETE_ITEM`, `SUPABASE_DELETE_NOTE`, `SUPABASE_AUTO_SYNC`, `SUPABASE_OAUTH_CALLBACK`
 >
-> **Baseline:** v3.11.13 · **Lihat:** [CHANGELOG-v3.11.14.md](./CHANGELOG-v3.11.14.md)
+> **Baseline:** v3.11.20 · **Lihat:** [CHANGELOG-v3.11.21.md](./CHANGELOG-v3.11.21.md)
+
+## 🗄️ Setup Supabase (WAJIB sebelum bisa pakai)
+
+1. Buka https://supabase.com/dashboard/project/qmwofsfpxjptpyvncylp/sql/new
+2. Login dengan akun Supabase Anda
+3. Paste seluruh isi file [`supabase-schema.sql`](./supabase-schema.sql), klik **Run**
+4. Cek output — harus "Success. No rows returned."
+5. Cek di Table Editor — harus muncul 6 tables: `profiles`, `vault_items`, `notes`, `settings`, `screenshots`, `sync_log`
+6. Buka addon → Alat → Sync Cloud → section "🔐 Login Supabase" → klik **Login**
+7. Klik **Push ke Cloud** untuk upload state lokal ke Supabase
 
 ## Install di Firefox
 
