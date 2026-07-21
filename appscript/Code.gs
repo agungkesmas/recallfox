@@ -1,10 +1,18 @@
 /**
  * ============================================================================
- * RecallFox v3.10.0 — Google Apps Script Bridge (FIXED + ENHANCED)
+ * RecallFox v3.11.17-sync — Google Apps Script Bridge (FIXED + ENHANCED)
  * ----------------------------------------------------------------------------
  * Web App yang menjembatani addon RecallFox (Firefox) dengan:
  *   - Spreadsheet database (17 sheet) — ID hardcoded di bawah
  *   - Folder Google Drive untuk screenshot full image
+ *   - Sheet "SyncState" untuk Multi-PC Sync (sync_state + get_state actions)
+ *
+ * === VERSI INI (v3.11.17-sync) ===
+ * Update dari v3.10.0 (yang TIDAK support sync_state) ke versi yang support:
+ *   - action 'sync_state' (Push state ke cloud via POST)
+ *   - action 'get_state' (Pull state dari cloud via GET)
+ *   - Sheet 'SyncState' auto-create di setup() + on-demand di _handleSyncState
+ *   - Multiple profiles support (each profile = 1 row in SyncState)
  *
  * === FIXES v3.10.0 (Issue #1 dari troubleshooting Sesi 1 batch 2) ===
  * 1. Update version string ke v3.10.0 supaya konsisten dengan addon
@@ -175,13 +183,13 @@ function doGet(e) {
     return _jsonOut(_handleGetState(data));
   }
   if (action === 'ping') {
-    return _jsonOut({ ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.10.0', version: '3.10.0' });
+    return _jsonOut({ ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.11.17-sync', version: '3.11.17-sync' });
   }
 
   var info = {
     ok: true,
     service: 'RecallFox GDrive Bridge',
-    version: '3.10.0',
+    version: '3.11.17-sync',
     time: new Date().toISOString(),
     spreadsheetId: CONFIG.SPREADSHEET_ID,
     screenshotFolderId: CONFIG.SCREENSHOT_FOLDER_ID,
@@ -290,7 +298,7 @@ function _dispatchAction(action, data) {
     case 'batch':              return _handleBatch(data);
     // v3.11.7: Multi-PC bidirectional sync — push full state as JSON blob
     case 'sync_state':         return _handleSyncState(data);
-    case 'ping':               return { ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.10.0', version: '3.10.0' };
+    case 'ping':               return { ok: true, pong: true, time: new Date().toISOString(), service: 'RecallFox GDrive Bridge v3.11.17-sync', version: '3.11.17-sync' };
     default:                   return { ok: false, error: 'UNKNOWN_ACTION', action: action };
   }
 }
@@ -1051,6 +1059,21 @@ function setup() {
   } catch (e) {
     Logger.log('✗ Folder screenshot TIDAK dapat diakses: ' + e.message);
   }
+
+  // v3.11.17-sync: Buat sheet SyncState untuk Multi-PC Sync (sync_state + get_state)
+  var syncSheet = ss.getSheetByName('SyncState');
+  if (!syncSheet) {
+    syncSheet = ss.insertSheet('SyncState');
+    syncSheet.getRange(1, 1, 1, 7).setValues([[
+      'profile', 'deviceId', 'deviceName', 'updatedAt', 'payloadSize', 'payload', 'createdAt'
+    ]]);
+    syncSheet.getRange(1, 1, 1, 7).setFontWeight('bold');
+    syncSheet.setFrozenRows(1);
+    Logger.log('✓ Sheet SyncState dibuat (untuk Multi-PC Sync)');
+  } else {
+    Logger.log('✓ Sheet SyncState sudah ada');
+  }
+
   Logger.log('✓ Setup selesai. Spreadsheet: ' + ss.getName());
   Logger.log('✓ Jumlah sheet: ' + ss.getSheets().length);
   Logger.log('✓ AUTH_TOKEN saat ini: ' + CONFIG.AUTH_TOKEN);
