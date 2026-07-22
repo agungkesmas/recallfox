@@ -148,9 +148,10 @@ browser.runtime.onStartup.addListener(async () => {
     const { isLoggedIn } = await import('./lib/supabase-client.js');
     const loggedIn = await isLoggedIn();
     if (loggedIn) {
-      const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
       await startRealtimeSync();
-      console.log('[RecallFox] Supabase realtime sync started on startup');
+      await subscribeRealtimeVault();
+      console.log('[RecallFox] Supabase realtime sync started on startup (v3.11.33)');
     }
   } catch (e) { console.warn('[RecallFox] onStartup: Supabase realtime start failed:', e.message); }
 
@@ -2678,10 +2679,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { signInWithEmail } = await import('./lib/supabase-client.js');
       const res = await signInWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah login sukses
+      // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
           await startRealtimeSync();
+          await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
       }
       sendResponse(res); return;
@@ -2696,10 +2699,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { signUpWithEmail } = await import('./lib/supabase-client.js');
       const res = await signUpWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah signup sukses
+      // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
           await startRealtimeSync();
+          await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
       }
       sendResponse(res); return;
