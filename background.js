@@ -851,8 +851,10 @@ async function saveCaptureToVault(payload) {
     source: {
       url: payload.url,
       title: payload.pageTitle,
-      capturedAt: new Date().toISOString()
+      capturedAt: new Date().toISOString(),
+      annotationNote: payload.annotationNote || ''  // v3.11.26 (Issue #2): catatan anotasi
     },
+    annotationNote: payload.annotationNote || '',  // v3.11.26 (Issue #2): simpan di top-level juga
     screenshotMode: payload.mode,
     screenshotWidth: payload.width,
     screenshotHeight: payload.height,

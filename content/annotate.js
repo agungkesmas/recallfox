@@ -155,6 +155,12 @@
 
           <div class="rf-annotate-spacer"></div>
 
+          <!-- v3.11.26 (Issue #2): Catatan anotasi — teks penjelas yang ikut saat copy/simpan -->
+          <div class="rf-annotate-note" style="display:flex;align-items:center;gap:6px;margin-right:8px">
+            <label style="font-size:11px;color:#57534e;white-space:nowrap">📝 Catatan:</label>
+            <input type="text" id="rfAnnNote" placeholder="Jelaskan anotasi ini..." style="width:200px;padding:4px 8px;font-size:12px;border:1px solid #d6d3d1;border-radius:6px;background:#fff;color:#1c1917" title="Catatan akan ikut saat copy/simpan">
+          </div>
+
           <div class="rf-annotate-actions">
             <button class="rf-ann-btn rf-ann-btn-ghost" id="rfAnnUndo" title="Undo (Ctrl+Z)" disabled>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -641,10 +647,13 @@
     mctx.drawImage(bgCanvas, 0, 0);
     mctx.drawImage(drawCanvas, 0, 0);
     const dataUrl = merged.toDataURL('image/png');
-    _close(resolve, false, dataUrl);
+    // v3.11.26 (Issue #2): Ambil catatan dari input field
+    const noteEl = document.getElementById('rfAnnNote');
+    const note = noteEl ? noteEl.value.trim() : '';
+    _close(resolve, false, dataUrl, note);
   }
 
-  function _close(resolve, cancelled, dataUrl) {
+  function _close(resolve, cancelled, dataUrl, note) {
     // Cleanup
     if (overlayEl._keyHandler) {
       document.removeEventListener('keydown', overlayEl._keyHandler, true);
@@ -658,6 +667,6 @@
     previewCtx = null;
     undoStack = [];
     redoStack = [];
-    resolve({ cancelled: !!cancelled, dataUrl: dataUrl || null });
+    resolve({ cancelled: !!cancelled, dataUrl: dataUrl || null, note: note || '' });
   }
 })();

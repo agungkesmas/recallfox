@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS public.screenshots (
   width INTEGER,
   height INTEGER,
   format TEXT,
+  annotation_note TEXT,                   -- v3.11.26 (Issue #2): catatan anotasi screenshot
   captured_at TIMESTAMPTZ,
   source_url TEXT,
   source_title TEXT,
@@ -305,3 +306,21 @@ CREATE POLICY "screenshots_delete_own" ON storage.objects
 -- Untuk test RLS:
 --   SET request.jwt.claim.sub = '<user-uuid>';
 --   SELECT * FROM public.vault_items;  -- harus hanya return row milik user tersebut
+
+-- ============== MIGRATION v3.11.26 (Issue #2) ==============
+-- Tambah kolom annotation_note ke tabel screenshots yang sudah ada.
+-- Jalankan kalau tabel screenshots sudah dibuat sebelumnya (tanpa kolom ini).
+-- Safe to run multiple times (IF NOT EXISTS).
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'screenshots' AND table_schema = 'public' AND column_name = 'annotation_note'
+  ) THEN
+    RAISE NOTICE 'Kolom annotation_note sudah ada di tabel screenshots — skip.';
+  ELSE
+    ALTER TABLE public.screenshots ADD COLUMN annotation_note TEXT;
+    RAISE NOTICE 'Kolom annotation_note ditambahkan ke tabel screenshots.';
+  END IF;
+END $$;

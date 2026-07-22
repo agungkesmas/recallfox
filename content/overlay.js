@@ -634,6 +634,10 @@
             <span class="rf-capture-modal-info-size">💾 ${sizeText}</span>
             <span class="rf-capture-modal-info-mode">🔧 ${escapeHtml(modeLabel)}</span>
           </div>
+          <!-- v3.11.26 (Issue #2): Catatan anotasi — muncul setelah anotasi dibuat -->
+          <div class="rf-capture-modal-note" style="display:none;margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:12px;color:#92400e">
+            <strong>📝 Catatan:</strong> <span class="rf-capture-modal-note-text"></span>
+          </div>
         </div>
         <div class="rf-capture-modal-footer">
           <div class="rf-capture-modal-actions-primary">
@@ -758,6 +762,16 @@
           if (result && !result.cancelled && result.dataUrl) {
             // Replace lastCapture.dataUrl dengan versi annotated
             lastCapture.dataUrl = result.dataUrl;
+            // v3.11.26 (Issue #2): Simpan catatan anotasi
+            if (result.note) {
+              lastCapture.note = result.note;
+              // Tampilkan catatan di preview modal
+              const noteEl = modalEl.querySelector('.rf-capture-modal-note');
+              if (noteEl) {
+                noteEl.style.display = '';
+                noteEl.querySelector('.rf-capture-modal-note-text').textContent = result.note;
+              }
+            }
             // Recompute bytes (PNG size approx)
             try {
               const blob = await (await fetch(result.dataUrl)).blob();
@@ -848,10 +862,17 @@
         const modeLabel = lastCapture.mode === 'visible' ? 'Viewport' : (lastCapture.mode === 'selection' ? 'Area' : 'Seluruh halaman');
         const dims = lastCapture.width + '×' + lastCapture.height + ' px';
 
+        // v3.11.26 (Issue #2): Sertakan catatan anotasi di keterangan kalau ada
+        const noteText = lastCapture.note ? '\n📝 Catatan: ' + lastCapture.note : '';
+        const noteHtml = lastCapture.note
+          ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escapeHtml(lastCapture.note) + '</p>'
+          : '';
+
         const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
           + 'Sumber: ' + pageUrl + '\n'
           + 'Waktu: ' + new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
           + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+          + (lastCapture.note ? '📝 Catatan: ' + lastCapture.note + '\n' : '')
           + 'Ditangkap oleh RecallFox';
 
         const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
@@ -859,6 +880,7 @@
           + '<p style="margin:8px 0 2px"><strong>📸 ' + escapeHtml(pageTitle) + '</strong></p>'
           + '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageUrl) + '</a></p>'
           + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + escapeHtml(new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
+          + (lastCapture.note ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escapeHtml(lastCapture.note) + '</p>' : '')
           + '<p style="margin:0;color:#78716c">🔧 ' + escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
           + '</div>';
 
@@ -927,7 +949,8 @@
           type: 'SAVE_CAPTURE_TO_VAULT',
           dataUrl: lastCapture.dataUrl, width: lastCapture.width,
           height: lastCapture.height, bytes: lastCapture.bytes, mode: lastCapture.mode,
-          url: location.href, pageTitle: document.title
+          url: location.href, pageTitle: document.title,
+          annotationNote: lastCapture.note || ''  // v3.11.26 (Issue #2): catatan anotasi
         });
         if (res?.ok) showStatus('✓ Tersimpan ke vault');
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
