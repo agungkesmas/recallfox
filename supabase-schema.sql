@@ -211,56 +211,77 @@ ALTER TABLE public.screenshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sync_log ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: user hanya bisa read/update profile sendiri
+DROP POLICY IF EXISTS "profiles_select_own" ON public.profiles;
 CREATE POLICY "profiles_select_own" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
+DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
 CREATE POLICY "profiles_update_own" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
+DROP POLICY IF EXISTS "profiles_insert_own" ON public.profiles;
 CREATE POLICY "profiles_insert_own" ON public.profiles
   FOR INSERT WITH CHECK (auth.uid() = id);
 
 -- Vault items: user hanya bisa CRUD row miliknya
+DROP POLICY IF EXISTS "vault_items_select_own" ON public.vault_items;
 CREATE POLICY "vault_items_select_own" ON public.vault_items
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "vault_items_insert_own" ON public.vault_items;
 CREATE POLICY "vault_items_insert_own" ON public.vault_items
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "vault_items_update_own" ON public.vault_items;
 CREATE POLICY "vault_items_update_own" ON public.vault_items
   FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "vault_items_delete_own" ON public.vault_items;
 CREATE POLICY "vault_items_delete_own" ON public.vault_items
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Notes
+DROP POLICY IF EXISTS "notes_select_own" ON public.notes;
 CREATE POLICY "notes_select_own" ON public.notes
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "notes_insert_own" ON public.notes;
 CREATE POLICY "notes_insert_own" ON public.notes
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "notes_update_own" ON public.notes;
 CREATE POLICY "notes_update_own" ON public.notes
   FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "notes_delete_own" ON public.notes;
 CREATE POLICY "notes_delete_own" ON public.notes
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Settings
+DROP POLICY IF EXISTS "settings_select_own" ON public.settings;
 CREATE POLICY "settings_select_own" ON public.settings
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "settings_insert_own" ON public.settings;
 CREATE POLICY "settings_insert_own" ON public.settings
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "settings_update_own" ON public.settings;
 CREATE POLICY "settings_update_own" ON public.settings
   FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "settings_delete_own" ON public.settings;
 CREATE POLICY "settings_delete_own" ON public.settings
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Screenshots
+DROP POLICY IF EXISTS "screenshots_select_own" ON public.screenshots;
 CREATE POLICY "screenshots_select_own" ON public.screenshots
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "screenshots_insert_own" ON public.screenshots;
 CREATE POLICY "screenshots_insert_own" ON public.screenshots
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "screenshots_update_own" ON public.screenshots;
 CREATE POLICY "screenshots_update_own" ON public.screenshots
   FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "screenshots_delete_own" ON public.screenshots;
 CREATE POLICY "screenshots_delete_own" ON public.screenshots
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Sync log
+DROP POLICY IF EXISTS "sync_log_select_own" ON public.sync_log;
 CREATE POLICY "sync_log_select_own" ON public.sync_log
   FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "sync_log_insert_own" ON public.sync_log;
 CREATE POLICY "sync_log_insert_own" ON public.sync_log
   FOR INSERT WITH CHECK (auth.uid() = user_id);
 
@@ -276,15 +297,18 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Storage policies: user hanya bisa upload/delete file di folder sendiri
 -- Path format: 'user-<uuid>/<filename>'
+DROP POLICY IF EXISTS "screenshots_upload_own" ON storage.objects;
 CREATE POLICY "screenshots_upload_own" ON storage.objects
   FOR INSERT WITH CHECK (
     bucket_id = 'screenshots' AND
     (storage.foldername(name))[1] = 'user-' || auth.uid()::text
   );
 
+DROP POLICY IF EXISTS "screenshots_read_public" ON storage.objects;
 CREATE POLICY "screenshots_read_public" ON storage.objects
   FOR SELECT USING (bucket_id = 'screenshots');
 
+DROP POLICY IF EXISTS "screenshots_delete_own" ON storage.objects;
 CREATE POLICY "screenshots_delete_own" ON storage.objects
   FOR DELETE USING (
     bucket_id = 'screenshots' AND
