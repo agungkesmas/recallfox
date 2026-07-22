@@ -389,3 +389,63 @@ CREATE POLICY "screenshots_upload_own" ON storage.objects
 --   SELECT policyname, cmd FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage';
 --   Expected: screenshots_upload_own (INSERT), screenshots_update_own (UPDATE),
 --             screenshots_read_public (SELECT), screenshots_delete_own (DELETE)
+
+-- ============== MIGRATION v3.11.29 (Issue #1: Realtime sync + delete tracking) ==============
+-- 3 masalah yang diperbaiki:
+--   1. Tambah kolom deleted_at untuk tombstone-based delete sync
+--      (kalau item dihapus di PC-1, PC-2 tahu dan hapus juga)
+--   2. Enable Realtime replication untuk vault_items + notes tables
+--      (supaya perubahan di PC-1 langsung terlihat di PC-2 via WebSocket)
+--   3. Tambah trigger updated_at supaya updated_at auto-update on row change
+--
+-- Jalankan di Supabase SQL Editor (Dashboard → SQL → New query → Run).
+-- Safe to run multiple times (semua pakai IF NOT EXISTS / ALTER).
+
+-- 1. Tambah kolom deleted_at ke vault_items (untuk track soft-delete)
+ALTER TABLE public.vault_items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- 2. Tambah kolom deleted_at ke notes
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- 3. Tambah kolom device_id ke vault_items + notes (untuk track device mana yang terakhir ubah)
+ALTER TABLE public.vault_items ADD COLUMN IF NOT EXISTS device_id TEXT;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS device_id TEXT;
+
+-- 4. Enable Realtime untuk vault_items + notes + settings
+--    Supabase Realtime via WebSocket — perubahan langsung ter-push ke semua device
+--    yang subscribe ke channel.
+ALTER PUBLICATION supabase_realtime ADD TABLE public.vault_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.settings;
+
+-- 5. Index untuk query realtime cepat (filter by user_id + deleted_at IS NULL)
+CREATE INDEX IF NOT EXISTS idx_vault_items_user_not_deleted
+  ON public.vault_items(user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_user_not_deleted
+  ON public.notes(user_id) WHERE deleted_at IS NULL;
+
+-- 6. Trigger auto-update updated_at
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS vault_items_updated_at ON public.vault_items;
+CREATE TRIGGER vault_items_updated_at
+  BEFORE UPDATE ON public.vault_items
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+DROP TRIGGER IF EXISTS notes_updated_at ON public.notes;
+CREATE TRIGGER notes_updated_at
+  BEFORE UPDATE ON public.notes
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- 7. Cleanup: hapus row yang sudah soft-delete >30 hari (opsional, via cron/job)
+--    Tidak dijalankan otomatis di sini — user bisa jalankan manual kalau perlu:
+--    DELETE FROM public.vault_items WHERE deleted_at IS NOT NULL
+--      AND deleted_at < NOW() - INTERVAL '30 days';
+--    DELETE FROM public.notes WHERE deleted_at IS NOT NULL
+--      AND deleted_at < NOW() - INTERVAL '30 days';

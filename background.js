@@ -143,6 +143,17 @@ browser.runtime.onStartup.addListener(async () => {
   try { await initContentGuardDefaults(); }
   catch (e) { console.warn('[RecallFox] onStartup: initContentGuardDefaults failed:', e); }
 
+  // v3.11.29: Start Supabase realtime sync kalau user sudah logged in
+  try {
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    const loggedIn = await isLoggedIn();
+    if (loggedIn) {
+      const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+      await startRealtimeSync();
+      console.log('[RecallFox] Supabase realtime sync started on startup');
+    }
+  } catch (e) { console.warn('[RecallFox] onStartup: Supabase realtime start failed:', e.message); }
+
   // v0.8.42: Element Blocker init
   try { await initElementBlockerDefaults(); }
   catch (e) { console.warn('[RecallFox] onStartup: initElementBlockerDefaults failed:', e); }
@@ -2666,6 +2677,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const { signInWithEmail } = await import('./lib/supabase-client.js');
       const res = await signInWithEmail(msg.email, msg.password);
+      // v3.11.29: Start realtime sync setelah login sukses
+      if (res.ok) {
+        try {
+          const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+          await startRealtimeSync();
+        } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
+      }
       sendResponse(res); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
@@ -2677,6 +2695,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const { signUpWithEmail } = await import('./lib/supabase-client.js');
       const res = await signUpWithEmail(msg.email, msg.password);
+      // v3.11.29: Start realtime sync setelah signup sukses
+      if (res.ok) {
+        try {
+          const { startRealtimeSync } = await import('./lib/supabase-sync.js');
+          await startRealtimeSync();
+        } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
+      }
       sendResponse(res); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
@@ -2697,6 +2722,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_LOGOUT
   if (msg.type === 'SUPABASE_LOGOUT') {
     try {
+      // v3.11.29: Stop realtime sync sebelum logout
+      try {
+        const { stopRealtimeSync } = await import('./lib/supabase-sync.js');
+        stopRealtimeSync();
+      } catch (e) {}
       const { signOut } = await import('./lib/supabase-client.js');
       await signOut();
       sendResponse({ ok: true }); return;
@@ -2761,10 +2791,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // SUPABASE_DELETE_ITEM — hapus item dari cloud saat item lokal dihapus
+  // v3.11.29: Fix — gunakan msg.itemId (bukan msg.id) supaya cocok dengan storage.js
   if (msg.type === 'SUPABASE_DELETE_ITEM') {
     try {
       const { deleteItemFromCloud } = await import('./lib/supabase-sync.js');
-      const res = await deleteItemFromCloud(msg.id);
+      const res = await deleteItemFromCloud(msg.itemId || msg.id);
+      // v3.11.29: Setelah delete di cloud, trigger pull supaya device lain dapat update
+      // (realtime subscription akan handle ini, tapi pull sebagai fallback)
+      console.log('[RecallFox] SUPABASE_DELETE_ITEM:', msg.itemId || msg.id, '→', res.ok ? 'OK' : res.error);
       sendResponse(res); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
@@ -2772,10 +2806,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // SUPABASE_DELETE_NOTE — hapus note dari cloud
+  // v3.11.29: Fix — gunakan msg.noteId (bukan msg.id)
   if (msg.type === 'SUPABASE_DELETE_NOTE') {
     try {
       const { deleteNoteFromCloud } = await import('./lib/supabase-sync.js');
-      const res = await deleteNoteFromCloud(msg.id);
+      const res = await deleteNoteFromCloud(msg.noteId || msg.id);
+      console.log('[RecallFox] SUPABASE_DELETE_NOTE:', msg.noteId || msg.id, '→', res.ok ? 'OK' : res.error);
       sendResponse(res); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
@@ -2783,6 +2819,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // SUPABASE_AUTO_SYNC — trigger push debounced (dipanggil otomatis saat vault berubah)
+  // v3.11.29: Sekaligus trigger pull setelah push (untuk realtime sync)
   if (msg.type === 'SUPABASE_AUTO_SYNC') {
     try {
       const { triggerAutoSync } = await import('./lib/supabase-sync.js');
