@@ -449,3 +449,70 @@ CREATE TRIGGER notes_updated_at
 --      AND deleted_at < NOW() - INTERVAL '30 days';
 --    DELETE FROM public.notes WHERE deleted_at IS NOT NULL
 --      AND deleted_at < NOW() - INTERVAL '30 days';
+
+-- ============== MIGRATION v3.11.31 (Issue #1: Delete registry + last-write-wins) ==============
+-- User feedback: "harus ada logika device mana duluan yang dipake dan ada perubahan
+-- di data / pergerakan data di addon nya maka itu yang dipake sebagai acuan terakhir
+-- untuk disingkronkan di seluruh device, jangan mengulang ulang menampilkan yang
+-- pernah dihapus."
+--
+-- Strategi baru (tombstone + delete registry lokal):
+-- 1. Saat user hapus item → set deleted_at = NOW() di cloud (soft-delete/tombstone)
+-- 2. Saat pull → item dengan deleted_at → hapus dari lokal + tambah ke delete registry lokal
+-- 3. Saat push → SKIP item yang ada di delete registry (jangan timpa tombstone cloud)
+-- 4. fullSync: PULL DULU, lalu PUSH (bukan push dulu) — supaya device tahu item
+--    yang sudah dihapus sebelum push
+--
+-- Tidak ada perubahan struktur table di v3.11.31 (deleted_at + device_id sudah ada
+-- dari v3.11.29). Yang berubah hanya logika sync di addon (lib/supabase-sync.js +
+-- lib/storage.js).
+
+-- Verifikasi kolom deleted_at + device_id ada (sudah dari v3.11.29, tapi cek ulang):
+-- SELECT column_name FROM information_schema.columns
+-- WHERE table_name IN ('vault_items', 'notes') AND table_schema = 'public'
+--   AND column_name IN ('deleted_at', 'device_id');
+-- Expected: 4 rows (deleted_at + device_id untuk vault_items + notes)
+
+-- v3.11.31: Index untuk query cepat filter deleted_at IS NOT NULL (saat pull
+-- mengecek tombstone). Sudah ada idx_vault_items_user_not_deleted, tapi tambah
+-- index untuk query deleted_at IS NOT NULL supaya pull lebih cepat.
+CREATE INDEX IF NOT EXISTS idx_vault_items_deleted_at
+  ON public.vault_items(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_deleted_at
+  ON public.notes(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- v3.11.31: Index untuk query by updated_at (last-write-wins comparison)
+CREATE INDEX IF NOT EXISTS idx_vault_items_updated_at
+  ON public.vault_items(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notes_updated_at
+  ON public.notes(updated_at DESC);
+
+-- v3.11.31: Cleanup function untuk hapus tombstone >30 hari
+-- Bisa dijalankan manual atau via pg_cron (kalau Supabase project support).
+CREATE OR REPLACE FUNCTION public.cleanup_old_tombstones(days_old INTEGER DEFAULT 30)
+RETURNS INTEGER AS $$
+DECLARE
+  deleted_count INTEGER;
+BEGIN
+  DELETE FROM public.vault_items
+  WHERE deleted_at IS NOT NULL
+    AND deleted_at < NOW() - (days_old || ' days')::INTERVAL;
+  GET DIAGNOSTICS deleted_count = ROW_COUNT;
+
+  DELETE FROM public.notes
+  WHERE deleted_at IS NOT NULL
+    AND deleted_at < NOW() - (days_old || ' days')::INTERVAL;
+  GET DIAGNOSTICS deleted_count = deleted_count + ROW_COUNT;
+
+  RAISE NOTICE 'Cleanup: removed % tombstones older than % days', deleted_count, days_old;
+  RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Cara pakai cleanup function:
+--   SELECT public.cleanup_old_tombstones(30);  -- hapus tombstone >30 hari
+--   SELECT public.cleanup_old_tombstones(7);   -- hapus tombstone >7 hari (agresif)
+
+-- v3.11.31: Trigger supaya device_id auto-set dari JWT claim (opsional, kalau user
+-- punya device_id di JWT). Untuk sekarang, device_id di-set manual oleh addon.
+-- Tidak ada trigger otomatis — addon yang set device_id saat upsert.

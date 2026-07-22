@@ -1,32 +1,51 @@
-# RecallFox v3.11.28
+# RecallFox v3.11.31
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.11.28 — Fix format copy sidebar + Screenshot upload Supabase**
-> - 📋 **Issue #1 (Format copy)**: Format copy dari sidebar (single + batch) **disamakan dengan format preview modal** yang user bilang "sangat sangat sangat bagus". Sekarang konsisten: 📸 title, 🔗 URL, 🕒 waktu, 📝 catatan anotasi (kalau ada), 🔧 mode+dims, footer "Ditangkap oleh RecallFox".
-> - 🗄️ **Issue #2 (Screenshot upload)**: Screenshot tidak masuk Supabase Storage saat sync. **3 bug diperbaiki:**
->   - Tambah `x-upsert: true` header (fix 409 Conflict saat upload ulang)
->   - Tambah storage policy `screenshots_update_own` (FOR UPDATE) di SQL schema — **WAJIB run ulang `supabase-schema.sql`**
->   - Improve error reporting (parse error body, log detail upload, return path+blobSize)
+> **v3.11.31 — Fix sync hapus tidak konsisten (item muncul lagi)**
+> - 🔄 **Issue #1 (Delete sync)**: Item yang sudah dihapus muncul lagi setelah sync. **Root cause:** device B push item X (yang sudah dihapus di device A) → upsert tanpa `deleted_at` → menimpa tombstone cloud → device A pull → item X muncul lagi. **4 fix:**
+>   - **Delete registry lokal** — daftar ID yang sudah dihapus, supaya push SKIP item itu (tidak timpa tombstone)
+>   - **Fix `pushToSupabase`** — skip item/note yang ada di delete registry
+>   - **Fix `pullFromSupabase`** — saat item cloud punya `deleted_at`, tambah ke delete registry lokal
+>   - **Fix `fullSync` urutan** — PULL dulu, lalu PUSH (bukan push dulu) supaya device tahu item yang sudah dihapus sebelum push
+>   - **Update `deleteItem`/`deleteBundle`/`deleteNote`** — tambah ke delete registry lokal saat hapus
 >
-> **Baseline:** v3.11.27 · **Lihat:** [CHANGELOG-v3.11.28.md](./CHANGELOG-v3.11.28.md)
+> **Baseline:** v3.11.30 · **Lihat:** [CHANGELOG-v3.11.31.md](./CHANGELOG-v3.11.31.md)
 
-## ⚠️ WAJIB: Run ulang SQL schema (untuk v3.11.28)
+## ⚠️ WAJIB: Run ulang SQL schema (untuk v3.11.31)
 
-User **WAJIB** run ulang `supabase-schema.sql` di Supabase SQL Editor supaya storage policy UPDATE tersedia. Tanpa ini, upload screenshot akan tetap gagal.
+User **WAJIB** run ulang `supabase-schema.sql` di Supabase SQL Editor supaya index baru + cleanup function tersedia.
 
 ### Cara update:
 1. Buka https://supabase.com/dashboard/project/qmwofsfpxjptpyvncylp/sql/new
 2. Login dengan akun Supabase Anda
 3. Paste isi [`supabase-schema.sql`](./supabase-schema.sql), klik **Run**
-4. Verifikasi storage policies:
+4. Verifikasi:
    ```sql
-   SELECT policyname, cmd FROM pg_policies
-   WHERE tablename = 'objects' AND schemaname = 'storage'
-   AND policyname LIKE 'screenshots%';
+   -- Cek index baru
+   SELECT indexname FROM pg_indexes
+   WHERE schemaname = 'public' AND tablename IN ('vault_items', 'notes')
+   AND indexname LIKE 'idx_%deleted_at' OR indexname LIKE 'idx_%updated_at';
+   -- Expected: idx_vault_items_deleted_at, idx_notes_deleted_at,
+   --           idx_vault_items_updated_at, idx_notes_updated_at
+
+   -- Cek cleanup function
+   SELECT proname FROM pg_proc WHERE proname = 'cleanup_old_tombstones';
+   -- Expected: cleanup_old_tombstones
+
+   -- Test cleanup (opsional, hapus tombstone >30 hari)
+   SELECT public.cleanup_old_tombstones(30);
    ```
-   Expected: `screenshots_upload_own` (INSERT), `screenshots_update_own` (UPDATE — BARU), `screenshots_read_public` (SELECT), `screenshots_delete_own` (DELETE)
+
+### Cara pakai cleanup function (opsional):
+```sql
+-- Hapus tombstone >30 hari (default)
+SELECT public.cleanup_old_tombstones(30);
+
+-- Hapus tombstone >7 hari (agresif)
+SELECT public.cleanup_old_tombstones(7);
+```
 
 ## 🗄️ Setup Supabase (first time)
 
