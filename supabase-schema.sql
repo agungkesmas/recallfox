@@ -414,9 +414,24 @@ ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS device_id TEXT;
 -- 4. Enable Realtime untuk vault_items + notes + settings
 --    Supabase Realtime via WebSocket — perubahan langsung ter-push ke semua device
 --    yang subscribe ke channel.
-ALTER PUBLICATION supabase_realtime ADD TABLE public.vault_items;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.settings;
+--    v3.11.32 FIX: Pakai DO block + cek sebelum ADD, supaya tidak error
+--    "relation is already member of publication" kalau schema di-run ulang.
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['vault_items', 'notes', 'settings'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND tablename = tbl
+    ) THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);
+      RAISE NOTICE 'Added % to supabase_realtime publication', tbl;
+    ELSE
+      RAISE NOTICE '% already in supabase_realtime publication — skip', tbl;
+    END IF;
+  END LOOP;
+END $$;
 
 -- 5. Index untuk query realtime cepat (filter by user_id + deleted_at IS NULL)
 CREATE INDEX IF NOT EXISTS idx_vault_items_user_not_deleted
