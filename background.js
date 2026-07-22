@@ -863,6 +863,18 @@ async function saveCaptureToVault(payload) {
   });
 
   browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+  // v3.11.25 (Sesi 15, Issue #2): Auto-sync ke Supabase setelah capture screenshot.
+  // User feedback: "pastikan gambar yang telah di screnshot dengan menggunakan fitur
+  // 'tangkap halaman' itu masuk ke supabase agar saya bisa kopi paste nantinya di
+  // device manapun."
+  // Sebelumnya: screenshot hanya disimpan lokal, user harus Push manual.
+  // Sekarang: auto-trigger Supabase push (debounced 3s) supaya screenshot otomatis
+  // masuk ke cloud + Storage bucket.
+  try {
+    const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+    triggerAutoSync();
+    console.log('[RecallFox] Auto-sync triggered after screenshot save');
+  } catch (e) { /* Supabase mungkin belum di-setup — silent */ }
   return { ok: true, id: newItem.id };
 }
 
@@ -2393,6 +2405,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         mdParts.push('**Waktu:** ' + capturedDate);
         mdParts.push('**Mode:** ' + modeLabel + ' · ' + dims);
         if (tags) mdParts.push('**Tag:** ' + tags);
+        // v3.11.25 (Sesi 15, Issue #3): Tampilkan annotation note kalau ada
+        if (item.annotationNote) mdParts.push('**Catatan Anotasi:** ' + item.annotationNote);
         mdParts.push('');
         // Placeholder saja — gambar asli ada di HTML clipboard / image/png blob
         mdParts.push('[📸 Gambar ' + num + ' — ' + dims + ']');

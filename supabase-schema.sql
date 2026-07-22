@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS public.vault_items (
   thumbnail_data_url TEXT,                -- small inline PNG for list view
   gdrive_file_id TEXT,
   gdrive_file_url TEXT,
+  -- v3.11.25: Annotation note — catatan penjelasan untuk anotasi screenshot
+  annotation_note TEXT,                   -- user's text description of annotations
   -- Snapshot-specific
   snapshot_domain TEXT,
   snapshot_message_count INTEGER,

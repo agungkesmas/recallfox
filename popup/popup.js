@@ -775,10 +775,72 @@ async function vaultBatchCopyAction(withCaption) {
     if (res?.ok) {
       toast(res.message || ('✓ ' + ids.length + ' screenshot tersalin'));
     } else {
-      toast('Gagal: ' + (res?.error || 'unknown'), false);
+      // v3.11.25 (Sesi 15): Fallback kalau background inject gagal (mis. tab aktif about:,
+      // moz-extension:, atau clipboard API tidak support). Coba copy text-only di popup context.
+      const err = res?.error || 'unknown';
+      if (err === 'not_http_page' || err === 'no_active_tab' || err.includes('clipboard_write_failed')) {
+        console.warn('[RecallFox] Batch copy via background gagal (' + err + '), fallback ke text-only di popup');
+        await _vaultBatchCopyTextFallback(ids, withCaption);
+      } else {
+        toast('Gagal: ' + err, false);
+      }
     }
   } catch (e) {
-    toast('Error: ' + e.message, false);
+    // v3.11.25: Fallback kalau sendMessage throw (mis. background crash)
+    console.warn('[RecallFox] Batch copy exception:', e.message, '— fallback ke text-only');
+    try {
+      await _vaultBatchCopyTextFallback(ids, withCaption);
+    } catch (e2) {
+      toast('Error: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.11.25 (Sesi 15): Fallback copy text-only di popup context (tidak butuh tab aktif).
+// Copy markdown rapi dengan metadata screenshot. Tidak ada gambar (hanya teks).
+// User feedback: "kenapa fungsi batch kopi ini jadi tidak aktif? tolong perbaiki
+// tanpa merusak yang sudah ada."
+async function _vaultBatchCopyTextFallback(ids, withCaption) {
+  const items = ids.map(id => currentVault.items.find(i => i.id === id)).filter(i => i && i.type === 'screenshot');
+  if (items.length === 0) {
+    toast('Tidak ada screenshot valid terpilih', false);
+    return;
+  }
+  const now = new Date();
+  const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+  const parts = [
+    '# Screenshot Bundle — RecallFox',
+    'Tanggal: ' + dateStr + ' · Total: ' + items.length + ' screenshot',
+    ''
+  ];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const pageTitle = item.source?.title || item.title || 'screenshot';
+    const pageUrl = item.source?.url || '';
+    const capturedAt = item.source?.capturedAt || item.createdAt || now.toISOString();
+    const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : (item.screenshotMode === 'entire' ? 'Seluruh halaman' : '-'));
+    const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+    const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '');
+    const capturedDate = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
+    const num = i + 1;
+    parts.push('## ' + num + '. ' + pageTitle);
+    if (pageUrl) parts.push('**Sumber:** ' + pageUrl);
+    parts.push('**Waktu:** ' + capturedDate);
+    parts.push('**Mode:** ' + modeLabel + ' · ' + dims);
+    if (tags) parts.push('**Tag:** ' + tags);
+    // v3.11.25 (Sesi 15, Issue #3): Tampilkan annotation note kalau ada
+    if (item.annotationNote) parts.push('**Catatan Anotasi:** ' + item.annotationNote);
+    parts.push('');
+    parts.push('[📸 Gambar ' + num + ' — ' + dims + ']');
+    parts.push('');
+    if (i < items.length - 1) parts.push('---');
+  }
+  const fullText = parts.join('\n');
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + items.length + ' screenshot tersalin (text-only fallback — gambar tidak ikut)');
+  } catch (e) {
+    toast('⚠ Gagal copy: ' + e.message + '. Coba buka halaman web http(s) dulu, lalu klik copy lagi.', false);
   }
 }
 
@@ -1197,6 +1259,34 @@ function openScreenshotViewer(id) {
     }
   });
 }
+
+// v3.11.25 (Sesi 15, Issue #3): Sheet untuk edit catatan anotasi screenshot.
+// User feedback: "tolong di bagian kotak merah itu ditambahkan catatan untuk
+// menjelaskan anotasi yang sudah dibuatnya. jadi ketika dipaste tu hasilnya
+// sudah ada kterangannya apa yang di anotasi."
+function openAnnotationNoteSheet(id) {
+  const it = currentVault.items.find(i => i.id === id);
+  if (!it) { toast('Item tidak ditemukan', false); return; }
+  openSheet('📝 Catatan Anotasi', 'Tulis penjelasan anotasi — ikut saat copy screenshot', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div class="hintbox" style="font-size:11px;line-height:1.55">Catatan ini akan ikut saat Anda copy screenshot (tunggal maupun batch). Format: <b>**Catatan Anotasi:**</b> teks Anda. Cocok untuk menjelaskan panah, kotak, atau text yang sudah Anda tambahkan di anotasi.</div>'
+      + '<div><label>Judul Screenshot</label><input class="f" value="' + esc(it.title || '') + '" readonly style="background:var(--surface-2)"></div>'
+      + '<div><label>Catatan Anotasi <span class="field-hint">(opsional — kosongkan untuk hapus)</span></label>'
+      +   '<textarea class="f" id="annotNote" rows="5" placeholder="mis. Panah merah menunjukkan tombol login yang error. Kotak kuning menunjukkan pesan error 500.">'
+      + esc(it.annotationNote || '')
+      + '</textarea></div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="annotCancel">Batal</button>'
+      +   '<button class="btn btn-p" id="annotSave">' + ICONS.check + 'Simpan</button></div></div>';
+    b.querySelector('#annotCancel').addEventListener('click', closeSheet);
+    b.querySelector('#annotSave').addEventListener('click', async () => {
+      const note = b.querySelector('#annotNote').value.trim();
+      await updateItem(id, { annotationNote: note || undefined });
+      closeSheet();
+      await refreshVault();
+      toast(note ? '✓ Catatan anotasi disimpan' : '✓ Catatan anotasi dihapus');
+    });
+  });
+}
 function renderVault() { renderChips(); renderList(); }
 
 // ============ Item sheet (⋯ menu) ============
@@ -1224,6 +1314,8 @@ function itemSheet(id) {
       // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
       + (it.type === 'screenshot' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin Gambar<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
       + (it.type === 'screenshot' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">Gambar + URL, judul, waktu, mode</div></div></button>' : '')
+      // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
+      + (it.type === 'screenshot' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan anotasi — ikut saat copy</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
       const k = a.dataset.a;
@@ -1238,6 +1330,8 @@ function itemSheet(id) {
       // v3.11.6: Handler Salin Gambar & Salin + Keterangan untuk item screenshot
       else if (k === 'copy-img') { closeSheet(); copyScreenshotToClipboard(it.id, false); }
       else if (k === 'copy-bundle') { closeSheet(); copyScreenshotToClipboard(it.id, true); }
+      // v3.11.25 (Sesi 15, Issue #3): Handler untuk catatan anotasi
+      else if (k === 'annot-note') { closeSheet(); openAnnotationNoteSheet(it.id); }
       else if (k === 'del') {
         b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
           + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
