@@ -301,7 +301,9 @@ body.rf-sidebar-body .popup{
 .tabbtn .badge{position:absolute;top:3px;right:calc(50% - 22px);min-width:15px;height:15px;padding:0 4px;border-radius:var(--r-full);background:var(--amber);color:#fff;font-size:9px;font-weight:750;display:grid;place-items:center}
 
 /* Slide-in page (tool detail / note editor) */
-.page{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s cubic-bezier(.2,.8,.2,1);z-index:30}
+/* v3.11.36: .page top di-set dinamis via JS (openPage) supaya strip jadwal shalat
+   tetap visible. Fallback CSS: 95px (header ~50 + strip ~38 + margin). */
+.page{position:absolute;left:0;right:0;bottom:0;top:95px;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s cubic-bezier(.2,.8,.2,1);z-index:30}
 .page.in{transform:none}
 /* v3.11.7-fix (Issue #2): Page (slide-in) di sidebar dibatasi max-width + centered
    supaya header, body, dan footer menyesuaikan lebar dengan rapi (tidak melebar penuh). */

@@ -172,6 +172,28 @@ function openPage(title, foot) {
   $('#pageSaveState').textContent = '';
   $('#pageFoot').style.display = foot ? 'flex' : 'none';
   $('#pageFoot').innerHTML = foot || '';
+  // v3.11.36 (Sesi 2, Issue dari Google Doc): Set .page.top dinamis = bottom of strip,
+  // supaya jadwal shalat (strip) tetap terlihat saat user di editor catatan / halaman alat.
+  // User feedback: "saat edit atau tambah catatan... waktu shalat harus tetap keliatan ya.
+  // karena saya sering seharian pake edit atau tambah catatan terbuka... buat nyatet waktu kerja."
+  // Sebelumnya: .page top:0 (menutupi header+cmd+strip) → countdown shalat hilang.
+  // Sekarang: .page top = posisi bottom strip relatif ke popup. Hitung via getBoundingClientRect
+  // supaya adaptif terhadap tinggi header/cmd/strip yang bervariasi (cmd hanya di home view).
+  try {
+    const strip = document.querySelector('.strip');
+    const popup = document.getElementById('popup');
+    const page = document.getElementById('page');
+    if (strip && popup && page) {
+      const stripRect = strip.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      const offset = Math.round(stripRect.bottom - popupRect.top);
+      // Sanity check: offset harus masuk akal (50-200px). Kalau 0/negatif, fallback ke 95px.
+      page.style.top = (offset > 0 && offset < 250) ? offset + 'px' : '95px';
+    }
+  } catch (e) {
+    // Fallback: biarkan CSS default (95px)
+    console.warn('[RecallFox] openPage: gagal hitung offset strip, pakai 95px', e.message);
+  }
   $('#page').classList.add('in');
 }
 function closePage() { $('#page').classList.remove('in'); }
@@ -549,13 +571,14 @@ function updateVaultBatchBarButtons() {
   if (!bar) return;
   const copyCaptionBtn = $('#vaultBatchCopy');        // Copy + Keterangan (screenshot only)
   const copyImgBtn = $('#vaultBatchCopyImg');         // Copy Gambar Saja (screenshot only)
+  const copyMetaBtn = $('#vaultBatchCopyMeta');       // Copy Teks Saja (screenshot only, text-only)
   const copyTextBtn = $('#vaultBatchCopyText');       // Copy Teks (prompt/context/link/snapshot)
   const copyBundleBtn = $('#vaultBatchCopyBundle');   // Copy Bundle (bundle only)
   const unarchiveBtn = $('#vaultBatchUnarchive');     // Unarsip (archive only)
   const deleteBtn = $('#vaultBatchDelete');           // Hapus (semua)
 
   // Reset semua
-  [copyCaptionBtn, copyImgBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
+  [copyCaptionBtn, copyImgBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
     if (b) b.style.display = 'none';
   });
 
@@ -585,6 +608,7 @@ function updateVaultBatchBarButtons() {
   if (hasScreenshot) {
     if (copyCaptionBtn) copyCaptionBtn.style.display = '';
     if (copyImgBtn) copyImgBtn.style.display = '';
+    if (copyMetaBtn) copyMetaBtn.style.display = '';
   }
   if (hasBundle) {
     if (copyBundleBtn) copyBundleBtn.style.display = '';
@@ -668,6 +692,42 @@ async function vaultBatchCopyTextAction() {
     try {
       await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
       toast('✓ ' + items.length + ' item tersalin ke clipboard');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.11.36 (Sesi 2, Issue dari Google Doc): Batch copy TEKS METADATA saja (tanpa gambar)
+// untuk multiple screenshot. Format = buildBatchCaption.textPlain (sudah ada di copy-format.js).
+// User feedback: paste gambar+teks bersamaan tidak reliable → text-only lebih universal.
+// Tidak fetch blob gambar → cepat, bisa untuk ratusan screenshot.
+async function vaultBatchCopyMetaAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 screenshot dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const items = ids.map(id => currentVault.items.find(i => i.id === id))
+    .filter(i => i && i.type === 'screenshot');
+  if (items.length === 0) {
+    toast('Tidak ada screenshot valid terpilih', false);
+    return;
+  }
+  toast('📝 Menyalin teks metadata ' + items.length + ' screenshot...');
+  // dataUrl = null → textPlain tetap lengkap (📸, Sumber, Waktu, Mode, 📝 Catatan)
+  const screenshots = items.map(item => ({ item, dataUrl: null }));
+  const cap = buildBatchCaption(screenshots);
+  if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
+  try {
+    await navigator.clipboard.writeText(cap.textPlain);
+    toast('✓ Teks metadata ' + items.length + ' screenshot tersalin (paste ke WA/Gemini/AI chat)');
+  } catch (e) {
+    console.warn('[RecallFox] vaultBatchCopyMetaAction failed:', e.message);
+    try {
+      // Fallback: delegate ke background (utk konteks tanpa clipboard permission)
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: cap.textPlain });
+      toast('✓ Teks metadata ' + items.length + ' screenshot tersalin');
     } catch (e2) {
       toast('⚠ Gagal menyalin: ' + e2.message, false);
     }
@@ -1355,6 +1415,12 @@ function itemSheet(id) {
       // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
       + (it.type === 'screenshot' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin Gambar<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
       + (it.type === 'screenshot' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">Gambar + URL, judul, waktu, mode</div></div></button>' : '')
+      // v3.11.36 (Sesi 2, Issue dari Google Doc): Tombol Salin Teks Metadata (text-only)
+      // User feedback: "di chat ai maupun wa, paste itu kadang gambarnya doang, teksnya ga
+      // ngikut, atau sebaliknya di gemini teks nya doang gambarnya ga ngikut. oleh karena
+      // itu tolong tambahkan kopi teks metadatanya doang bisa?"
+      // Solusi: navigator.clipboard.writeText(textPlain) — text-only, paste ke mana saja.
+      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-meta">' + ICONS.copy + '<div>📝 Salin Teks Metadata<div class="ad">Teks saja (URL, judul, waktu) — paste ke WA/Gemini/AI chat</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
       + (it.type === 'screenshot' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan anotasi — ikut saat copy</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
@@ -1371,6 +1437,8 @@ function itemSheet(id) {
       // v3.11.6: Handler Salin Gambar & Salin + Keterangan untuk item screenshot
       else if (k === 'copy-img') { closeSheet(); copyScreenshotToClipboard(it.id, false); }
       else if (k === 'copy-bundle') { closeSheet(); copyScreenshotToClipboard(it.id, true); }
+      // v3.11.36: Handler Salin Teks Metadata (text-only, no image)
+      else if (k === 'copy-meta') { closeSheet(); copyScreenshotMetaToClipboard(it.id); }
       // v3.11.25 (Sesi 15, Issue #3): Handler untuk catatan anotasi
       else if (k === 'annot-note') { closeSheet(); openAnnotationNoteSheet(it.id); }
       else if (k === 'del') {
@@ -1676,6 +1744,27 @@ async function copyScreenshotToClipboard(id, withCaption) {
     }
   } catch (e) {
     toast('Error: ' + e.message, false);
+  }
+}
+
+// v3.11.36 (Sesi 2, Issue dari Google Doc): Salin Teks Metadata saja (tanpa gambar).
+// User feedback: paste gambar+teks bersamaan tidak reliable antar aplikasi (AI chat,
+// WhatsApp, Gemini). Solusi: copy text-only via navigator.clipboard.writeText.
+// Format sama persis dengan textPlain dari buildScreenshotCaption (field yang sudah
+// ada di lib/copy-format.js, tidak perlu fungsi baru). Cepat karena tidak fetch blob.
+async function copyScreenshotMetaToClipboard(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  try {
+    toast('📝 Menyalin teks metadata…');
+    // dataUrl = null → textPlain tetap lengkap (📸, Sumber, Waktu, Mode, 📝 Catatan)
+    const cap = buildScreenshotCaption(item, null);
+    if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
+    await navigator.clipboard.writeText(cap.textPlain);
+    toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
+  } catch (e) {
+    console.warn('[RecallFox] copyScreenshotMetaToClipboard failed:', e.message);
+    toast('Gagal salin teks: ' + e.message, false);
   }
 }
 
@@ -5734,7 +5823,24 @@ function bindEvents() {
   $('#pageBack').addEventListener('click', closePage);
 
   // Status strip
-  $('#stripBar').addEventListener('click', () => $('#strip').classList.toggle('open'));
+  $('#stripBar').addEventListener('click', () => {
+    $('#strip').classList.toggle('open');
+    // v3.11.36: Recompute .page.top kalau page sedang terbuka, supaya strip-detail
+    // (grid 6 waktu shalat) tidak tertutup page saat user expand strip.
+    const page = $('#page');
+    if (page && page.classList.contains('in')) {
+      try {
+        const strip = document.querySelector('.strip');
+        const popup = document.getElementById('popup');
+        if (strip && popup) {
+          const stripRect = strip.getBoundingClientRect();
+          const popupRect = popup.getBoundingClientRect();
+          const offset = Math.round(stripRect.bottom - popupRect.top);
+          page.style.top = (offset > 0 && offset < 400) ? offset + 'px' : '95px';
+        }
+      } catch (e) {}
+    }
+  });
   $('#habitQuran').addEventListener('click', async () => {
     const s = currentVault?.settings || {};
     if (s.quranEnabled !== false) { await logQuranPages(1, s); await refreshVault(); await updateHabitsStrip(); toast('📖 Ngaji +1 hal'); }
@@ -5763,6 +5869,9 @@ function bindEvents() {
   if (vaultBatchCopyBtn) vaultBatchCopyBtn.addEventListener('click', () => vaultBatchCopyAction(true));
   const vaultBatchCopyImgBtn = $('#vaultBatchCopyImg');
   if (vaultBatchCopyImgBtn) vaultBatchCopyImgBtn.addEventListener('click', () => vaultBatchCopyAction(false));
+  // v3.11.36: Batch copy teks metadata saja (tanpa gambar)
+  const vaultBatchCopyMetaBtn = $('#vaultBatchCopyMeta');
+  if (vaultBatchCopyMetaBtn) vaultBatchCopyMetaBtn.addEventListener('click', vaultBatchCopyMetaAction);
   // v3.11.14: Tombol batch baru untuk tipe lain
   const vaultBatchCopyTextBtn = $('#vaultBatchCopyText');
   if (vaultBatchCopyTextBtn) vaultBatchCopyTextBtn.addEventListener('click', vaultBatchCopyTextAction);
