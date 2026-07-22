@@ -2026,10 +2026,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
-    // Lazy-load full image for popup/sidebar preview
-    const { getScreenshotBlob } = await import('./lib/storage.js');
-    const dataUrl = await getScreenshotBlob(msg.id);
-    sendResponse({ ok: true, dataUrl }); return;
+    // v3.11.35: Lazy-load screenshot blob — local-first, cloud fallback.
+    // Sebelumnya: hanya cari di storage.local → return null kalau tidak ada.
+    //   → device B (setelah pull sync) tidak punya blob → copy/paste gagal.
+    // Sekarang: kalau local null, fetch dari Supabase Storage URL (gdriveFileUrl)
+    //   → cache ke storage.local → return dataUrl.
+    // User audit: "Pull sync hanya transfer metadata, bukan blob gambar.
+    //   Saat device lain coba copy/paste, blob lokal tidak ada → error 'no_blob'."
+    try {
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const res = await getOrDownloadScreenshotBlob(msg.id);
+      sendResponse({ ok: res.ok, dataUrl: res.dataUrl, source: res.source, error: res.error });
+      return;
+    } catch (e) {
+      console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
+      // Fallback ke cara lama (local-only) kalau supabase-sync gagal import
+      try {
+        const { getScreenshotBlob } = await import('./lib/storage.js');
+        const dataUrl = await getScreenshotBlob(msg.id);
+        sendResponse({ ok: true, dataUrl }); return;
+      } catch (e2) {
+        sendResponse({ ok: false, dataUrl: null, error: e2.message }); return;
+      }
+    }
   }
   if (msg.type === 'INJECT_ANNOTATE_SCRIPT') {
     // v3.11.4: Inject content/annotate.js into the active tab on-demand.
@@ -2082,9 +2101,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // msg: { id, withCaption: bool }
     // Returns: { ok: bool, message?: string, error?: string }
     try {
-      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
-      const dataUrl = await getScreenshotBlob(msg.id);
-      if (!dataUrl) { sendResponse({ ok: false, error: 'no_blob' }); return; }
+      // v3.11.35: Pakai lazy download — kalau blob lokal null, fetch dari cloud.
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const { getVault } = await import('./lib/storage.js');
+      const blobRes = await getOrDownloadScreenshotBlob(msg.id);
+      const dataUrl = blobRes.dataUrl;
+      if (!dataUrl) { sendResponse({ ok: false, error: blobRes.error || 'no_blob' }); return; }
 
       const vault = await getVault();
       const item = vault.items.find(i => i.id === msg.id);
