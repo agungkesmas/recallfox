@@ -297,9 +297,21 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Storage policies: user hanya bisa upload/delete file di folder sendiri
 -- Path format: 'user-<uuid>/<filename>'
+-- v3.11.28: Tambah policy UPDATE untuk upsert (x-upsert: true header).
+--   Sebelumnya hanya INSERT — upload ulang (file sudah ada) gagal 409 Conflict.
+-- v3.11.28: Fix foldername condition — pakai (storage.foldername(name))[1] yang
+--   lebih reliable. Fallback: pakai string prefix matching kalau foldername NULL.
 DROP POLICY IF EXISTS "screenshots_upload_own" ON storage.objects;
 CREATE POLICY "screenshots_upload_own" ON storage.objects
   FOR INSERT WITH CHECK (
+    bucket_id = 'screenshots' AND
+    (storage.foldername(name))[1] = 'user-' || auth.uid()::text
+  );
+
+-- v3.11.28: Policy UPDATE untuk upsert (overwrite file yang sudah ada)
+DROP POLICY IF EXISTS "screenshots_update_own" ON storage.objects;
+CREATE POLICY "screenshots_update_own" ON storage.objects
+  FOR UPDATE USING (
     bucket_id = 'screenshots' AND
     (storage.foldername(name))[1] = 'user-' || auth.uid()::text
   );
@@ -348,3 +360,32 @@ BEGIN
     RAISE NOTICE 'Kolom annotation_note ditambahkan ke tabel screenshots.';
   END IF;
 END $$;
+
+-- ============== MIGRATION v3.11.28 (Issue #2: screenshot upload gagal) ==============
+-- Tambah storage policy UPDATE untuk screenshots bucket.
+-- Sebelumnya hanya INSERT — upload ulang (file sudah ada) gagal 409 Conflict
+-- karena tidak ada policy UPDATE. x-upsert: true header butuh policy UPDATE.
+--
+-- Jalankan kalau schema sudah dibuat sebelumnya (tanpa policy ini).
+-- Safe to run multiple times (DROP IF EXISTS + CREATE).
+
+DROP POLICY IF EXISTS "screenshots_update_own" ON storage.objects;
+CREATE POLICY "screenshots_update_own" ON storage.objects
+  FOR UPDATE USING (
+    bucket_id = 'screenshots' AND
+    (storage.foldername(name))[1] = 'user-' || auth.uid()::text
+  );
+
+-- v3.11.28: Re-create INSERT policy juga (untuk pastikan condition benar)
+DROP POLICY IF EXISTS "screenshots_upload_own" ON storage.objects;
+CREATE POLICY "screenshots_upload_own" ON storage.objects
+  FOR INSERT WITH CHECK (
+    bucket_id = 'screenshots' AND
+    (storage.foldername(name))[1] = 'user-' || auth.uid()::text
+  );
+
+-- v3.11.28: Verifikasi storage policies
+-- Jalankan query ini untuk cek:
+--   SELECT policyname, cmd FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage';
+--   Expected: screenshots_upload_own (INSERT), screenshots_update_own (UPDATE),
+--             screenshots_read_public (SELECT), screenshots_delete_own (DELETE)

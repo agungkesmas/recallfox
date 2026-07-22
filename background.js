@@ -2078,25 +2078,33 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const item = vault.items.find(i => i.id === msg.id);
       if (!item) { sendResponse({ ok: false, error: 'item_not_found' }); return; }
 
-      // Build caption (URL, title, time, mode, dims)
+      // Build caption (URL, title, time, mode, dims) — v3.11.28: disamakan dengan format preview modal (overlay.js)
+      // User feedback: "tapi kalau pakai sidebar itu jelek jelek jelek banget. banyak yang ga muncul ya kan?
+      // nah standarkan dong, disamakan format kopi paste nya yang sidebar ke menjadi selengkap
+      // tekan tombol gambar + keterangan di preview modal"
       const pageTitle = item.source?.title || item.title || 'screenshot';
       const pageUrl = item.source?.url || '';
       const capturedAt = item.source?.capturedAt || new Date().toISOString();
       const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : 'Seluruh halaman');
       const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+      // v3.11.28: Sertakan catatan anotasi kalau ada (sama seperti overlay.js)
+      const annotationNote = item.annotationNote || item.source?.annotationNote || '';
+      const capturedDateStr = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
 
       const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
         + (pageUrl ? 'Sumber: ' + pageUrl + '\n' : '')
-        + 'Waktu: ' + new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
+        + 'Waktu: ' + capturedDateStr + '\n'
         + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
-        + 'Disimpan di RecallFox Vault';
+        + (annotationNote ? '📝 Catatan: ' + annotationNote + '\n' : '')
+        + 'Ditangkap oleh RecallFox';
 
       const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
         + '<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
         + '<p style="margin:8px 0 2px"><strong>📸 ' + _escapeHtml(pageTitle) + '</strong></p>'
         + (pageUrl ? '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + _escapeHtml(pageUrl) + '">' + _escapeHtml(pageUrl) + '</a></p>' : '')
-        + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
-        + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox Vault</p>'
+        + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(capturedDateStr) + '</p>'
+        + (annotationNote ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + _escapeHtml(annotationNote) + '</p>' : '')
+        + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
         + '</div>';
 
       // Inject clipboard writer ke tab aktif
@@ -2367,26 +2375,22 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       // Build markdown + HTML
-      // v3.11.12 (Sesi 11, Issue #1): FIX gambar tidak muncul saat paste.
-      // V3.11.11 bug: markdown berisi '![Screenshot N](data:image/png;base64,...)' —
-      // data URL panjang, banyak editor strip itu. Plus text/html dengan <img src="data:...">
-      // juga di-strip oleh beberapa editor (Google Docs text mode, Notion, dll).
-      // V3.11.12 fix:
-      //   - text/plain: HANYA metadata + placeholder '[Gambar N]' (NO data URL)
-      //   - text/html: <img src="data:..."> untuk setiap screenshot (rich text editor render)
-      //   - image/png: blob gambar pertama (untuk paste ke Paint/Photoshop/image editor)
-      // Plus: kirim juga array dataUrl ke content script supaya bisa tulis multiple
-      // image/png sebagai ClipboardItem terpisah (kalau browser support).
+      // v3.11.28: Format disamakan dengan preview modal (overlay.js) — lengkap dengan
+      // 📝 Catatan anotasi, footer "Ditangkap oleh RecallFox", styling konsisten.
+      // User feedback: "berlaku juga untuk batch harus sama formatnya dengan selengkap
+      // tekan tombol gambar + keterangan di preview modal"
       const now = new Date();
       const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
       let mdParts = [
-        '# Screenshot Bundle — RecallFox',
+        '# 📷 Screenshot Bundle — RecallFox',
         'Tanggal: ' + dateStr + ' · Total: ' + screenshots.length + ' screenshot',
         ''
       ];
+      // v3.11.28: HTML header disamakan dengan overlay.js style
       let htmlParts = [
-        '<h1>📷 Screenshot Bundle — RecallFox</h1>',
-        '<p><em>Tanggal: ' + escHtml(dateStr) + ' · Total: ' + screenshots.length + ' screenshot</em></p>'
+        '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">',
+        '<h1 style="margin:0 0 6px">📷 Screenshot Bundle — RecallFox</h1>',
+        '<p style="margin:0 0 10px;color:#57534e"><em>Tanggal: ' + escHtml(dateStr) + ' · Total: ' + screenshots.length + ' screenshot</em></p>'
       ];
       const dataUrls = []; // untuk kirim ke content script (image/png blobs)
       for (let i = 0; i < screenshots.length; i++) {
@@ -2397,36 +2401,38 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : (item.screenshotMode === 'entire' ? 'Seluruh halaman' : '-'));
         const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
         const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '');
+        const annotationNote = item.annotationNote || item.source?.annotationNote || '';
         const capturedDate = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
         const num = i + 1;
         dataUrls.push(dataUrl);
 
-        // v3.11.12: Markdown TANPA data URL (supaya plain text bersih, tidak ada base64 panjang)
-        mdParts.push('## ' + num + '. ' + pageTitle);
-        if (pageUrl) mdParts.push('**Sumber:** ' + pageUrl);
-        mdParts.push('**Waktu:** ' + capturedDate);
-        mdParts.push('**Mode:** ' + modeLabel + ' · ' + dims);
-        if (tags) mdParts.push('**Tag:** ' + tags);
-        // v3.11.25 (Sesi 15, Issue #3): Tampilkan annotation note kalau ada
-        if (item.annotationNote) mdParts.push('**Catatan Anotasi:** ' + item.annotationNote);
+        // v3.11.28: Markdown lengkap — sama format dengan preview modal
+        mdParts.push('## ' + num + '. 📸 ' + pageTitle);
+        if (pageUrl) mdParts.push('Sumber: ' + pageUrl);
+        mdParts.push('Waktu: ' + capturedDate);
+        mdParts.push('Mode: ' + modeLabel + ' · ' + dims);
+        if (tags) mdParts.push('Tag: ' + tags);
+        if (annotationNote) mdParts.push('📝 Catatan: ' + annotationNote);
+        mdParts.push('Ditangkap oleh RecallFox');
         mdParts.push('');
         // Placeholder saja — gambar asli ada di HTML clipboard / image/png blob
         mdParts.push('[📸 Gambar ' + num + ' — ' + dims + ']');
         mdParts.push('');
         if (i < screenshots.length - 1) mdParts.push('---');
 
-        // v3.11.12: HTML dengan <img src="data:..."> — rich text editor akan render gambar
-        htmlParts.push('<hr>');
-        htmlParts.push('<h2>' + num + '. ' + escHtml(pageTitle) + '</h2>');
-        htmlParts.push('<p>');
-        if (pageUrl) htmlParts.push('<strong>Sumber:</strong> <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a><br>');
-        htmlParts.push('<strong>Waktu:</strong> ' + escHtml(capturedDate) + '<br>');
-        htmlParts.push('<strong>Mode:</strong> ' + escHtml(modeLabel) + ' · ' + escHtml(dims));
-        if (tags) htmlParts.push('<br><strong>Tag:</strong> ' + escHtml(tags));
-        htmlParts.push('</p>');
-        // Tetap pakai data URL di HTML — banyak editor (Google Docs rich, Gmail, Word) support
-        htmlParts.push('<img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;height:auto;border:1px solid #ccc;border-radius:4px;margin:8px 0">');
+        // v3.11.28: HTML disamakan dengan overlay.js — styling konsisten per screenshot
+        if (i > 0) htmlParts.push('<hr style="border:none;border-top:1px solid #e7e5e4;margin:16px 0">');
+        htmlParts.push('<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>');
+        htmlParts.push('<p style="margin:8px 0 2px"><strong>📸 ' + num + '. ' + escHtml(pageTitle) + '</strong></p>');
+        if (pageUrl) htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a></p>');
+        htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🕒 ' + escHtml(capturedDate) + '</p>');
+        if (annotationNote) htmlParts.push('<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escHtml(annotationNote) + '</p>');
+        let footerLine = '🔧 ' + escHtml(modeLabel) + ' · ' + escHtml(dims);
+        if (tags) footerLine += ' · ' + escHtml(tags);
+        footerLine += ' · RecallFox';
+        htmlParts.push('<p style="margin:0;color:#78716c">' + footerLine + '</p>');
       }
+      htmlParts.push('</div>');
 
       const mdText = mdParts.join('\n');
       const htmlText = htmlParts.join('\n');

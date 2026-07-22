@@ -1,22 +1,34 @@
-# RecallFox v3.11.21
+# RecallFox v3.11.28
 
 Firefox addon untuk simpan prompt & konteks AI dengan satu klik.
 Local-first, sync opsional, backup terenkripsi.
 
-> **v3.11.21 — 2 fix besar dari Log Troubleshooting Sesi terakhir**
-> - 🔧 **Issue #1 (Clipboard fix)**: Tombol "Salin Gambar" / "Salin + Keterangan" gagal dengan error `clipboard_write_failed`. Root cause: fungsi `executeScript.func` pakai `sendResponse()` di dalam func body — tapi `sendResponse` adalah background context function, TIDAK BISA diakses dari content script context. Fix: ganti ke `return { ... }` pattern (sama seperti `COPY_SCREENSHOTS_BATCH` yang sudah benar di v3.11.12).
-> - 🗄️ **Issue #2 (Migrasi Supabase)**: User frustasi dengan Apps Script yang tidak berhasil save screenshot ke Drive (2 hari). **Buat database Supabase** untuk simpan seluruh data addon — mirip desain Apps Sync tapi versi otomatis (cukup login email/password, tidak perlu URL+Token+deploy). Fitur:
->   - **Login email/password** (default: `agung.kesmas@gmail.com` / `Recallfox@2026`)
->   - **Login Gmail OAuth** (tombol Google)
->   - **Auto-sync** — setiap vault berubah, push ke Supabase Cloud (debounced 5s)
->   - **Push/Pull/Full Sync** manual
->   - **Screenshot Storage** — upload gambar ke Supabase Storage bucket (tidak ke-limit Apps Script 10MB)
->   - **SQL schema lengkap** (`supabase-schema.sql`) — 6 tables + RLS + triggers + storage bucket
->   - **6 message handlers** di background.js: `SUPABASE_LOGIN`, `SUPABASE_SIGNUP`, `SUPABASE_GMAIL`, `SUPABASE_LOGOUT`, `SUPABASE_STATUS`, `SUPABASE_PUSH`, `SUPABASE_PULL`, `SUPABASE_FULL_SYNC`, `SUPABASE_TEST_CONNECTION`, `SUPABASE_DELETE_ITEM`, `SUPABASE_DELETE_NOTE`, `SUPABASE_AUTO_SYNC`, `SUPABASE_OAUTH_CALLBACK`
+> **v3.11.28 — Fix format copy sidebar + Screenshot upload Supabase**
+> - 📋 **Issue #1 (Format copy)**: Format copy dari sidebar (single + batch) **disamakan dengan format preview modal** yang user bilang "sangat sangat sangat bagus". Sekarang konsisten: 📸 title, 🔗 URL, 🕒 waktu, 📝 catatan anotasi (kalau ada), 🔧 mode+dims, footer "Ditangkap oleh RecallFox".
+> - 🗄️ **Issue #2 (Screenshot upload)**: Screenshot tidak masuk Supabase Storage saat sync. **3 bug diperbaiki:**
+>   - Tambah `x-upsert: true` header (fix 409 Conflict saat upload ulang)
+>   - Tambah storage policy `screenshots_update_own` (FOR UPDATE) di SQL schema — **WAJIB run ulang `supabase-schema.sql`**
+>   - Improve error reporting (parse error body, log detail upload, return path+blobSize)
 >
-> **Baseline:** v3.11.20 · **Lihat:** [CHANGELOG-v3.11.21.md](./CHANGELOG-v3.11.21.md)
+> **Baseline:** v3.11.27 · **Lihat:** [CHANGELOG-v3.11.28.md](./CHANGELOG-v3.11.28.md)
 
-## 🗄️ Setup Supabase (WAJIB sebelum bisa pakai)
+## ⚠️ WAJIB: Run ulang SQL schema (untuk v3.11.28)
+
+User **WAJIB** run ulang `supabase-schema.sql` di Supabase SQL Editor supaya storage policy UPDATE tersedia. Tanpa ini, upload screenshot akan tetap gagal.
+
+### Cara update:
+1. Buka https://supabase.com/dashboard/project/qmwofsfpxjptpyvncylp/sql/new
+2. Login dengan akun Supabase Anda
+3. Paste isi [`supabase-schema.sql`](./supabase-schema.sql), klik **Run**
+4. Verifikasi storage policies:
+   ```sql
+   SELECT policyname, cmd FROM pg_policies
+   WHERE tablename = 'objects' AND schemaname = 'storage'
+   AND policyname LIKE 'screenshots%';
+   ```
+   Expected: `screenshots_upload_own` (INSERT), `screenshots_update_own` (UPDATE — BARU), `screenshots_read_public` (SELECT), `screenshots_delete_own` (DELETE)
+
+## 🗄️ Setup Supabase (first time)
 
 1. Buka https://supabase.com/dashboard/project/qmwofsfpxjptpyvncylp/sql/new
 2. Login dengan akun Supabase Anda
