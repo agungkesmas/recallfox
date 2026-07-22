@@ -32,7 +32,7 @@ import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigur
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
 // v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
 // semua pakai format yang sama persis.
-import { buildScreenshotCaption, buildBatchCaption, writeScreenshotToClipboard } from '../lib/copy-format.js';
+import { buildScreenshotCaption, buildBatchCaption, writeScreenshotToClipboard, buildCompositeImage } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -851,16 +851,48 @@ async function vaultBatchCopyAction(withCaption) {
       return;
     }
 
+    // v3.11.38: Limit max 9 gambar per batch (3x3 grid)
+    if (screenshots.length > 9) {
+      toast('Maksimal 9 gambar per batch. Pilih ≤ 9 screenshot.', false);
+      return;
+    }
+
+    // v3.11.38: Build composite image (grid + numbering) untuk batch
+    // 1 gambar = original (tanpa label), 2+ gambar = composite grid + nomor
+    let compositeBlob = null;
+    let compositeDataUrl = null;
+    if (screenshots.length === 1) {
+      // Single screenshot — pakai original dataUrl (tanpa label)
+      compositeDataUrl = screenshots[0]?.dataUrl || null;
+    } else {
+      // Multiple screenshots — build composite grid image
+      toast('🔨 Membuat gambar gabungan ' + screenshots.length + ' screenshot...');
+      const compositeResult = await buildCompositeImage(screenshots);
+      if (compositeResult.blob) {
+        compositeBlob = compositeResult.blob;
+        // Convert blob ke dataUrl untuk writeScreenshotToClipboard
+        compositeDataUrl = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(compositeResult.blob);
+        });
+      }
+    }
+
     if (withCaption) {
       // Build batch caption (format sama dengan preview modal, dengan numbering 1, 2, 3...)
       const cap = buildBatchCaption(screenshots);
+      // v3.11.38: Pakai composite image (bukan screenshots[0] saja)
       const result = await writeScreenshotToClipboard(
-        screenshots[0]?.dataUrl, // image/png hanya bisa 1 per ClipboardItem
+        compositeDataUrl,
         cap.textPlain,
         cap.textHtml
       );
       if (result.ok) {
-        toast(result.message || ('✓ ' + screenshots.length + ' screenshot tersalin'));
+        const label = screenshots.length > 1
+          ? '✓ ' + screenshots.length + ' gambar digabung jadi 1 — paste ke Google Docs/Gmail/WhatsApp'
+          : (result.message || ('✓ 1 screenshot tersalin'));
+        toast(label);
       } else {
         // Fallback: text-only
         try {
@@ -871,23 +903,44 @@ async function vaultBatchCopyAction(withCaption) {
         }
       }
     } else {
-      // Image only — untuk batch, copy screenshot pertama sebagai image/png
-      // (browser limit: 1 image/png per clipboard write)
-      if (!screenshots[0]?.dataUrl) {
+      // Image only — v3.11.38: pakai composite image (bukan screenshot pertama saja)
+      if (!compositeDataUrl) {
         toast('Gambar tidak ditemukan', false);
         return;
       }
-      const result = await writeScreenshotToClipboard(screenshots[0].dataUrl, '', '');
-      if (result.ok) {
-        toast(result.message || ('✓ ' + screenshots.length + ' screenshot tersalin (gambar pertama)'));
+      if (screenshots.length === 1) {
+        // Single — copy original tanpa label
+        const result = await writeScreenshotToClipboard(compositeDataUrl, '', '');
+        if (result.ok) {
+          toast(result.message || '✓ Gambar tersalin');
+        } else {
+          toast('Gagal copy gambar: ' + (result.error || ''), false);
+        }
       } else {
-        // Fallback: text-only dengan placeholder
-        const cap = buildBatchCaption(screenshots);
-        try {
-          await navigator.clipboard.writeText(cap.textPlain);
-          toast('✓ Tersalin sebagai text (clipboard image tidak support)');
-        } catch (e2) {
-          toast('Gagal copy: ' + e2.message, false);
+        // Multiple — copy composite PNG blob langsung
+        if (compositeBlob && typeof ClipboardItem !== 'undefined') {
+          try {
+            const item = new ClipboardItem({ 'image/png': compositeBlob });
+            await navigator.clipboard.write([item]);
+            toast('✓ ' + screenshots.length + ' gambar digabung jadi 1 — paste ke Google Docs/Gmail/WhatsApp');
+          } catch (e) {
+            console.warn('[RecallFox] Composite clipboard write failed:', e.message);
+            // Fallback: pakai compositeDataUrl via writeScreenshotToClipboard
+            const result = await writeScreenshotToClipboard(compositeDataUrl, '', '');
+            if (result.ok) {
+              toast('✓ ' + screenshots.length + ' gambar gabungan tersalin');
+            } else {
+              toast('Gagal copy gambar: ' + (result.error || ''), false);
+            }
+          }
+        } else {
+          // Fallback: pakai writeScreenshotToClipboard
+          const result = await writeScreenshotToClipboard(compositeDataUrl, '', '');
+          if (result.ok) {
+            toast('✓ ' + screenshots.length + ' gambar gabungan tersalin');
+          } else {
+            toast('Gagal copy gambar: ' + (result.error || ''), false);
+          }
         }
       }
     }
