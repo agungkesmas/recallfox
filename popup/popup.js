@@ -30,6 +30,9 @@ import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } fro
 // v3.7: Import untuk halaman Backup & Tanya AI yang lebih kaya
 import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigured, buildSystemPrompt } from '../lib/assistant.js';
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
+// v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
+// semua pakai format yang sama persis.
+import { buildScreenshotCaption, buildBatchCaption, writeScreenshotToClipboard } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -766,33 +769,71 @@ async function vaultBatchCopyAction(withCaption) {
   }
   const ids = Array.from(vaultBatchSelected);
   toast(withCaption ? '📋 Menyalin ' + ids.length + ' screenshot + keterangan...' : '🖼️ Menyalin ' + ids.length + ' gambar...');
+
+  // v3.11.34: Lakukan clipboard.write LANGSUNG di popup context (bukan delegate
+  // ke background → inject ke active tab yang sering gagal).
+  // Format SAMA PERSIS dengan preview modal — via lib/copy-format.js.
   try {
-    const res = await browser.runtime.sendMessage({
-      type: 'COPY_SCREENSHOTS_BATCH',
-      ids,
-      withCaption: !!withCaption
-    });
-    if (res?.ok) {
-      toast(res.message || ('✓ ' + ids.length + ' screenshot tersalin'));
-    } else {
-      // v3.11.25 (Sesi 15): Fallback kalau background inject gagal (mis. tab aktif about:,
-      // moz-extension:, atau clipboard API tidak support). Coba copy text-only di popup context.
-      const err = res?.error || 'unknown';
-      if (err === 'not_http_page' || err === 'no_active_tab' || err.includes('clipboard_write_failed')) {
-        console.warn('[RecallFox] Batch copy via background gagal (' + err + '), fallback ke text-only di popup');
-        await _vaultBatchCopyTextFallback(ids, withCaption);
+    // Kumpulkan screenshot + dataUrl
+    const screenshots = [];
+    for (const id of ids) {
+      const item = currentVault.items.find(i => i.id === id);
+      if (!item || item.type !== 'screenshot') continue;
+      let dataUrl = null;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
+        if (res?.ok && res.dataUrl) dataUrl = res.dataUrl;
+      } catch (e) {}
+      screenshots.push({ item, dataUrl });
+    }
+    if (screenshots.length === 0) {
+      toast('Tidak ada screenshot valid terpilih', false);
+      return;
+    }
+
+    if (withCaption) {
+      // Build batch caption (format sama dengan preview modal, dengan numbering 1, 2, 3...)
+      const cap = buildBatchCaption(screenshots);
+      const result = await writeScreenshotToClipboard(
+        screenshots[0]?.dataUrl, // image/png hanya bisa 1 per ClipboardItem
+        cap.textPlain,
+        cap.textHtml
+      );
+      if (result.ok) {
+        toast(result.message || ('✓ ' + screenshots.length + ' screenshot tersalin'));
       } else {
-        toast('Gagal: ' + err, false);
+        // Fallback: text-only
+        try {
+          await navigator.clipboard.writeText(cap.textPlain);
+          toast('✓ ' + screenshots.length + ' screenshot tersalin (text-only — gambar tidak ikut)');
+        } catch (e2) {
+          toast('Gagal copy: ' + e2.message, false);
+        }
+      }
+    } else {
+      // Image only — untuk batch, copy screenshot pertama sebagai image/png
+      // (browser limit: 1 image/png per clipboard write)
+      if (!screenshots[0]?.dataUrl) {
+        toast('Gambar tidak ditemukan', false);
+        return;
+      }
+      const result = await writeScreenshotToClipboard(screenshots[0].dataUrl, '', '');
+      if (result.ok) {
+        toast(result.message || ('✓ ' + screenshots.length + ' screenshot tersalin (gambar pertama)'));
+      } else {
+        // Fallback: text-only dengan placeholder
+        const cap = buildBatchCaption(screenshots);
+        try {
+          await navigator.clipboard.writeText(cap.textPlain);
+          toast('✓ Tersalin sebagai text (clipboard image tidak support)');
+        } catch (e2) {
+          toast('Gagal copy: ' + e2.message, false);
+        }
       }
     }
   } catch (e) {
-    // v3.11.25: Fallback kalau sendMessage throw (mis. background crash)
-    console.warn('[RecallFox] Batch copy exception:', e.message, '— fallback ke text-only');
-    try {
-      await _vaultBatchCopyTextFallback(ids, withCaption);
-    } catch (e2) {
-      toast('Error: ' + e2.message, false);
-    }
+    console.warn('[RecallFox] Batch copy exception:', e.message);
+    toast('Error: ' + e.message, false);
   }
 }
 
@@ -1557,22 +1598,81 @@ async function downloadScreenshot(id) {
 // withCaption=true  → salin gambar + keterangan (image/png + text/html + text/plain)
 // Karena popup/sidebar tidak bisa akses navigator.clipboard.write dengan image
 // langsung di Firefox (perlu user gesture & secure context yang berbeda),
-// kita delegate ke background.js via message COPY_SCREENSHOT_TO_CLIPBOARD.
-// Background akan inject content script ke tab aktif untuk eksekusi clipboard.
+// v3.11.34: Direct clipboard.write dari popup context.
+// SEBELUMNYA (v3.11.32-): delegate ke background → inject content script ke
+// active tab → clipboard.write di active tab. Ini sering gagal karena:
+//   1. User gesture dari klik popup hilang saat message ke background
+//   2. Active tab bisa about:blank / moz-extension: / restricted URL
+//   3. Content script clipboard permission berbeda dari popup context
+//   → fallback ke download file → user lihat "malah di download"
+//
+// FIX v3.11.34: lakukan clipboard.write langsung di popup context. Popup punya
+// `clipboardWrite` permission (lihat manifest.json), jadi navigator.clipboard.write
+// jalan tanpa perlu inject ke active tab.
+//
+// Format text/html + text/plain di-build via lib/copy-format.js — SAMA PERSIS
+// dengan yang dipakai preview modal (overlay.js) dan batch copy.
 async function copyScreenshotToClipboard(id, withCaption) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) { toast('Item tidak ditemukan', false); return; }
   try {
     toast(withCaption ? '📦 Menyalin gambar + keterangan…' : '📋 Menyalin gambar…');
-    const res = await browser.runtime.sendMessage({
-      type: 'COPY_SCREENSHOT_TO_CLIPBOARD',
-      id,
-      withCaption: !!withCaption
-    });
-    if (res?.ok) {
-      toast(res.message || (withCaption ? '✓ Gambar + keterangan tersalin' : '✓ Gambar tersalin'));
+
+    // Ambil screenshot blob (data URL) dari storage.local
+    let dataUrl = null;
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
+      if (res?.ok && res.dataUrl) dataUrl = res.dataUrl;
+    } catch (e) {
+      console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
+    }
+
+    if (withCaption) {
+      // Build caption (📸 + 🔗 + 🕒 + 📝 + 🔧) — sama persis dengan preview modal
+      const cap = buildScreenshotCaption(item, dataUrl);
+      const result = await writeScreenshotToClipboard(dataUrl, cap.textPlain, cap.textHtml);
+      if (result.ok) {
+        toast(result.message || '✓ Gambar + keterangan tersalin');
+      } else {
+        // Fallback terakhir: download file (jarang terjadi)
+        if (dataUrl) {
+          try {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = 'screenshot-' + Date.now() + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            toast('✓ Gambar di-download + keterangan disalin (clipboard tidak support)');
+            // Tetap copy text
+            try { await navigator.clipboard.writeText(cap.textPlain); } catch (e) {}
+          } catch (e) {
+            toast('Gagal salin: ' + (result.error || e.message), false);
+          }
+        } else {
+          toast('Gagal salin: ' + (result.error || 'no_dataurl'), false);
+        }
+      }
     } else {
-      toast('Gagal salin: ' + (res?.error || 'unknown'), false);
+      // Image only — tanpa caption
+      if (!dataUrl) { toast('Gambar tidak ditemukan di storage', false); return; }
+      const result = await writeScreenshotToClipboard(dataUrl, '', '');
+      if (result.ok) {
+        toast(result.message || '✓ Gambar tersalin');
+      } else {
+        // Fallback: download
+        try {
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = 'screenshot-' + Date.now() + '.png';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          toast('✓ Gambar di-download (clipboard tidak support)');
+        } catch (e) {
+          toast('Gagal salin: ' + (result.error || e.message), false);
+        }
+      }
     }
   } catch (e) {
     toast('Error: ' + e.message, false);
