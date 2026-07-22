@@ -2725,7 +2725,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // v3.11.29: Stop realtime sync sebelum logout
       try {
         const { stopRealtimeSync } = await import('./lib/supabase-sync.js');
-        stopRealtimeSync();
+        await stopRealtimeSync();
       } catch (e) {}
       const { signOut } = await import('./lib/supabase-client.js');
       await signOut();
@@ -3409,6 +3409,15 @@ browser.alarms.onAlarm.addListener((alarm) => {
     checkAutoDiscard().catch(e => {
       console.warn('[RecallFox/AD] Alarm check error:', e.message);
     });
+  }
+  // v3.11.30: Realtime sync alarm — pull dari Supabase kalau ada perubahan
+  if (alarm.name === 'rf-supabase-realtime') {
+    console.log('[RecallFox] Realtime alarm fired');
+    import('./lib/supabase-sync.js').then(({ handleRealtimeAlarm }) => {
+      handleRealtimeAlarm().catch(e => {
+        console.warn('[RecallFox/Supabase] Realtime alarm handler error:', e.message);
+      });
+    }).catch(() => {});
   }
 });
 
