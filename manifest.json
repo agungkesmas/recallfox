@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.12.0",
+  "version": "3.12.1",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -183,7 +183,10 @@
         "contentguard/takeover.js",
         "contentguard/blocked.html",
         "contentguard/blocked.css",
-        "contentguard/blocked.js"
+        "contentguard/blocked.js",
+        "popup/viewer.html",
+        "popup/viewer.js",
+        "popup/viewer.css"
       ],
       "matches": [
         "<all_urls>"

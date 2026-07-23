@@ -2050,6 +2050,56 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }
   }
+  // v3.12.1: GET_DOCUMENT_PAGES — return metadata document (page URLs, title, dll)
+  // Dipakai oleh popup/viewer.js untuk multi-page viewer.
+  if (msg.type === 'GET_DOCUMENT_PAGES') {
+    try {
+      const { getVault } = await import('./lib/storage.js');
+      const vault = await getVault();
+      const item = (vault.items || []).find(i => i.id === msg.id);
+      if (!item) {
+        sendResponse({ ok: false, error: 'item_not_found' }); return;
+      }
+      if (item.type !== 'document') {
+        sendResponse({ ok: false, error: 'not_a_document' }); return;
+      }
+      const pages = item.source?.pages || [];
+      // Jika pages[0].url null tapi gdriveFileUrl ada, isi dari sana
+      const pagesWithUrls = pages.map((p, i) => {
+        if (p?.url) return p;
+        if (i === 0 && item.gdriveFileUrl) {
+          return { ...p, url: item.gdriveFileUrl };
+        }
+        return p;
+      });
+      sendResponse({
+        ok: true,
+        id: item.id,
+        title: item.title || 'Dokumen',
+        pages: pagesWithUrls,
+        totalPages: pagesWithUrls.length,
+        annotationNote: item.annotationNote || item.source?.annotationNote || ''
+      }); return;
+    } catch (e) {
+      console.warn('[RecallFox] GET_DOCUMENT_PAGES failed:', e.message);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.12.1: DOWNLOAD_URL — download arbitrary URL via browser.downloads
+  // Dipakai oleh viewer.js untuk download halaman dokumen.
+  if (msg.type === 'DOWNLOAD_URL') {
+    try {
+      const downloadId = await browser.downloads.download({
+        url: msg.url,
+        filename: msg.filename || 'download.bin',
+        saveAs: false
+      });
+      sendResponse({ ok: true, downloadId }); return;
+    } catch (e) {
+      console.warn('[RecallFox] DOWNLOAD_URL failed:', e.message);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
   if (msg.type === 'INJECT_ANNOTATE_SCRIPT') {
     // v3.11.4: Inject content/annotate.js into the active tab on-demand.
     // Called by overlay.js when user clicks "Anotasi" in capture preview modal.

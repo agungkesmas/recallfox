@@ -1498,16 +1498,15 @@ function openScreenshotViewer(id) {
   });
 }
 
-// v3.12.0 (Fase 7): Multi-page document viewer — port dari PWA document-viewer.js,
-// disesuaikan ke konteks addon (window.open + document.write, bukan modal di body).
-// Semua halaman di-prefetch di popup context lalu di-embed sebagai JS array di
-// HTML halaman viewer — supaya navigasi prev/next + arrow keys jalan client-side
-// tanpa perlu round-trip message ke background.
+// v3.12.0 (Fase 7): Multi-page document viewer.
+// v3.12.1 FIX: Viewer lama pakai window.open + document.write + inline script
+// dengan base64 JSON besar → image tidak tampil (kemungkinan pages[0] null saat
+// render(0) dipanggil, atau CSP / inline script issue di Firefox MV3).
 //
-// Strategi prefetch:
-//   - Halaman 1: coba cache lokal (rf_shot_<id> via GET_SCREENSHOT_BLOB) — instan kalau ada
-//   - Halaman 2+ dan fallback halaman 1: fetch langsung dari source.pages[i].url
-//     (URL public Supabase Storage, bucket 'screenshots' sudah public=true)
+// Solusi v3.12.1: Buka static HTML viewer (popup/viewer.html) sebagai tab baru
+// via browser.tabs.create(). Image di-render via <img src="cloudUrl"> langsung —
+// Firefox yang load dari Supabase Storage public URL. Tidak ada inline script,
+// tidak ada base64 JSON, CSP-safe, debuggable (user bisa View Source).
 //
 // @param {string} id - vault item id dengan type='document'
 async function openDocumentViewer(id) {
@@ -1517,133 +1516,19 @@ async function openDocumentViewer(id) {
   const pages = item.source?.pages || [];
   if (pages.length === 0) { toast('Dokumen tidak punya halaman', false); return; }
 
-  const totalPages = pages.length;
-  const title = item.title || 'Dokumen';
-  toast('📄 Memuat ' + totalPages + ' halaman...');
-
-  // Prefetch semua halaman sebagai dataUrl
-  const pageDataUrls = new Array(totalPages).fill(null);
-
-  // Halaman 1: coba cache lokal dulu (lebih cepat — sudah di-download saat pull)
+  // Buka tab viewer dengan ?id=... — viewer.js yang handle sisanya
+  const viewerUrl = browser.runtime.getURL('popup/viewer.html') + '?id=' + encodeURIComponent(id);
   try {
-    const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
-    if (res?.ok && res.dataUrl) pageDataUrls[0] = res.dataUrl;
+    await browser.tabs.create({ url: viewerUrl });
+    // Tutup popup supaya tab baru kelihatan
+    if (typeof window !== 'undefined' && window.close) {
+      // Popup context: close popup. Sidebar context: no-op (sidebar tetap)
+      try { window.close(); } catch (e) { /* ignore */ }
+    }
   } catch (e) {
-    console.warn('[RecallFox] GET_SCREENSHOT_BLOB for document failed:', e.message);
+    console.warn('[RecallFox] Failed to open viewer tab:', e.message);
+    toast('Gagal membuka viewer: ' + e.message, false);
   }
-
-  // Fetch semua halaman yang belum ada (parallel — limit 4 concurrent utk avoiding bottleneck)
-  const CONCURRENCY = 4;
-  const queue = pages.map((p, i) => ({ idx: i, url: p?.url || null })).filter(x => x.url && !pageDataUrls[x.idx]);
-  for (let i = 0; i < queue.length; i += CONCURRENCY) {
-    const batch = queue.slice(i, i + CONCURRENCY);
-    await Promise.all(batch.map(async ({ idx, url }) => {
-      try {
-        const r = await fetch(url);
-        if (!r.ok) return;
-        const blob = await r.blob();
-        if (!blob || blob.size === 0) return;
-        const du = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = () => reject(new Error('filereader_failed'));
-          reader.readAsDataURL(blob);
-        });
-        pageDataUrls[idx] = du;
-      } catch (e) {
-        console.warn('[RecallFox] Document page ' + (idx + 1) + ' fetch failed:', e.message);
-      }
-    }));
-  }
-
-  const validCount = pageDataUrls.filter(Boolean).length;
-  if (validCount === 0) { toast('Gagal memuat semua halaman dokumen', false); return; }
-
-  // Buka window baru dengan viewer self-contained
-  const w = window.open('');
-  if (!w) { toast('Popup diblokir browser — izinkan popup untuk RecallFox', false); return; }
-
-  // Embed array dataUrl + metadata sebagai JS object di script.
-  // JSON.stringify aman karena dataUrl base64 tidak mengandung </script>.
-  // Tapi kita tetap escape "</script>" defensively.
-  const pagesJson = JSON.stringify(pageDataUrls).replace(/<\/script>/gi, '<\\/script>');
-  const totalPagesJs = totalPages;
-  const titleEsc = esc(title);
-
-  w.document.write('<!DOCTYPE html>\n'
-    + '<html lang="id"><head><meta charset="utf-8">'
-    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
-    + '<title>' + titleEsc + ' — RecallFox Dokumen</title>\n'
-    + '<style>\n'
-    + '  * { box-sizing: border-box; }\n'
-    + '  html, body { margin:0; padding:0; height:100%; background:#0c0a09; color:#fafaf9; font-family:-apple-system,system-ui,sans-serif; }\n'
-    + '  body { display:flex; flex-direction:column; min-height:100vh; }\n'
-    + '  .topbar { display:flex; align-items:center; gap:12px; padding:10px 16px; background:#1c1917; border-bottom:1px solid #292524; }\n'
-    + '  .topbar .title { flex:1; font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n'
-    + '  .topbar .count { font-size:12px; color:#a8a29e; flex-shrink:0; }\n'
-    + '  .page-wrap { flex:1; display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto; min-height:0; }\n'
-    + '  .page-wrap img { max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; box-shadow:0 4px 24px rgba(0,0,0,0.6); }\n'
-    + '  .page-wrap .err { color:#fca5a5; font-size:14px; text-align:center; padding:40px; }\n'
-    + '  .dots { display:flex; gap:6px; justify-content:center; padding:6px 0; flex-wrap:wrap; max-width:100%; }\n'
-    + '  .dot { width:8px; height:8px; border-radius:50%; background:#44403c; cursor:pointer; transition:background 0.15s; }\n'
-    + '  .dot:hover { background:#78716c; }\n'
-    + '  .dot.active { background:#fafaf9; }\n'
-    + '  .nav { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px 16px; background:#1c1917; border-top:1px solid #292524; }\n'
-    + '  .nav button { background:#292524; color:#fafaf9; border:1px solid #44403c; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:13px; }\n'
-    + '  .nav button:hover:not(:disabled) { background:#3f3f46; }\n'
-    + '  .nav button:disabled { opacity:0.3; cursor:not-allowed; }\n'
-    + '  .nav .ind { font-size:13px; min-width:90px; text-align:center; color:#d6d3d1; }\n'
-    + '</style></head>\n'
-    + '<body>'
-    + '<div class="topbar"><span class="title">📄 ' + titleEsc + '</span>'
-    + '<span class="count">' + totalPagesJs + ' halaman · RecallFox</span></div>'
-    + '<div class="page-wrap"><img id="pageImg" alt=""></div>'
-    + (totalPagesJs > 1 ? '<div class="dots" id="dots"></div>' : '')
-    + '<div class="nav">'
-    + (totalPagesJs > 1 ? '<button id="prevBtn">◀ Prev</button>' : '')
-    + '<span class="ind" id="ind">Hal 1/' + totalPagesJs + '</span>'
-    + (totalPagesJs > 1 ? '<button id="nextBtn">Next ▶</button>' : '')
-    + '</div>'
-    + '<script>'
-    + 'var pages = ' + pagesJson + ';' 
-    + 'var totalPages = pages.length;'
-    + 'var cur = 0;'
-    + 'var img = document.getElementById("pageImg");'
-    + 'var ind = document.getElementById("ind");'
-    + 'var prevBtn = document.getElementById("prevBtn");'
-    + 'var nextBtn = document.getElementById("nextBtn");'
-    + 'var dotsEl = document.getElementById("dots");'
-    + 'if (dotsEl) {'
-    + '  var dotsHtml = "";'
-    + '  for (var i = 0; i < totalPages; i++) {'
-    + '    dotsHtml += \'<span class="dot\' + (i === 0 ? " active" : "") + \'" data-idx="\' + i + \'"></span>\';'
-    + '  }'
-    + '  dotsEl.innerHTML = dotsHtml;'
-    + '  var dotEls = dotsEl.querySelectorAll(".dot");'
-    + '  for (var j = 0; j < dotEls.length; j++) {'
-    + '    dotEls[j].addEventListener("click", function(e) { render(parseInt(e.target.dataset.idx, 10)); });'
-    + '  }'
-    + '}'
-    + 'function render(i) {'
-    + '  cur = i;'
-    + '  var p = pages[i];'
-    + '  if (p) { img.src = p; img.style.display = ""; }'
-    + '  else { img.style.display = "none"; }'
-    + '  if (ind) ind.textContent = "Hal " + (i + 1) + "/" + totalPages;'
-    + '  if (prevBtn) prevBtn.disabled = (i === 0);'
-    + '  if (nextBtn) nextBtn.disabled = (i === totalPages - 1);'
-    + '  if (dotsEl) { for (var k = 0; k < dotEls.length; k++) { dotEls[k].classList.toggle("active", k === i); } }'
-    + '}'
-    + 'if (prevBtn) prevBtn.addEventListener("click", function() { if (cur > 0) render(cur - 1); });'
-    + 'if (nextBtn) nextBtn.addEventListener("click", function() { if (cur < totalPages - 1) render(cur + 1); });'
-    + 'document.addEventListener("keydown", function(e) {'
-    + '  if (e.key === "ArrowLeft" && cur > 0) render(cur - 1);'
-    + '  else if (e.key === "ArrowRight" && cur < totalPages - 1) render(cur + 1);'
-    + '});'
-    + 'render(0);'
-    + '<\/script>'
-    + '</body></html>');
-  w.document.close();
 }
 
 // v3.11.25 (Sesi 15, Issue #3): Sheet untuk edit catatan anotasi screenshot.
