@@ -32,7 +32,7 @@ import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigur
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
 // v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
 // semua pakai format yang sama persis.
-import { buildScreenshotCaption, buildBatchCaption, writeScreenshotToClipboard, buildCompositeImage } from '../lib/copy-format.js';
+import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, buildCompositeImage } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -147,7 +147,10 @@ const TYPE = {
   snapshot: { label: 'Snapshot', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/><circle cx="12" cy="11.5" r="1"/><circle cx="16" cy="11.5" r="1"/><circle cx="8" cy="11.5" r="1"/></svg>' },
   screenshot: { label: 'Media', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>' },
   link: { label: 'Link', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
-  bundle: { label: 'Bundle', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>' }
+  bundle: { label: 'Bundle', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>' },
+  // v3.12.0 (Fase 7): Tipe dokumen multi-halaman (CamScanner-like, dibuat di PWA v1.4.0+).
+  // Tampil di chip "Media" bersama screenshot (dimerge via visibleItems/chipCount).
+  document: { label: 'Dokumen', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>' }
 };
 
 // ============ Toast ============
@@ -446,6 +449,11 @@ function chipCount(c) {
   if (c === 'archive') {
     return items.filter(i => i.archived || (i._bundle && i._bundle.archived)).length;
   }
+  // v3.12.0 (Fase 7): Chip 'screenshot' (label "Media") dimerge dengan 'document'
+  // supaya dokumen tampil di Media bersama screenshot (konsisten dengan PWA media.js).
+  if (c === 'screenshot') {
+    return items.filter(i => (i.type === 'screenshot' || i.type === 'document') && !i.archived).length;
+  }
   return items.filter(i => i.type === c && !i.archived).length;
 }
 function renderChips() {
@@ -489,6 +497,11 @@ function searchableTextFor(it) {
   if (it.screenshotMode) parts.push(it.screenshotMode);
   if (it.gdriveFileUrl) parts.push(it.gdriveFileUrl);
   if (it.gdriveFileId) parts.push(it.gdriveFileId);
+  // v3.12.0 (Fase 7): Dokumen multi-halaman — info jumlah halaman + note di source
+  if (Array.isArray(it.source?.pages)) parts.push(it.source.pages.length + ' halaman');
+  if (it.type === 'document' && (it.annotationNote || it.source?.annotationNote)) {
+    parts.push(it.annotationNote || it.source.annotationNote);
+  }
   // v3.10.2 (Issue 4 fix): Snapshot metadata
   if (it.snapshotDomain) parts.push(it.snapshotDomain);
   if (it.snapshotMessageCount) parts.push(String(it.snapshotMessageCount));
@@ -598,6 +611,7 @@ function updateVaultBatchBarButtons() {
 
   // Tentukan tombol yang tampil berdasarkan tipe terpilih
   const hasScreenshot = selectedTypes.has('screenshot');
+  const hasDocument = selectedTypes.has('document'); // v3.12.0 (Fase 7)
   const hasBundle = selectedTypes.has('bundle');
   const hasArchive = selectedTypes.has('archive');
   const hasText = ['prompt', 'context', 'link', 'snapshot'].some(t => selectedTypes.has(t));
@@ -605,7 +619,8 @@ function updateVaultBatchBarButtons() {
   if (currentChip === 'archive' || hasArchive) {
     if (unarchiveBtn) unarchiveBtn.style.display = '';
   }
-  if (hasScreenshot) {
+  // v3.12.0: Tombol screenshot juga tampil untuk dokumen (copy halaman pertama + caption).
+  if (hasScreenshot || hasDocument) {
     if (copyCaptionBtn) copyCaptionBtn.style.display = '';
     if (copyImgBtn) copyImgBtn.style.display = '';
     if (copyMetaBtn) copyMetaBtn.style.display = '';
@@ -704,30 +719,44 @@ async function vaultBatchCopyTextAction() {
 // Tidak fetch blob gambar → cepat, bisa untuk ratusan screenshot.
 async function vaultBatchCopyMetaAction() {
   if (vaultBatchSelected.size === 0) {
-    toast('Pilih minimal 1 screenshot dulu');
+    toast('Pilih minimal 1 item dulu');
     return;
   }
   const ids = Array.from(vaultBatchSelected);
+  // v3.12.0 (Fase 7): Termasuk dokumen — text metadata untuk dokumen pakai buildDocumentCaption.
   const items = ids.map(id => currentVault.items.find(i => i.id === id))
-    .filter(i => i && i.type === 'screenshot');
+    .filter(i => i && (i.type === 'screenshot' || i.type === 'document'));
   if (items.length === 0) {
-    toast('Tidak ada screenshot valid terpilih', false);
+    toast('Tidak ada screenshot/dokumen valid terpilih', false);
     return;
   }
-  toast('📝 Menyalin teks metadata ' + items.length + ' screenshot...');
-  // dataUrl = null → textPlain tetap lengkap (📸, Sumber, Waktu, Mode, 📝 Catatan)
-  const screenshots = items.map(item => ({ item, dataUrl: null }));
-  const cap = buildBatchCaption(screenshots);
-  if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
+  toast('📝 Menyalin teks metadata ' + items.length + ' item...');
+  // v3.12.0: Mix screenshot + dokumen — build text per-tipe, gabungkan dengan separator.
+  const parts = [];
+  for (const item of items) {
+    const cap = item.type === 'document'
+      ? buildDocumentCaption(item, null, { index: items.indexOf(item) + 1 })
+      : buildScreenshotCaption(item, null, { index: items.indexOf(item) + 1 });
+    if (cap.textPlain) parts.push(cap.textPlain);
+  }
+  const textPlain = parts.join('\n\n---\n\n') + (parts.length > 0 ? '\n\n— Ditangkap oleh RecallFox —' : '');
+  // Fallback kalau buildBatchCaption lebih sesuai (screenshot-only case)
+  let finalText = textPlain;
+  if (items.every(i => i.type === 'screenshot')) {
+    const screenshots = items.map(item => ({ item, dataUrl: null }));
+    const cap = buildBatchCaption(screenshots);
+    if (cap.textPlain) finalText = cap.textPlain;
+  }
+  if (!finalText) { toast('Tidak ada metadata untuk disalin', false); return; }
   try {
-    await navigator.clipboard.writeText(cap.textPlain);
-    toast('✓ Teks metadata ' + items.length + ' screenshot tersalin (paste ke WA/Gemini/AI chat)');
+    await navigator.clipboard.writeText(finalText);
+    toast('✓ Teks metadata ' + items.length + ' item tersalin (paste ke WA/Gemini/AI chat)');
   } catch (e) {
     console.warn('[RecallFox] vaultBatchCopyMetaAction failed:', e.message);
     try {
       // Fallback: delegate ke background (utk konteks tanpa clipboard permission)
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: cap.textPlain });
-      toast('✓ Teks metadata ' + items.length + ' screenshot tersalin');
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: finalText });
+      toast('✓ Teks metadata ' + items.length + ' item tersalin');
     } catch (e2) {
       toast('⚠ Gagal menyalin: ' + e2.message, false);
     }
@@ -828,17 +857,19 @@ async function vaultBatchCopyAction(withCaption) {
     return;
   }
   const ids = Array.from(vaultBatchSelected);
-  toast(withCaption ? '📋 Menyalin ' + ids.length + ' screenshot + keterangan...' : '🖼️ Menyalin ' + ids.length + ' gambar...');
+  toast(withCaption ? '📋 Menyalin ' + ids.length + ' item + keterangan...' : '🖼️ Menyalin ' + ids.length + ' gambar...');
 
   // v3.11.34: Lakukan clipboard.write LANGSUNG di popup context (bukan delegate
   // ke background → inject ke active tab yang sering gagal).
   // Format SAMA PERSIS dengan preview modal — via lib/copy-format.js.
+  // v3.12.0 (Fase 7): Termasuk dokumen — di-batch sebagai "gambar" pakai halaman pertama.
   try {
-    // Kumpulkan screenshot + dataUrl
+    // Kumpulkan screenshot/dokumen + dataUrl
     const screenshots = [];
     for (const id of ids) {
       const item = currentVault.items.find(i => i.id === id);
-      if (!item || item.type !== 'screenshot') continue;
+      // v3.12.0: Hanya skip kalau BUKAN screenshot DAN BUKAN document.
+      if (!item || (item.type !== 'screenshot' && item.type !== 'document')) continue;
       let dataUrl = null;
       try {
         const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
@@ -847,7 +878,7 @@ async function vaultBatchCopyAction(withCaption) {
       screenshots.push({ item, dataUrl });
     }
     if (screenshots.length === 0) {
-      toast('Tidak ada screenshot valid terpilih', false);
+      toast('Tidak ada screenshot/dokumen valid terpilih', false);
       return;
     }
 
@@ -880,8 +911,34 @@ async function vaultBatchCopyAction(withCaption) {
     }
 
     if (withCaption) {
-      // Build batch caption (format sama dengan preview modal, dengan numbering 1, 2, 3...)
-      const cap = buildBatchCaption(screenshots);
+      // v3.12.0 (Fase 7): Build caption — kalau semua screenshot, pakai buildBatchCaption (lama).
+      // Kalau ada dokumen, build per-item dengan tipe yang sesuai, gabungkan manual.
+      let cap;
+      const hasDoc = screenshots.some(s => s.item.type === 'document');
+      if (!hasDoc) {
+        // Pure screenshot batch — pakai buildBatchCaption (composite grid + numbering)
+        cap = buildBatchCaption(screenshots);
+      } else {
+        // Mixed batch — build per-item dengan caption yang sesuai tipe
+        const parts = [];
+        const htmlParts = [];
+        for (let i = 0; i < screenshots.length; i++) {
+          const { item, dataUrl } = screenshots[i];
+          const idx = i + 1;
+          const c = item.type === 'document'
+            ? buildDocumentCaption(item, dataUrl, { index: idx })
+            : buildScreenshotCaption(item, dataUrl, { index: idx });
+          parts.push(c.textPlain + '\n\n[' + (item.type === 'document' ? '📄 Gambar' : '📸 Gambar') + ' ' + idx + ']');
+          htmlParts.push(c.textHtml);
+        }
+        const now = new Date();
+        const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+        cap = {
+          textPlain: '# 📷 Bundle Media — RecallFox\nTanggal: ' + dateStr + ' · Total: ' + screenshots.length + ' item\n\n' + parts.join('\n\n---\n\n') + '\n\n— Ditangkap oleh RecallFox —',
+          textHtml: '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917"><h1 style="margin:0 0 6px">📷 Bundle Media — RecallFox</h1><p style="margin:0 0 10px;color:#57534e"><em>Tanggal: ' + dateStr + ' · Total: ' + screenshots.length + ' item</em></p>' + htmlParts.join('<hr style="border:none;border-top:1px solid #e7e5e4;margin:16px 0">') + '</div>',
+          count: screenshots.length
+        };
+      }
       // v3.11.38: Pakai composite image (bukan screenshots[0] saja)
       const result = await writeScreenshotToClipboard(
         compositeDataUrl,
@@ -904,6 +961,7 @@ async function vaultBatchCopyAction(withCaption) {
       }
     } else {
       // Image only — v3.11.38: pakai composite image (bukan screenshot pertama saja)
+      // v3.12.0 (Fase 7): Untuk dokumen, composite image tetap jalan — pakai halaman pertama.
       if (!compositeDataUrl) {
         toast('Gambar tidak ditemukan', false);
         return;
@@ -1049,6 +1107,9 @@ function visibleItems() {
     vi = items.filter(i => i.archived || (i._bundle && i._bundle.archived));
   } else if (currentChip === 'all') {
     vi = items.filter(i => !i.archived && !(i._bundle && i._bundle.archived));
+  } else if (currentChip === 'screenshot') {
+    // v3.12.0 (Fase 7): Chip "Media" tampilkan screenshot + document bersama.
+    vi = items.filter(i => (i.type === 'screenshot' || i.type === 'document') && !i.archived);
   } else {
     vi = items.filter(i => i.type === currentChip && !i.archived);
   }
@@ -1096,6 +1157,13 @@ function renderList() {
       ctaHtml =
         '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat ↵</span>'
         + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
+    } else if (it.type === 'document') {
+      // v3.12.0 (Fase 7): Document multi-halaman — CTA sama dengan screenshot (view + download),
+      // tapi view membuka multi-page viewer, dan download unduh halaman pertama.
+      // Untuk multi-halaman, tambah badge halaman di title (lihat bawah).
+      ctaHtml =
+        '<span class="cta-pill" data-shot-action="view">📄 Lihat ↵</span>'
+        + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
     } else {
       const cta = currentAiDomain ? ICONS.zap + 'Sisipkan ↵' : ICONS.copy + 'Salin ↵';
       ctaHtml = '<span class="cta-pill">' + cta + '</span>';
@@ -1108,11 +1176,16 @@ function renderList() {
       const checked = vaultBatchSelected.has(it.id) ? ' checked' : '';
       batchCheckboxHtml = '<input type="checkbox" class="vault-batch-check" data-id="' + it.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;margin-right:4px">';
     }
+    // v3.12.0 (Fase 7): Badge jumlah halaman untuk dokumen multi-halaman.
+    const docPageCount = (it.type === 'document' && Array.isArray(it.source?.pages)) ? it.source.pages.length : 0;
+    const docBadge = docPageCount > 1
+      ? ' <span title="' + docPageCount + ' halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 ' + docPageCount + ' hal</span>'
+      : (it.type === 'document' ? ' <span title="1 halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 1 hal</span>' : '');
     return '<div class="item" data-id="' + it.id + '" tabindex="0">'
       + batchCheckboxHtml
       + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
       + '<div class="item-main">'
-      + '<div class="item-title">' + fav + arch + esc(it.title) + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
+      + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
       + '<div class="item-meta">' + T.label + ' · ' + esc(tagsStr) + (uses ? ' · <span class="uses">' + uses + '× dipakai</span>' : '') + '</div>'
       + '</div>'
       + '<div class="item-cta">'
@@ -1220,14 +1293,20 @@ function bindItemClicks() {
         }
       }
       // v3.7.1-FIX: Tombol aksi Screenshot (data-shot-action)
+      // v3.12.0 (Fase 7): Document juga pakai data-shot-action="view" — route ke
+      // openDocumentViewer (multi-page) kalau type='document'.
       const shotBtn = e.target.closest('[data-shot-action]');
       if (shotBtn) {
         e.stopPropagation();
         const action = shotBtn.dataset.shotAction;
         const it = findItem(el.dataset.id);
         if (!it) return;
-        if (action === 'view') openScreenshotViewer(it.id);
-        else if (action === 'download') downloadScreenshot(it.id);
+        if (action === 'view') {
+          if (it.type === 'document') openDocumentViewer(it.id);
+          else openScreenshotViewer(it.id);
+        } else if (action === 'download') {
+          downloadScreenshot(it.id);
+        }
         return;
       }
       if (e.target.closest('.morebtn')) return;
@@ -1258,6 +1337,11 @@ async function primaryAction(id) {
   }
   if (it.type === 'screenshot') {
     openScreenshotViewer(it.id);
+    return;
+  }
+  // v3.12.0 (Fase 7): Dokumen multi-halaman → buka multi-page viewer
+  if (it.type === 'document') {
+    openDocumentViewer(it.id);
     return;
   }
   // prompt / context / snapshot
@@ -1414,6 +1498,154 @@ function openScreenshotViewer(id) {
   });
 }
 
+// v3.12.0 (Fase 7): Multi-page document viewer — port dari PWA document-viewer.js,
+// disesuaikan ke konteks addon (window.open + document.write, bukan modal di body).
+// Semua halaman di-prefetch di popup context lalu di-embed sebagai JS array di
+// HTML halaman viewer — supaya navigasi prev/next + arrow keys jalan client-side
+// tanpa perlu round-trip message ke background.
+//
+// Strategi prefetch:
+//   - Halaman 1: coba cache lokal (rf_shot_<id> via GET_SCREENSHOT_BLOB) — instan kalau ada
+//   - Halaman 2+ dan fallback halaman 1: fetch langsung dari source.pages[i].url
+//     (URL public Supabase Storage, bucket 'screenshots' sudah public=true)
+//
+// @param {string} id - vault item id dengan type='document'
+async function openDocumentViewer(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  if (item.type !== 'document') { toast('Item ini bukan dokumen', false); return; }
+  const pages = item.source?.pages || [];
+  if (pages.length === 0) { toast('Dokumen tidak punya halaman', false); return; }
+
+  const totalPages = pages.length;
+  const title = item.title || 'Dokumen';
+  toast('📄 Memuat ' + totalPages + ' halaman...');
+
+  // Prefetch semua halaman sebagai dataUrl
+  const pageDataUrls = new Array(totalPages).fill(null);
+
+  // Halaman 1: coba cache lokal dulu (lebih cepat — sudah di-download saat pull)
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
+    if (res?.ok && res.dataUrl) pageDataUrls[0] = res.dataUrl;
+  } catch (e) {
+    console.warn('[RecallFox] GET_SCREENSHOT_BLOB for document failed:', e.message);
+  }
+
+  // Fetch semua halaman yang belum ada (parallel — limit 4 concurrent utk avoiding bottleneck)
+  const CONCURRENCY = 4;
+  const queue = pages.map((p, i) => ({ idx: i, url: p?.url || null })).filter(x => x.url && !pageDataUrls[x.idx]);
+  for (let i = 0; i < queue.length; i += CONCURRENCY) {
+    const batch = queue.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async ({ idx, url }) => {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const blob = await r.blob();
+        if (!blob || blob.size === 0) return;
+        const du = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('filereader_failed'));
+          reader.readAsDataURL(blob);
+        });
+        pageDataUrls[idx] = du;
+      } catch (e) {
+        console.warn('[RecallFox] Document page ' + (idx + 1) + ' fetch failed:', e.message);
+      }
+    }));
+  }
+
+  const validCount = pageDataUrls.filter(Boolean).length;
+  if (validCount === 0) { toast('Gagal memuat semua halaman dokumen', false); return; }
+
+  // Buka window baru dengan viewer self-contained
+  const w = window.open('');
+  if (!w) { toast('Popup diblokir browser — izinkan popup untuk RecallFox', false); return; }
+
+  // Embed array dataUrl + metadata sebagai JS object di script.
+  // JSON.stringify aman karena dataUrl base64 tidak mengandung </script>.
+  // Tapi kita tetap escape "</script>" defensively.
+  const pagesJson = JSON.stringify(pageDataUrls).replace(/<\/script>/gi, '<\\/script>');
+  const totalPagesJs = totalPages;
+  const titleEsc = esc(title);
+
+  w.document.write('<!DOCTYPE html>\n'
+    + '<html lang="id"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<title>' + titleEsc + ' — RecallFox Dokumen</title>\n'
+    + '<style>\n'
+    + '  * { box-sizing: border-box; }\n'
+    + '  html, body { margin:0; padding:0; height:100%; background:#0c0a09; color:#fafaf9; font-family:-apple-system,system-ui,sans-serif; }\n'
+    + '  body { display:flex; flex-direction:column; min-height:100vh; }\n'
+    + '  .topbar { display:flex; align-items:center; gap:12px; padding:10px 16px; background:#1c1917; border-bottom:1px solid #292524; }\n'
+    + '  .topbar .title { flex:1; font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n'
+    + '  .topbar .count { font-size:12px; color:#a8a29e; flex-shrink:0; }\n'
+    + '  .page-wrap { flex:1; display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto; min-height:0; }\n'
+    + '  .page-wrap img { max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; box-shadow:0 4px 24px rgba(0,0,0,0.6); }\n'
+    + '  .page-wrap .err { color:#fca5a5; font-size:14px; text-align:center; padding:40px; }\n'
+    + '  .dots { display:flex; gap:6px; justify-content:center; padding:6px 0; flex-wrap:wrap; max-width:100%; }\n'
+    + '  .dot { width:8px; height:8px; border-radius:50%; background:#44403c; cursor:pointer; transition:background 0.15s; }\n'
+    + '  .dot:hover { background:#78716c; }\n'
+    + '  .dot.active { background:#fafaf9; }\n'
+    + '  .nav { display:flex; align-items:center; justify-content:center; gap:12px; padding:10px 16px; background:#1c1917; border-top:1px solid #292524; }\n'
+    + '  .nav button { background:#292524; color:#fafaf9; border:1px solid #44403c; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:13px; }\n'
+    + '  .nav button:hover:not(:disabled) { background:#3f3f46; }\n'
+    + '  .nav button:disabled { opacity:0.3; cursor:not-allowed; }\n'
+    + '  .nav .ind { font-size:13px; min-width:90px; text-align:center; color:#d6d3d1; }\n'
+    + '</style></head>\n'
+    + '<body>'
+    + '<div class="topbar"><span class="title">📄 ' + titleEsc + '</span>'
+    + '<span class="count">' + totalPagesJs + ' halaman · RecallFox</span></div>'
+    + '<div class="page-wrap"><img id="pageImg" alt=""></div>'
+    + (totalPagesJs > 1 ? '<div class="dots" id="dots"></div>' : '')
+    + '<div class="nav">'
+    + (totalPagesJs > 1 ? '<button id="prevBtn">◀ Prev</button>' : '')
+    + '<span class="ind" id="ind">Hal 1/' + totalPagesJs + '</span>'
+    + (totalPagesJs > 1 ? '<button id="nextBtn">Next ▶</button>' : '')
+    + '</div>'
+    + '<script>'
+    + 'var pages = ' + pagesJson + ';' 
+    + 'var totalPages = pages.length;'
+    + 'var cur = 0;'
+    + 'var img = document.getElementById("pageImg");'
+    + 'var ind = document.getElementById("ind");'
+    + 'var prevBtn = document.getElementById("prevBtn");'
+    + 'var nextBtn = document.getElementById("nextBtn");'
+    + 'var dotsEl = document.getElementById("dots");'
+    + 'if (dotsEl) {'
+    + '  var dotsHtml = "";'
+    + '  for (var i = 0; i < totalPages; i++) {'
+    + '    dotsHtml += \'<span class="dot\' + (i === 0 ? " active" : "") + \'" data-idx="\' + i + \'"></span>\';'
+    + '  }'
+    + '  dotsEl.innerHTML = dotsHtml;'
+    + '  var dotEls = dotsEl.querySelectorAll(".dot");'
+    + '  for (var j = 0; j < dotEls.length; j++) {'
+    + '    dotEls[j].addEventListener("click", function(e) { render(parseInt(e.target.dataset.idx, 10)); });'
+    + '  }'
+    + '}'
+    + 'function render(i) {'
+    + '  cur = i;'
+    + '  var p = pages[i];'
+    + '  if (p) { img.src = p; img.style.display = ""; }'
+    + '  else { img.style.display = "none"; }'
+    + '  if (ind) ind.textContent = "Hal " + (i + 1) + "/" + totalPages;'
+    + '  if (prevBtn) prevBtn.disabled = (i === 0);'
+    + '  if (nextBtn) nextBtn.disabled = (i === totalPages - 1);'
+    + '  if (dotsEl) { for (var k = 0; k < dotEls.length; k++) { dotEls[k].classList.toggle("active", k === i); } }'
+    + '}'
+    + 'if (prevBtn) prevBtn.addEventListener("click", function() { if (cur > 0) render(cur - 1); });'
+    + 'if (nextBtn) nextBtn.addEventListener("click", function() { if (cur < totalPages - 1) render(cur + 1); });'
+    + 'document.addEventListener("keydown", function(e) {'
+    + '  if (e.key === "ArrowLeft" && cur > 0) render(cur - 1);'
+    + '  else if (e.key === "ArrowRight" && cur < totalPages - 1) render(cur + 1);'
+    + '});'
+    + 'render(0);'
+    + '<\/script>'
+    + '</body></html>');
+  w.document.close();
+}
+
 // v3.11.25 (Sesi 15, Issue #3): Sheet untuk edit catatan anotasi screenshot.
 // User feedback: "tolong di bagian kotak merah itu ditambahkan catatan untuk
 // menjelaskan anotasi yang sudah dibuatnya. jadi ketika dipaste tu hasilnya
@@ -1421,20 +1653,32 @@ function openScreenshotViewer(id) {
 function openAnnotationNoteSheet(id) {
   const it = currentVault.items.find(i => i.id === id);
   if (!it) { toast('Item tidak ditemukan', false); return; }
-  openSheet('📝 Catatan Anotasi', 'Tulis penjelasan anotasi — ikut saat copy screenshot', b => {
+  // v3.12.0 (Fase 7): Untuk dokumen, catatan disimpan di source.annotationNote (lihat PWA sync.js).
+  // Screenshot pakai top-level annotationNote. Kita baca kedua-duanya (fallback) supaya
+  // sheet tetap menampilkan catatan yang sudah ada untuk kedua tipe.
+  const isDoc = it.type === 'document';
+  const existingNote = it.annotationNote || it.source?.annotationNote || '';
+  openSheet('📝 Catatan Anotasi', isDoc ? 'Catatan dokumen — ikut saat copy dokumen' : 'Tulis penjelasan anotasi — ikut saat copy screenshot', b => {
     b.innerHTML = '<div class="sheet-form">'
-      + '<div class="hintbox" style="font-size:11px;line-height:1.55">Catatan ini akan ikut saat Anda copy screenshot (tunggal maupun batch). Format: <b>**Catatan Anotasi:**</b> teks Anda. Cocok untuk menjelaskan panah, kotak, atau text yang sudah Anda tambahkan di anotasi.</div>'
-      + '<div><label>Judul Screenshot</label><input class="f" value="' + esc(it.title || '') + '" readonly style="background:var(--surface-2)"></div>'
+      + '<div class="hintbox" style="font-size:11px;line-height:1.55">Catatan ini akan ikut saat Anda copy ' + (isDoc ? 'dokumen' : 'screenshot') + ' (tunggal maupun batch). Format: <b>**Catatan Anotasi:**</b> teks Anda. Cocok untuk menjelaskan panah, kotak, atau text yang sudah Anda tambahkan di anotasi.</div>'
+      + '<div><label>Judul ' + (isDoc ? 'Dokumen' : 'Screenshot') + '</label><input class="f" value="' + esc(it.title || '') + '" readonly style="background:var(--surface-2)"></div>'
       + '<div><label>Catatan Anotasi <span class="field-hint">(opsional — kosongkan untuk hapus)</span></label>'
       +   '<textarea class="f" id="annotNote" rows="5" placeholder="mis. Panah merah menunjukkan tombol login yang error. Kotak kuning menunjukkan pesan error 500.">'
-      + esc(it.annotationNote || '')
+      + esc(existingNote)
       + '</textarea></div>'
       + '<div class="btn-row"><button class="btn btn-g" id="annotCancel">Batal</button>'
       +   '<button class="btn btn-p" id="annotSave">' + ICONS.check + 'Simpan</button></div></div>';
     b.querySelector('#annotCancel').addEventListener('click', closeSheet);
     b.querySelector('#annotSave').addEventListener('click', async () => {
       const note = b.querySelector('#annotNote').value.trim();
-      await updateItem(id, { annotationNote: note || undefined });
+      if (isDoc) {
+        // v3.12.0: Untuk dokumen, simpan ke source.annotationNote (supaya PWA juga lihat).
+        // Sekaligus set top-level annotationNote supaya fallback buildDocumentCaption konsisten.
+        const newSource = { ...(it.source || {}), annotationNote: note || '' };
+        await updateItem(id, { source: newSource, annotationNote: note || undefined });
+      } else {
+        await updateItem(id, { annotationNote: note || undefined });
+      }
       closeSheet();
       await refreshVault();
       toast(note ? '✓ Catatan anotasi disimpan' : '✓ Catatan anotasi dihapus');
@@ -1451,7 +1695,8 @@ function itemSheet(id) {
   const vars = it.body ? extractVariables(it.body).length : 0;
   openSheet(esc(it.title), T.label + (vars ? ' · ' + vars + ' variabel' : ''), b => {
     const isAi = !!currentAiDomain;
-    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')));
+    // v3.12.0 (Fase 7): Tambah label utama untuk dokumen.
+    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard'))));
     const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (isAi ? ICONS.zap : ICONS.copy));
     b.innerHTML =
       '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
@@ -1462,20 +1707,23 @@ function itemSheet(id) {
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
       // v3.7.2 (Issue 1): Tambah/Pindah ke Bundle — assign ulang screenshot/prompt/dll ke bundle lain.
       + (it.type !== 'bundle' ? '<button class="act" data-a="bundle">' + ICONS.clipA + '<div>Tambah / pindah ke Bundle<div class="ad">Reassign item ke sesi troubleshooting lain</div></div></button>' : '<button class="act" data-a="editbundle">' + ICONS.edit + '<div>Edit bundle<div class="ad">Ubah nama, tambah / hapus anggota</div></div></button>')
-      + (it.type === 'screenshot' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download gambar</div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download ' + (it.type === 'document' ? 'halaman pertama' : 'gambar') + '</div></button>' : '')
       // v3.11.6 (Issue 1 dari Google Doc): Tombol Salin Gambar & Salin + Keterangan
       // untuk item screenshot di Vault. Sebelumnya cuma ada "Lihat" dan "Download".
       // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
-      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin Gambar<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
-      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">Gambar + URL, judul, waktu, mode</div></div></button>' : '')
+      // v3.12.0 (Fase 7): Tombol yang sama juga tampil untuk dokumen (copy halaman pertama).
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin ' + (it.type === 'document' ? 'Halaman Pertama' : 'Gambar') + '<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">' + (it.type === 'document' ? 'Halaman pertama + judul, waktu, jumlah halaman' : 'Gambar + URL, judul, waktu, mode') + '</div></div></button>' : '')
       // v3.11.36 (Sesi 2, Issue dari Google Doc): Tombol Salin Teks Metadata (text-only)
       // User feedback: "di chat ai maupun wa, paste itu kadang gambarnya doang, teksnya ga
       // ngikut, atau sebaliknya di gemini teks nya doang gambarnya ga ngikut. oleh karena
       // itu tolong tambahkan kopi teks metadatanya doang bisa?"
       // Solusi: navigator.clipboard.writeText(textPlain) — text-only, paste ke mana saja.
-      + (it.type === 'screenshot' ? '<button class="act" data-a="copy-meta">' + ICONS.copy + '<div>📝 Salin Teks Metadata<div class="ad">Teks saja (URL, judul, waktu) — paste ke WA/Gemini/AI chat</div></div></button>' : '')
+      // v3.12.0: Juga tampil untuk dokumen — pakai buildDocumentCaption (text-only).
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-meta">' + ICONS.copy + '<div>📝 Salin Teks Metadata<div class="ad">Teks saja (judul, waktu' + (it.type === 'document' ? ', halaman' : ', URL') + ') — paste ke WA/Gemini/AI chat</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
-      + (it.type === 'screenshot' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan anotasi — ikut saat copy</div></div></button>' : '')
+      // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
       const k = a.dataset.a;
@@ -1488,6 +1736,8 @@ function itemSheet(id) {
       else if (k === 'bundle') { closeSheet(); openReassignBundleSheet(it.id); }
       else if (k === 'dl') { closeSheet(); downloadScreenshot(it.id); }
       // v3.11.6: Handler Salin Gambar & Salin + Keterangan untuk item screenshot
+      // v3.12.0 (Fase 7): Dipakai juga untuk dokumen — copyScreenshotToClipboard/Meta
+      // sudah handle type='document' (pakai buildDocumentCaption).
       else if (k === 'copy-img') { closeSheet(); copyScreenshotToClipboard(it.id, false); }
       else if (k === 'copy-bundle') { closeSheet(); copyScreenshotToClipboard(it.id, true); }
       // v3.11.36: Handler Salin Teks Metadata (text-only, no image)
@@ -1710,8 +1960,10 @@ function openBundleEditorSheet(bundleId) {
 async function downloadScreenshot(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) return;
-  const res = await browser.runtime.sendMessage({ type: 'DOWNLOAD_SCREENSHOT', id, title: item.title, format: item.screenshotFormat || 'png' });
-  if (res?.ok) toast('🖼️ Download dimulai'); else toast('Gagal download: ' + (res?.error || ''), false);
+  // v3.12.0 (Fase 7): Untuk dokumen, pakai format jpeg (PWA simpan sebagai JPEG).
+  const fmt = item.type === 'document' ? 'jpeg' : (item.screenshotFormat || 'png');
+  const res = await browser.runtime.sendMessage({ type: 'DOWNLOAD_SCREENSHOT', id, title: item.title, format: fmt });
+  if (res?.ok) toast(item.type === 'document' ? '📄 Download halaman pertama dimulai' : '🖼️ Download dimulai'); else toast('Gagal download: ' + (res?.error || ''), false);
 }
 
 // v3.11.6 (Issue 1 dari Google Doc): Salin screenshot dari Vault ke clipboard.
@@ -1736,10 +1988,13 @@ async function downloadScreenshot(id) {
 async function copyScreenshotToClipboard(id, withCaption) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) { toast('Item tidak ditemukan', false); return; }
+  // v3.12.0 (Fase 7): Untuk dokumen, caption pakai buildDocumentCaption (📄 + halaman + note).
+  const isDoc = item.type === 'document';
   try {
-    toast(withCaption ? '📦 Menyalin gambar + keterangan…' : '📋 Menyalin gambar…');
+    toast(withCaption ? (isDoc ? '📦 Menyalin halaman + keterangan…' : '📦 Menyalin gambar + keterangan…') : (isDoc ? '📋 Menyalin halaman pertama…' : '📋 Menyalin gambar…'));
 
     // Ambil screenshot blob (data URL) dari storage.local
+    // (untuk dokumen, GET_SCREENSHOT_BLOB mengembalikan halaman pertama — lihat supabase-sync.js)
     let dataUrl = null;
     try {
       const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
@@ -1749,8 +2004,8 @@ async function copyScreenshotToClipboard(id, withCaption) {
     }
 
     if (withCaption) {
-      // Build caption (📸 + 🔗 + 🕒 + 📝 + 🔧) — sama persis dengan preview modal
-      const cap = buildScreenshotCaption(item, dataUrl);
+      // Build caption — screenshot pakai buildScreenshotCaption, dokumen pakai buildDocumentCaption
+      const cap = isDoc ? buildDocumentCaption(item, dataUrl) : buildScreenshotCaption(item, dataUrl);
       const result = await writeScreenshotToClipboard(dataUrl, cap.textPlain, cap.textHtml);
       if (result.ok) {
         toast(result.message || '✓ Gambar + keterangan tersalin');
@@ -1808,10 +2063,12 @@ async function copyScreenshotToClipboard(id, withCaption) {
 async function copyScreenshotMetaToClipboard(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) { toast('Item tidak ditemukan', false); return; }
+  // v3.12.0 (Fase 7): Untuk dokumen, pakai buildDocumentCaption (text-only).
+  const isDoc = item.type === 'document';
   try {
     toast('📝 Menyalin teks metadata…');
-    // dataUrl = null → textPlain tetap lengkap (📸, Sumber, Waktu, Mode, 📝 Catatan)
-    const cap = buildScreenshotCaption(item, null);
+    // dataUrl = null → textPlain tetap lengkap (📸/📄, Sumber, Waktu, Mode, 📝 Catatan)
+    const cap = isDoc ? buildDocumentCaption(item, null) : buildScreenshotCaption(item, null);
     if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
     await navigator.clipboard.writeText(cap.textPlain);
     toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
