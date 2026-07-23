@@ -1484,14 +1484,230 @@ async function injectBundle(id) {
   }
   if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
 }
-function openScreenshotViewer(id) {
-  browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id }).then(res => {
-    if (res?.ok && res.dataUrl) {
+// v3.12.2: Image modal viewer — in-sidebar overlay (bukan window/tab baru).
+// Dipakai untuk screenshot (1 page) DAN dokumen multi-page.
+//
+// User feedback v3.12.1: "ketika buka multi page viewer itu, addonnya ketutup
+// jadi misal mau buka dokumen lain tu saya harus klik terlalu banyak".
+// v3.12.1 (versi user) buka viewer.html sebagai tab baru — sidebar Firefox
+// persist across tabs jadi sidebar tetap buka, TAPI tetap perlu switch tab.
+// v3.12.2: default render modal overlay di document.body sidebar/popup context,
+// jadi close modal = list vault tetap visible → klik item lain = 1 klik.
+//
+// Escape hatch: tombol '↗ Tab baru' di header modal:
+//   - Dokumen: tabs.create('popup/viewer.html?id=...') — reuse viewer user v3.12.1
+//   - Screenshot: window.open + document.write single image (sederhana)
+//
+// @param {Object} item - vault item (type='screenshot' atau 'document')
+// @param {Array<{dataUrl: string|null}>} pages - array halaman
+//   (screenshot: 1 elemen; dokumen: N elemen)
+function openImageModalViewer(item, pages) {
+  if (!item || !Array.isArray(pages) || pages.length === 0) {
+    toast('Tidak ada gambar untuk ditampilkan', false);
+    return;
+  }
+  const validPages = pages.filter(p => p && p.dataUrl);
+  if (validPages.length === 0) {
+    toast('Gagal memuat semua gambar', false);
+    return;
+  }
+
+  const title = item.title || (item.type === 'document' ? 'Dokumen' : 'Screenshot');
+  const totalPages = validPages.length;
+  const isMulti = totalPages > 1;
+  const isDoc = item.type === 'document';
+  let cur = 0;
+
+  // Hapus modal sebelumnya kalau ada (jangan tumpuk)
+  const existing = document.getElementById('rfImageViewerOverlay');
+  if (existing) existing.remove();
+
+  // Build modal overlay — pakai class .modal-overlay yang sudah ada di popup.css
+  const overlay = document.createElement('div');
+  overlay.id = 'rfImageViewerOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.style.zIndex = '200'; // di atas modal-overlay biasa (z-index 100)
+  overlay.style.padding = '0';
+
+  // Card container — fullscreen dark theme
+  const card = document.createElement('div');
+  card.className = 'modal';
+  card.style.cssText = 'max-width:none;max-height:none;width:100%;height:100%;border-radius:0;background:#0c0a09;color:#fafaf9;display:flex;flex-direction:column';
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1c1917;border-bottom:1px solid #292524;flex:none';
+
+  const iconSpan = document.createElement('span');
+  iconSpan.textContent = isDoc ? '📄' : '📸';
+  iconSpan.style.fontSize = '16px';
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = title;
+  titleSpan.style.cssText = 'flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fafaf9';
+
+  // Escape hatch button — buka di tab/viewer besar
+  const newTabBtn = document.createElement('button');
+  newTabBtn.title = isDoc ? 'Buka viewer halaman penuh di tab baru (sidebar tetap buka)' : 'Buka gambar di tab baru (layar besar)';
+  newTabBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0';
+  newTabBtn.innerHTML = '↗ Tab baru';
+  newTabBtn.addEventListener('click', () => {
+    if (isDoc) {
+      // Reuse viewer.html user v3.12.1 — handle multi-page + download + open original
+      const viewerUrl = browser.runtime.getURL('popup/viewer.html') + '?id=' + encodeURIComponent(item.id);
+      browser.tabs.create({ url: viewerUrl }).catch(e => {
+        toast('Gagal buka tab: ' + e.message, false);
+      });
+    } else {
+      // Screenshot: buka single image di tab baru (sederhana, tidak butuh viewer.html)
       const w = window.open('');
       if (w) {
-        const item = currentVault.items.find(i => i.id === id);
-        w.document.write('<!DOCTYPE html><title>' + esc(item?.title || 'Screenshot') + '</title><body style="margin:0;background:#0c0a09;display:flex;align-items:center;justify-content:center;min-height:100vh;"><img src="' + res.dataUrl + '" style="max-width:100%;max-height:100vh;" /></body>');
+        w.document.write('<!DOCTYPE html><title>' + esc(title) + '</title><body style="margin:0;background:#0c0a09;display:flex;align-items:center;justify-content:center;min-height:100vh;"><img src="' + validPages[0].dataUrl + '" style="max-width:100%;max-height:100vh;" /></body>');
+        w.document.close();
       }
+    }
+    closeViewer();
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.title = 'Tutup (Esc)';
+  closeBtn.style.cssText = 'background:transparent;color:#a8a29e;border:none;width:28px;height:28px;border-radius:6px;cursor:pointer;display:grid;place-items:center;flex-shrink:0';
+  closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  closeBtn.addEventListener('click', closeViewer);
+
+  header.appendChild(iconSpan);
+  header.appendChild(titleSpan);
+  if (isMulti) {
+    const countSpan = document.createElement('span');
+    countSpan.textContent = totalPages + ' halaman';
+    countSpan.style.cssText = 'font-size:11px;color:#a8a29e;flex-shrink:0';
+    header.appendChild(countSpan);
+  }
+  header.appendChild(newTabBtn);
+  header.appendChild(closeBtn);
+
+  // Body — image area
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;padding:14px;overflow:auto;min-height:0';
+
+  const img = document.createElement('img');
+  img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,0.6)';
+  img.alt = title;
+  body.appendChild(img);
+
+  // Dots (only if multi-page)
+  let dotsWrap = null;
+  if (isMulti) {
+    dotsWrap = document.createElement('div');
+    dotsWrap.style.cssText = 'display:flex;gap:6px;justify-content:center;padding:6px 0;flex-wrap:wrap;max-width:100%;background:#1c1917';
+    validPages.forEach((_, i) => {
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#44403c;cursor:pointer;transition:background 0.15s';
+      if (i === 0) dot.style.background = '#fafaf9';
+      dot.title = 'Halaman ' + (i + 1);
+      dot.addEventListener('click', () => render(i));
+      dotsWrap.appendChild(dot);
+    });
+  }
+
+  // Footer — nav buttons + indicator
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 14px;background:#1c1917;border-top:1px solid #292524;flex:none';
+
+  let prevBtn = null, nextBtn = null, ind = null;
+  if (isMulti) {
+    prevBtn = document.createElement('button');
+    prevBtn.textContent = '◀ Prev';
+    prevBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
+    prevBtn.disabled = true;
+    prevBtn.addEventListener('click', () => { if (cur > 0) render(cur - 1); });
+
+    ind = document.createElement('span');
+    ind.style.cssText = 'font-size:12px;min-width:70px;text-align:center;color:#d6d3d1';
+
+    nextBtn = document.createElement('button');
+    nextBtn.textContent = 'Next ▶';
+    nextBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
+    nextBtn.disabled = (totalPages <= 1);
+    nextBtn.addEventListener('click', () => { if (cur < totalPages - 1) render(cur + 1); });
+
+    footer.appendChild(prevBtn);
+    footer.appendChild(ind);
+    footer.appendChild(nextBtn);
+  } else {
+    const hint = document.createElement('span');
+    hint.style.cssText = 'font-size:11px;color:#a8a29e';
+    hint.textContent = 'Esc tutup · "↗ Tab baru" untuk layar besar';
+    footer.appendChild(hint);
+  }
+
+  // Assemble
+  card.appendChild(header);
+  card.appendChild(body);
+  if (dotsWrap) card.appendChild(dotsWrap);
+  card.appendChild(footer);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Prevent body scroll saat modal buka
+  document.body.style.overflow = 'hidden';
+
+  function render(i) {
+    cur = i;
+    const p = validPages[i];
+    if (p && p.dataUrl) {
+      img.src = p.dataUrl;
+      img.style.display = '';
+    } else {
+      img.style.display = 'none';
+    }
+    if (isMulti) {
+      if (ind) ind.textContent = 'Hal ' + (i + 1) + '/' + totalPages;
+      if (prevBtn) prevBtn.disabled = (i === 0);
+      if (nextBtn) nextBtn.disabled = (i === totalPages - 1);
+      if (dotsWrap) {
+        Array.from(dotsWrap.children).forEach((d, k) => {
+          d.style.background = (k === i) ? '#fafaf9' : '#44403c';
+        });
+      }
+    }
+  }
+
+  function closeViewer() {
+    if (overlay.parentNode) overlay.remove();
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
+    else if (isMulti && e.key === 'ArrowLeft' && cur > 0) { e.preventDefault(); render(cur - 1); }
+    else if (isMulti && e.key === 'ArrowRight' && cur < totalPages - 1) { e.preventDefault(); render(cur + 1); }
+  }
+
+  // Click overlay (di luar card) = close
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeViewer();
+  });
+
+  document.addEventListener('keydown', onKey);
+
+  // Initial render
+  render(0);
+}
+
+// v3.12.2: openScreenshotViewer sekarang pakai modal in-sidebar (bukan window baru).
+// Sebelumnya (v3.11+): window.open + document.write single image → sidebar ketutup.
+// Sekarang: prefetch dataUrl via GET_SCREENSHOT_BLOB → openImageModalViewer 1 page.
+// API publik tetap sama (dipanggil dari bindItemClicks & primaryAction).
+function openScreenshotViewer(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  toast('📸 Memuat gambar...');
+  browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id }).then(res => {
+    if (res?.ok && res.dataUrl) {
+      openImageModalViewer(item, [{ dataUrl: res.dataUrl }]);
     } else {
       toast('Gagal memuat gambar', false);
     }
@@ -1499,14 +1715,18 @@ function openScreenshotViewer(id) {
 }
 
 // v3.12.0 (Fase 7): Multi-page document viewer.
-// v3.12.1 FIX: Viewer lama pakai window.open + document.write + inline script
-// dengan base64 JSON besar → image tidak tampil (kemungkinan pages[0] null saat
-// render(0) dipanggil, atau CSP / inline script issue di Firefox MV3).
+// v3.12.1 FIX (user): Viewer lama pakai window.open + document.write + inline script
+// dengan base64 JSON besar → image tidak tampil. Solusi: Buka static HTML viewer
+// (popup/viewer.html) sebagai tab baru via browser.tabs.create(). Image di-render
+// via <img src="cloudUrl"> langsung.
 //
-// Solusi v3.12.1: Buka static HTML viewer (popup/viewer.html) sebagai tab baru
-// via browser.tabs.create(). Image di-render via <img src="cloudUrl"> langsung —
-// Firefox yang load dari Supabase Storage public URL. Tidak ada inline script,
-// tidak ada base64 JSON, CSP-safe, debuggable (user bisa View Source).
+// v3.12.2: Default pakai modal in-sidebar (openImageModalViewer) supaya sidebar
+// tidak ketutup saat user browse dokumen. Escape hatch: tombol '↗ Tab baru' di
+// modal → tabs.create viewer.html?id=... (reuse v3.12.1 code, masih bekerja).
+//
+// Strategi prefetch (sama dengan v3.12.0):
+//   - Halaman 1: coba cache lokal (rf_shot_<id> via GET_SCREENSHOT_BLOB)
+//   - Halaman 2+ dan fallback halaman 1: fetch langsung dari source.pages[i].url
 //
 // @param {string} id - vault item id dengan type='document'
 async function openDocumentViewer(id) {
@@ -1516,19 +1736,49 @@ async function openDocumentViewer(id) {
   const pages = item.source?.pages || [];
   if (pages.length === 0) { toast('Dokumen tidak punya halaman', false); return; }
 
-  // Buka tab viewer dengan ?id=... — viewer.js yang handle sisanya
-  const viewerUrl = browser.runtime.getURL('popup/viewer.html') + '?id=' + encodeURIComponent(id);
+  const totalPages = pages.length;
+  toast('📄 Memuat ' + totalPages + ' halaman...');
+
+  // Prefetch semua halaman sebagai dataUrl
+  const pageDataUrls = new Array(totalPages).fill(null);
+
+  // Halaman 1: coba cache lokal dulu (lebih cepat — sudah di-download saat pull)
   try {
-    await browser.tabs.create({ url: viewerUrl });
-    // Tutup popup supaya tab baru kelihatan
-    if (typeof window !== 'undefined' && window.close) {
-      // Popup context: close popup. Sidebar context: no-op (sidebar tetap)
-      try { window.close(); } catch (e) { /* ignore */ }
-    }
+    const res = await browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id });
+    if (res?.ok && res.dataUrl) pageDataUrls[0] = res.dataUrl;
   } catch (e) {
-    console.warn('[RecallFox] Failed to open viewer tab:', e.message);
-    toast('Gagal membuka viewer: ' + e.message, false);
+    console.warn('[RecallFox] GET_SCREENSHOT_BLOB for document failed:', e.message);
   }
+
+  // Fetch semua halaman yang belum ada (parallel — limit 4 concurrent)
+  const CONCURRENCY = 4;
+  const queue = pages.map((p, i) => ({ idx: i, url: p?.url || null })).filter(x => x.url && !pageDataUrls[x.idx]);
+  for (let i = 0; i < queue.length; i += CONCURRENCY) {
+    const batch = queue.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async ({ idx, url }) => {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const blob = await r.blob();
+        if (!blob || blob.size === 0) return;
+        const du = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('filereader_failed'));
+          reader.readAsDataURL(blob);
+        });
+        pageDataUrls[idx] = du;
+      } catch (e) {
+        console.warn('[RecallFox] Document page ' + (idx + 1) + ' fetch failed:', e.message);
+      }
+    }));
+  }
+
+  const validCount = pageDataUrls.filter(Boolean).length;
+  if (validCount === 0) { toast('Gagal memuat semua halaman dokumen', false); return; }
+
+  // Render modal in-sidebar (escape hatch ke viewer.html?id=... tetap tersedia)
+  openImageModalViewer(item, pageDataUrls.map(du => ({ dataUrl: du })));
 }
 
 // v3.11.25 (Sesi 15, Issue #3): Sheet untuk edit catatan anotasi screenshot.
