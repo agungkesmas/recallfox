@@ -1779,6 +1779,82 @@ function openImageModalViewer(item, pages) {
   card.appendChild(body);
   if (dotsWrap) card.appendChild(dotsWrap);
   card.appendChild(footer);
+
+  // v3.13.7: Footer kedua — tombol copy (Hal Ini / Semua / + Keterangan)
+  // Sebelumnya modal viewer tidak ada tombol copy sama sekali. User harus
+  // buka PWA untuk copy. Sekarang bisa langsung dari modal.
+  const copyFooter = document.createElement('div');
+  copyFooter.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px;background:#1c1917;border-top:1px solid #292524;flex:none;flex-wrap:wrap';
+
+  const makeCopyBtn = (label, title, onClick) => {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.title = title;
+    btn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px';
+    btn.addEventListener('click', onClick);
+    return btn;
+  };
+
+  // Copy halaman saat ini (image only)
+  copyFooter.appendChild(makeCopyBtn('📋 Hal Ini', 'Salin halaman/gambar saat ini ke clipboard', async () => {
+    const dataUrl = validPages[cur]?.dataUrl;
+    if (!dataUrl) { toast('Halaman belum termuat', false); return; }
+    toast('📋 Menyalin gambar...');
+    try {
+      const result = await writeScreenshotToClipboard(dataUrl, '', '');
+      toast(result.ok ? '✓ Gambar tersalin' : 'Gagal: ' + result.error, result.ok);
+    } catch (e) {
+      toast('Gagal salin: ' + e.message, false);
+    }
+  }));
+
+  // Copy semua halaman (composite vertical) — hanya untuk multi-page
+  if (isMulti) {
+    copyFooter.appendChild(makeCopyBtn('📚 Semua', 'Salin semua halaman jadi 1 gambar (composite)', async () => {
+      toast('📚 Menyiapkan semua halaman...');
+      try {
+        // Composite semua halaman jadi 1 gambar (vertical stack)
+        const imgs = await Promise.all(validPages.map(p => p.dataUrl ? loadImageForComposite(p.dataUrl) : null));
+        const validImgs = imgs.filter(Boolean);
+        if (validImgs.length === 0) { toast('Tidak ada halaman termuat', false); return; }
+        const totalH = validImgs.reduce((s, img) => s + img.naturalHeight, 0);
+        const maxW = Math.max(...validImgs.map(img => img.naturalWidth));
+        const canvas = document.createElement('canvas');
+        canvas.width = maxW;
+        canvas.height = totalH;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, maxW, totalH);
+        let y = 0;
+        for (const img of validImgs) {
+          ctx.drawImage(img, 0, y);
+          y += img.naturalHeight;
+        }
+        const allDataUrl = canvas.toDataURL('image/png');
+        const result = await writeScreenshotToClipboard(allDataUrl, '', '');
+        toast(result.ok ? '✓ ' + validImgs.length + ' halaman tersalin' : 'Gagal: ' + result.error, result.ok);
+      } catch (e) {
+        toast('Gagal composite: ' + e.message, false);
+      }
+    }));
+  }
+
+  // Copy + Keterangan (current page + caption)
+  copyFooter.appendChild(makeCopyBtn('📋 + Keterangan', 'Salin gambar + keterangan (judul, waktu, halaman)', async () => {
+    const dataUrl = validPages[cur]?.dataUrl;
+    toast('📋 Menyalin gambar + keterangan...');
+    try {
+      const cap = isDoc
+        ? buildDocumentCaption(item, dataUrl, { currentPage: cur + 1 })
+        : buildScreenshotCaption(item, dataUrl);
+      const result = await writeScreenshotToClipboard(dataUrl, cap.textPlain, cap.textHtml);
+      toast(result.ok ? '✓ Gambar + keterangan tersalin' : 'Gagal: ' + result.error, result.ok);
+    } catch (e) {
+      toast('Gagal salin: ' + e.message, false);
+    }
+  }));
+
+  card.appendChild(copyFooter);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
@@ -1827,6 +1903,16 @@ function openImageModalViewer(item, pages) {
 
   // Initial render
   render(0);
+}
+
+// v3.13.7: Helper untuk load image di composite copy (semua halaman)
+function loadImageForComposite(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
 }
 
 // v3.12.2: openScreenshotViewer sekarang pakai modal in-sidebar (bukan window baru).
