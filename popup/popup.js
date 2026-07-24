@@ -4027,6 +4027,7 @@ function openNoteEditor(noteId) {
 
 // ============ Tools drawer ============
 const TOOLS = [
+  ['tape', 'RecallTape', 'Kalkulator pita · keyboard-first', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6"/><path d="M3 11h18"/><path d="M3 11v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8"/><path d="M7 15h4"/></svg>'],
   ['shalat', 'Waktu Shalat', 'Muhammadiyah · countdown', ICONS.mosque],
   ['habits', 'Habits', 'Ngaji & olahraga harian', ICONS.heart],
   ['puasa', 'Puasa Sunnah', 'Kalender Islam & jadwal', ICONS.moonstar],
@@ -4229,7 +4230,12 @@ function openTilePicker() {
 
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { tape: '🧾 RecallTape — Kalkulator Pita', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  // v3.14.0: RecallTape — bukan halaman dalam popup, tapi popover di halaman aktif.
+  if (k === 'tape') {
+    openTapePopover();
+    return;
+  }
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -4242,6 +4248,74 @@ function toolPage(k) {
   else if (k === 'kontrol') renderKontrolSitusPage(B);
   else if (k === 'aimanage') renderAiManagePage(B);  // v3.11.1 (Issue 4)
   else renderToolStubPage(B, k, names[k]);
+}
+
+// v3.14.0: RecallTape — trigger popover di tab aktif via content script.
+// Untuk sidebar: kirim ke tab aktif di window utama.
+// Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
+async function openTapePopover() {
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0]) {
+      const tab = tabs[0];
+      // Hanya kirim ke http(s)/file — bukan about:*, moz-extension:*
+      if (/^(https?|file):/i.test(tab.url || '')) {
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' });
+          toast('🧾 RecallTape dibuka di tab aktif');
+          // Tutup popup (sidebar tidak terpengaruh — body.rf-sidebar-body)
+          if (!document.body.classList.contains('rf-sidebar-body')) {
+            setTimeout(() => window.close(), 600);
+          }
+          return;
+        } catch (e) {
+          console.warn('[RecallFox/Tape] Cannot reach content script on tab:', e.message);
+          // Fallback: inject script lalu coba lagi
+          try {
+            await browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['content/tape-cs.js']
+            });
+            await browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' });
+            toast('🧾 RecallTape dibuka di tab aktif');
+            if (!document.body.classList.contains('rf-sidebar-body')) {
+              setTimeout(() => window.close(), 600);
+            }
+            return;
+          } catch (e2) {
+            console.warn('[RecallFox/Tape] Fallback inject failed:', e2.message);
+          }
+        }
+      } else {
+        toast('Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.');
+        return;
+      }
+    }
+    // Tidak ada tab aktif yang valid — tampilkan halaman info di popup
+    openPage('🧾 RecallTape');
+    const B = $('#pageBody');
+    if (B) {
+      B.innerHTML = `
+        <div class="card" style="text-align:center;padding:20px 16px">
+          <h3 style="font-size:14px;margin-bottom:6px">RecallTape — Kalkulator Pita</h3>
+          <p style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:14px">
+            Buka halaman web (http/https) lalu klik tombol ini lagi untuk memunculkan popover RecallTape.
+          </p>
+          <div style="background:var(--surface);padding:10px;border-radius:8px;font-size:10.5px;color:var(--text-2);text-align:left;line-height:1.55">
+            <b style="color:var(--text)">Format input:</b><br>
+            <code>250000 Gaji</code> — tambah 250rb<br>
+            <code>+ 50k Bonus</code> — tambah 50rb (suffix k)<br>
+            <code>- 20rb Makan</code> — kurang 20rb (suffix rb)<br>
+            <code>+ 19% PPN</code> — tambah 19% dari running<br>
+            <code>= Subtotal</code> — tampilkan subtotal<br>
+            <code>2,5jt Honor</code> — 2,5 juta (suffix jt)
+          </div>
+        </div>`;
+    }
+  } catch (e) {
+    console.error('[RecallFox/Tape] openTapePopover failed:', e);
+    toast('Gagal membuka RecallTape: ' + e.message, false);
+  }
 }
 function renderShalatPage(B) {
   const s = currentVault?.settings || {};
@@ -6853,6 +6927,9 @@ function bindEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
+  // v3.14.0: RecallTape — tombol di header → toggle popover di tab aktif
+  const tapeBtn = $('#tapeBtn');
+  if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);
   $('#scrim').addEventListener('click', closeSheet);
   $('#pageBack').addEventListener('click', closePage);
 

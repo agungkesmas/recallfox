@@ -58,6 +58,9 @@
   "ctxMenuSaveAsContext": {
     "message": "Simpan sebagai Konteks"
   },
+  "ctxMenuAddToTape": {
+    "message": "🧾 Tambah ke RecallTape"
+  },
   "ctxMenuSavePage": {
     "message": "Simpan Halaman Ini"
   },

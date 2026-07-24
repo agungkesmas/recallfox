@@ -58,6 +58,9 @@
   "ctxMenuSaveAsContext": {
     "message": "Save as Context"
   },
+  "ctxMenuAddToTape": {
+    "message": "🧾 Add to RecallTape"
+  },
   "ctxMenuSavePage": {
     "message": "Save This Page"
   },

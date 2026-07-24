@@ -209,6 +209,18 @@ async function setupContextMenu() {
     contexts: ['selection']
   });
 
+  // v3.14.0: RecallTape — add selection to tape calculator
+  browser.menus.create({
+    id: 'rf-separator-tape',
+    type: 'separator',
+    contexts: ['selection']
+  });
+  browser.menus.create({
+    id: 'rf-add-to-tape',
+    title: browser.i18n.getMessage('ctxMenuAddToTape'),
+    contexts: ['selection']
+  });
+
   // Page-based: save current page as Link
   browser.menus.create({
     id: 'rf-separator-1',
@@ -416,6 +428,31 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'SHOW_TOAST', message: 'toastSaved' });
     } catch (e) {}
+  } else if (info.menuItemId === 'rf-add-to-tape') {
+    // v3.14.0: RecallTape — tambah teks terseleksi ke tape popover di tab aktif
+    const text = (info.selectionText || '').trim();
+    if (!text) return;
+    console.log('[RecallFox/Tape] Add to tape:', text.slice(0, 80));
+    try {
+      await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+    } catch (e) {
+      // Content script belum loaded — inject lalu retry
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/tape-cs.js']
+        });
+        await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+      } catch (e2) {
+        console.warn('[RecallFox/Tape] Cannot inject tape-cs:', e2.message);
+        try {
+          await browser.tabs.sendMessage(tab.id, {
+            type: 'SHOW_TOAST',
+            message: 'Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.'
+          });
+        } catch (e3) {}
+      }
+    }
   } else if (info.menuItemId === 'rf-save-link') {
     // Save right-clicked link as Link item
     const url = info.linkUrl;
@@ -1216,6 +1253,30 @@ let syncTimer = null;
 
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+  if (msg.type === 'TAPE_SAVE_TO_VAULT') {
+    // v3.14.0: RecallTape — simpan tape ke vault sebagai tipe Prompt
+    try {
+      const { addItem } = await import('./lib/storage.js');
+      const { title, body, source } = msg.payload || {};
+      await addItem({
+        type: 'prompt',
+        title: title || 'RecallTape',
+        body: body || '',
+        tags: ['tape', 'calculator'],
+        source: source || { kind: 'tape', savedAt: new Date().toISOString() }
+      });
+      // Kirim toast konfirmasi ke tab pengirim
+      if (sender.tab) {
+        try {
+          await browser.tabs.sendMessage(sender.tab.id, { type: 'SHOW_TOAST', message: 'Tape disimpan ke vault' });
+        } catch (e) {}
+      }
+      console.log('[RecallFox/Tape] Saved to vault:', title);
+    } catch (e) {
+      console.warn('[RecallFox/Tape] Save to vault failed:', e);
+    }
+    return;
+  }
   if (msg.type === 'TRIGGER_SYNC') {
     // debounce 2s
     if (syncTimer) clearTimeout(syncTimer);
