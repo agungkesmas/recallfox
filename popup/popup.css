@@ -162,7 +162,9 @@ body.rf-sidebar-body .popup{
 .tile-add{border:1.5px dashed var(--border-strong);background:transparent;color:var(--muted);font-size:13px}
 .tile-add:hover{background:var(--surface-2);border-color:var(--primary);color:var(--primary);transform:none;box-shadow:none}
 /* v3.12.3: Tombol "×" di pojok kanan atas tile untuk remove (muncul saat hover) */
-.tile-remove{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:var(--danger);color:#fff;font-size:10px;line-height:1;display:none;align-items:center;justify-content:center;cursor:pointer;border:none;padding:0;z-index:2}
+/* v3.12.4 fix: tambah pointer-events:auto + z-index:10 supaya pasti clickable
+   di Firefox sidebar (ada case hover state hilang sebelum click fire). */
+.tile-remove{position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:var(--danger);color:#fff;font-size:11px;line-height:1;display:none;align-items:center;justify-content:center;cursor:pointer;border:none;padding:0;z-index:10;pointer-events:auto}
 .tile:hover .tile-remove{display:flex}
 .tile-remove:hover{transform:scale(1.15);background:#dc2626}
 

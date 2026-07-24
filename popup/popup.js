@@ -3733,32 +3733,55 @@ function renderTiles() {
 
 /**
  * Remove tile dari active list.
+ * v3.12.4: Tambah try-catch + console.log untuk debug (user report klik × tidak responsif).
  */
 async function removeTile(id) {
-  const active = getActiveTiles().filter(t => t !== id);
-  await saveActiveTiles(active);
-  renderTiles();
-  toast('✓ Dihapus dari quick actions');
+  console.log('[RecallFox] removeTile START, id:', id);
+  try {
+    if (!id) { console.warn('[RecallFox] removeTile: no id'); return; }
+    const active = getActiveTiles();
+    console.log('[RecallFox] removeTile: active before:', active);
+    const newActive = active.filter(t => t !== id);
+    console.log('[RecallFox] removeTile: active after:', newActive);
+    await saveActiveTiles(newActive);
+    renderTiles();
+    toast('✓ Dihapus dari quick actions');
+    console.log('[RecallFox] removeTile DONE, re-rendered');
+  } catch (e) {
+    console.error('[RecallFox] removeTile FAILED:', e.message, e.stack);
+    toast('Gagal hapus: ' + e.message, false);
+  }
 }
 
 /**
  * Add tile ke active list.
+ * v3.12.4: Tambah try-catch + console.log.
  */
 async function addTile(id) {
-  const active = getActiveTiles();
-  if (active.length >= MAX_ACTIVE_TILES) {
-    toast('Maksimal ' + MAX_ACTIVE_TILES + ' tombol. Hapus salah satu dulu.', false);
-    return;
+  console.log('[RecallFox] addTile START, id:', id);
+  try {
+    if (!id) { console.warn('[RecallFox] addTile: no id'); return; }
+    const active = getActiveTiles();
+    console.log('[RecallFox] addTile: active before:', active);
+    if (active.length >= MAX_ACTIVE_TILES) {
+      toast('Maksimal ' + MAX_ACTIVE_TILES + ' tombol. Hapus salah satu dulu.', false);
+      return;
+    }
+    if (active.includes(id)) {
+      toast('Sudah ada di quick actions', false);
+      return;
+    }
+    active.push(id);
+    console.log('[RecallFox] addTile: active after:', active);
+    await saveActiveTiles(active);
+    renderTiles();
+    closeSheet();
+    toast('✓ Ditambahkan ke quick actions');
+    console.log('[RecallFox] addTile DONE, re-rendered');
+  } catch (e) {
+    console.error('[RecallFox] addTile FAILED:', e.message, e.stack);
+    toast('Gagal tambah: ' + e.message, false);
   }
-  if (active.includes(id)) {
-    toast('Sudah ada di quick actions', false);
-    return;
-  }
-  active.push(id);
-  await saveActiveTiles(active);
-  renderTiles();
-  closeSheet();
-  toast('✓ Ditambahkan ke quick actions');
 }
 
 /**
@@ -6436,24 +6459,41 @@ function bindEvents() {
   });
 
   // v3.12.3 (Issue #2): Hero tiles — customizable. Render dinamis + event delegation.
-  // Sebelumnya: 6 hardcoded buttons dengan ID #qaPrompt, #qaKonteks, dll.
-  // Sekarang: renderTiles() isi #tilesContainer berdasarkan vault.settings.activeTiles.
-  // Event delegation: 1 click handler di container, dispatch by data-tile.
+  // v3.12.4 fix: Pakai mousedown untuk remove button (lebih reliable dari click
+  //   di Firefox sidebar — click kadang tidak fire kalau hover state berubah
+  //   saat mousedown→mouseup). Plus logging untuk debug.
   renderTiles();
   const tilesContainer = $('#tilesContainer');
   if (tilesContainer) {
-    tilesContainer.addEventListener('click', (e) => {
-      // Cek tombol "×" remove dulu (stopPropagation supaya tidak trigger tile click)
+    // v3.12.4: mousedown untuk remove button — fire lebih awal, preventDefault
+    // supaya button parent tidak trigger click.
+    tilesContainer.addEventListener('mousedown', (e) => {
       const removeBtn = e.target.closest('[data-remove]');
       if (removeBtn) {
+        e.preventDefault();
         e.stopPropagation();
+        console.log('[RecallFox] mousedown on remove:', removeBtn.dataset.remove);
         removeTile(removeBtn.dataset.remove);
         return;
       }
+    });
+    // click untuk tile biasa + add button
+    tilesContainer.addEventListener('click', (e) => {
+      console.log('[RecallFox] tile click, target:', e.target.tagName, 'dataset:', e.target.dataset);
       // Cek tombol "+" add
       const addBtn = e.target.closest('[data-action="add-tile"]');
       if (addBtn) {
+        console.log('[RecallFox] add button clicked');
         openTilePicker();
+        return;
+      }
+      // Cek tile-remove (jika mousedown somehow tidak handle, fallback ke click)
+      const removeBtn = e.target.closest('[data-remove]');
+      if (removeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('[RecallFox] click on remove (fallback):', removeBtn.dataset.remove);
+        removeTile(removeBtn.dataset.remove);
         return;
       }
       // Tile click — dispatch by data-tile
@@ -6462,6 +6502,7 @@ function bindEvents() {
       const id = tile.dataset.tile;
       const def = TILE_DEFS.find(t => t.id === id);
       if (!def) return;
+      console.log('[RecallFox] tile action:', id, def.type, def.action);
       // Dispatch ke function yang sesuai
       if (def.type === 'qa') {
         if (def.action === 'savePromptSheet') savePromptSheet();
