@@ -1969,14 +1969,38 @@ function openImageModalViewer(item, pages) {
   };
 
   // Copy halaman saat ini (image only)
+  // v3.14.6 (Sesi 1 follow-up): Bug B fix — tombol "Hal Ini" tidak berfungsi.
+  // Penyebab: untuk dokumen multi-page yang dirender sebagai single-page (akibat Bug A),
+  // dataUrl page 0 mungkin JPG dari Supabase. writeScreenshotToClipboard strategi 1
+  // butuh image/png → konversi via canvas. Kalau gagal dan textHtml kosong (kasus "Hal Ini"),
+  // strategi 2 skip, strategi 3 juga skip (textPlain kosong) → return clipboard_write_failed.
+  // Fix: (1) guard dataUrl lebih informatif. (2) kasih textPlain minimal (judul + halaman)
+  // supaya strategi 3 (text-only fallback) bisa menulis sesuatu ke clipboard sebagai last resort.
   copyFooter.appendChild(makeCopyBtn('📋 Hal Ini', 'Salin halaman/gambar saat ini ke clipboard', async () => {
-    const dataUrl = validPages[cur]?.dataUrl;
-    if (!dataUrl) { toast('Halaman belum termuat', false); return; }
+    const page = validPages[cur];
+    const dataUrl = page?.dataUrl;
+    if (!dataUrl) {
+      console.warn('[RecallFox/Tape] Hal Ini: dataUrl null at cur=' + cur, { validPages: validPages.length, isMulti });
+      toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+      return;
+    }
     toast('📋 Menyalin gambar...');
     try {
-      const result = await writeScreenshotToClipboard(dataUrl, '', '');
-      toast(result.ok ? '✓ Gambar tersalin' : 'Gagal: ' + result.error, result.ok);
+      // v3.14.6: Beri textPlain minimal (judul + halaman) supaya strategi 3 (text-only)
+      // di writeScreenshotToClipboard bisa fallback dengan pesan yang jelas, bukan
+      // gagal total dengan clipboard_write_failed.
+      const label = (item.title || 'Gambar') + (isMulti ? ' (Hal ' + (cur + 1) + '/' + totalPages + ')' : '');
+      const result = await writeScreenshotToClipboard(dataUrl, label, '');
+      if (result.ok) {
+        toast(result.fallback === 'text_only'
+          ? '✓ Tersalin teks saja (browser blokir clipboard image)'
+          : '✓ Gambar tersalin', true);
+      } else {
+        console.error('[RecallFox] Hal Ini copy failed:', result);
+        toast('Gagal salin: ' + (result.error || 'unknown'), false);
+      }
     } catch (e) {
+      console.error('[RecallFox] Hal Ini copy exception:', e);
       toast('Gagal salin: ' + e.message, false);
     }
   }));
@@ -2013,16 +2037,31 @@ function openImageModalViewer(item, pages) {
   }
 
   // Copy + Keterangan (current page + caption)
+  // v3.14.6: Bug B fix — guard dataUrl null lebih informatif + logging.
   copyFooter.appendChild(makeCopyBtn('📋 + Keterangan', 'Salin gambar + keterangan (judul, waktu, halaman)', async () => {
-    const dataUrl = validPages[cur]?.dataUrl;
+    const page = validPages[cur];
+    const dataUrl = page?.dataUrl;
+    if (!dataUrl) {
+      console.warn('[RecallFox] + Keterangan: dataUrl null at cur=' + cur, { validPages: validPages.length, isMulti });
+      toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+      return;
+    }
     toast('📋 Menyalin gambar + keterangan...');
     try {
       const cap = isDoc
         ? buildDocumentCaption(item, dataUrl, { currentPage: cur + 1 })
         : buildScreenshotCaption(item, dataUrl);
       const result = await writeScreenshotToClipboard(dataUrl, cap.textPlain, cap.textHtml);
-      toast(result.ok ? '✓ Gambar + keterangan tersalin' : 'Gagal: ' + result.error, result.ok);
+      if (result.ok) {
+        toast(result.fallback === 'text_only'
+          ? '✓ Keterangan tersalin (text-only — gambar tidak ikut)'
+          : '✓ Gambar + keterangan tersalin', true);
+      } else {
+        console.error('[RecallFox] + Keterangan copy failed:', result, { cap });
+        toast('Gagal salin: ' + (result.error || 'unknown'), false);
+      }
     } catch (e) {
+      console.error('[RecallFox] + Keterangan copy exception:', e);
       toast('Gagal salin: ' + e.message, false);
     }
   }));
@@ -2043,7 +2082,9 @@ function openImageModalViewer(item, pages) {
   prevItemBtn.disabled = (currentNavIdx <= 0);
   if (prevItemBtn.disabled) prevItemBtn.style.opacity = '0.4';
   prevItemBtn.addEventListener('click', () => {
-    if (currentNavIdx > 0) { closeViewer(); openScreenshotViewer(navItems[currentNavIdx - 1].id); }
+    // v3.14.6: Pakai openViewerById (dispatcher) — bukan openScreenshotViewer.
+    // Sebelumnya: dokumen multi-page dipanggil sebagai screenshot → hanya page 0 dimuat.
+    if (currentNavIdx > 0) { closeViewer(); openViewerById(navItems[currentNavIdx - 1].id); }
   });
 
   const selectEl = document.createElement('select');
@@ -2055,7 +2096,11 @@ function openImageModalViewer(item, pages) {
     if (i === currentNavIdx) opt.selected = true;
     selectEl.appendChild(opt);
   });
-  selectEl.addEventListener('change', () => { closeViewer(); openScreenshotViewer(selectEl.value); });
+  selectEl.addEventListener('change', () => {
+    // v3.14.6: Pakai openViewerById (dispatcher) — bukan openScreenshotViewer.
+    // Bug A fix: dokumen multi-page harus lewat openDocumentViewer untuk fetch semua pages.
+    closeViewer(); openViewerById(selectEl.value);
+  });
 
   const nextItemBtn = document.createElement('button');
   nextItemBtn.textContent = '▶';
@@ -2063,7 +2108,8 @@ function openImageModalViewer(item, pages) {
   nextItemBtn.disabled = (currentNavIdx >= navItems.length - 1);
   if (nextItemBtn.disabled) nextItemBtn.style.opacity = '0.4';
   nextItemBtn.addEventListener('click', () => {
-    if (currentNavIdx < navItems.length - 1) { closeViewer(); openScreenshotViewer(navItems[currentNavIdx + 1].id); }
+    // v3.14.6: Pakai openViewerById (dispatcher) — bukan openScreenshotViewer.
+    if (currentNavIdx < navItems.length - 1) { closeViewer(); openViewerById(navItems[currentNavIdx + 1].id); }
   });
 
   navBar.appendChild(prevItemBtn);
@@ -2234,6 +2280,31 @@ async function openDocumentViewer(id) {
 
   // Render modal in-sidebar (escape hatch ke viewer.html?id=... tetap tersedia)
   openImageModalViewer(item, pageDataUrls.map(du => ({ dataUrl: du })));
+}
+
+// v3.14.6 (Sesi 1 follow-up): Dispatcher viewer — pilih openScreenshotViewer atau
+// openDocumentViewer berdasarkan item.type.
+//
+// Bug A dari Google Doc Sesi 1 (feedback lanjutan setelah v3.14.5):
+//   "jika pindah list media, itu tombol navigasi prev dan next tidak mendeteksi
+//    isinya ada 2 halaman"
+//
+// Akar masalah: di navigator bar (prev item / next item / dropdown selectEl.change),
+// call site selalu panggil `openScreenshotViewer(id)` — yang hanya fetch 1 page via
+// GET_SCREENSHOT_BLOB. Jika item adalah dokumen multi-page (type='document'), hanya
+// page 0 yang dimuat → validPages.length === 1 → isMulti=false → footer nav tampil
+// "Hal 1/1" dengan tombol disabled. Seharusnya panggil openDocumentViewer yang fetch
+// semua pages dari item.source.pages[].url.
+//
+// Fix: dispatcher ini dipakai semua call site navigator bar.
+function openViewerById(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  if (item.type === 'document') {
+    openDocumentViewer(id);
+  } else {
+    openScreenshotViewer(id);
+  }
 }
 
 // v3.11.25 (Sesi 15, Issue #3): Sheet untuk edit catatan anotasi screenshot.
