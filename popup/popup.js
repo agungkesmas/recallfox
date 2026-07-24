@@ -3,6 +3,7 @@
 
 import {
   getVault,
+  saveVault,
   addItem,
   updateItem,
   deleteItem,
@@ -6459,41 +6460,29 @@ function bindEvents() {
   });
 
   // v3.12.3 (Issue #2): Hero tiles — customizable. Render dinamis + event delegation.
-  // v3.12.4 fix: Pakai mousedown untuk remove button (lebih reliable dari click
-  //   di Firefox sidebar — click kadang tidak fire kalau hover state berubah
-  //   saat mousedown→mouseup). Plus logging untuk debug.
+  // v3.12.5 fix: Hapus handler mousedown ganda (v3.12.4) yang menyebabkan removeTile
+  //   dipanggil 2x per klik (1x dari mousedown, 1x dari click fallback) → toast dobel.
+  //   Penyebab: e.preventDefault() di mousedown TIDAK men-stop event click berikutnya.
+  //   Solusi: kembali ke single click handler dengan urutan cek yang benar:
+  //   1. [data-remove] (× tombol) — cek PERTAMA supaya klik × tidak trigger tile action
+  //   2. [data-action="add-tile"] (+ tombol)
+  //   3. [data-tile] (tile biasa)
   renderTiles();
   const tilesContainer = $('#tilesContainer');
   if (tilesContainer) {
-    // v3.12.4: mousedown untuk remove button — fire lebih awal, preventDefault
-    // supaya button parent tidak trigger click.
-    tilesContainer.addEventListener('mousedown', (e) => {
+    tilesContainer.addEventListener('click', (e) => {
+      // Cek tombol × remove — PERTAMA supaya tidak trigger tile action
       const removeBtn = e.target.closest('[data-remove]');
       if (removeBtn) {
         e.preventDefault();
         e.stopPropagation();
-        console.log('[RecallFox] mousedown on remove:', removeBtn.dataset.remove);
         removeTile(removeBtn.dataset.remove);
         return;
       }
-    });
-    // click untuk tile biasa + add button
-    tilesContainer.addEventListener('click', (e) => {
-      console.log('[RecallFox] tile click, target:', e.target.tagName, 'dataset:', e.target.dataset);
-      // Cek tombol "+" add
+      // Cek tombol + add
       const addBtn = e.target.closest('[data-action="add-tile"]');
       if (addBtn) {
-        console.log('[RecallFox] add button clicked');
         openTilePicker();
-        return;
-      }
-      // Cek tile-remove (jika mousedown somehow tidak handle, fallback ke click)
-      const removeBtn = e.target.closest('[data-remove]');
-      if (removeBtn) {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('[RecallFox] click on remove (fallback):', removeBtn.dataset.remove);
-        removeTile(removeBtn.dataset.remove);
         return;
       }
       // Tile click — dispatch by data-tile
@@ -6502,7 +6491,6 @@ function bindEvents() {
       const id = tile.dataset.tile;
       const def = TILE_DEFS.find(t => t.id === id);
       if (!def) return;
-      console.log('[RecallFox] tile action:', id, def.type, def.action);
       // Dispatch ke function yang sesuai
       if (def.type === 'qa') {
         if (def.action === 'savePromptSheet') savePromptSheet();
