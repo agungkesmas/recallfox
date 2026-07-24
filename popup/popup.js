@@ -6893,6 +6893,25 @@ function bindEvents() {
       renderSearch();
     });
     searchInput.addEventListener('keydown', e => {
+      // v3.13.2 (Issue #2 dari Google Doc): Enter trigger search eksplisit.
+      // User feedback: "harusnya pencarian bisa eksekusi dengan menekan Tombol
+      // dengan ikon panah masuk ke bawah/kanan (→|) tersebut dinamakan tombol
+      // Aksi (Action Key) atau sering juga disebut tombol Next / Seterusnya / Lanjut."
+      // type=search + enterkeyhint="search" sudah set keyboard HP show tombol
+      // "Search/Go" (ikon panah/kaca pembesar). Enter handler ini trigger
+      // renderSearch() eksplisit + scroll ke hasil pertama.
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        renderSearch();
+        // Scroll ke hasil pertama (kalau ada)
+        const firstResult = document.querySelector('#cmdres .cmd-item, #cmdres .item, #cmdres .note-card');
+        if (firstResult) {
+          firstResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          firstResult.classList.add('kb'); // highlight seperti keyboard-nav
+          setTimeout(() => firstResult.classList.remove('kb'), 1200);
+        }
+        return;
+      }
       if (e.key === 'Escape') { clearSearch(); updateClearBtnVisibility(); e.target.blur(); }
     });
     // v3.10.2 (Issue 4 fix): Click tombol clear (X) → hapus semua teks sekaligus
