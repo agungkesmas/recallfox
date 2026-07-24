@@ -302,7 +302,92 @@ body.rf-sidebar-body .popup{
 .ndots .d-orange{background:#fb923c}.ndots .d-red{background:#f87171}.ndots .d-teal{background:#5eead4}
 .ndots .d-indigo{background:#818cf8}.ndots .d-slate{background:#94a3b8}.ndots .d-rose{background:#fb7185}
 .savestate{font-size:10.5px;color:var(--muted)}
-.savestate.ok{color:var(--green)}
+
+/* v3.13.0 (Issue #3): Notes toolbar — search + sort + view toggle */
+.notes-toolbar{display:flex;gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+.notes-toolbar .notes-search{
+  flex:1;min-width:120px;padding:6px 10px;font-size:12px;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);
+}
+.notes-toolbar .notes-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(109,61,245,0.1)}
+.notes-toolbar .notes-sort{
+  padding:6px 8px;font-size:11px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface);color:var(--text);cursor:pointer;flex-shrink:0;
+}
+.notes-toolbar .notes-view-toggle{
+  width:32px;height:32px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface);color:var(--text);cursor:pointer;font-size:14px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s;
+}
+.notes-toolbar .notes-view-toggle:hover{background:var(--surface-2)}
+.notes-toolbar .notes-view-toggle:active{transform:scale(.95)}
+
+/* v3.13.0 (Issue #3): Notes grid mode (2-kolom) — viewMode = 'grid' */
+.notes-list.notes-grid-mode{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:8px;
+}
+.notes-list.notes-grid-mode .note-card{flex-direction:column}
+.notes-list.notes-grid-mode .note-card-main{flex:1;min-width:0}
+.notes-list.notes-grid-mode .note-body-txt{
+  -webkit-line-clamp:3;-webkit-box-orient:vertical;display:-webkit-box;overflow:hidden;
+  max-height:5.5em;
+}
+/* Sidebar sempit: grid turun ke 1 kolom (terlalu sempit untuk 2) */
+body.rf-sidebar-body .notes-list.notes-grid-mode,
+#popup.w-xs .notes-list.notes-grid-mode,
+#popup.w-xxs .notes-list.notes-grid-mode{
+  grid-template-columns:1fr;
+}
+
+/* v3.13.0 (Issue #4): Rich text editor — contenteditable div pengganti textarea */
+.nbody-edit{
+  min-height:180px;max-height:50vh;overflow-y:auto;
+  padding:10px 12px;font-family:ui-monospace,Menlo,monospace;
+  font-size:12.5px;line-height:1.55;
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--border);border-radius:8px;
+  outline:none;word-break:break-word;overflow-wrap:anywhere;
+  transition:border-color .15s;
+}
+.nbody-edit:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(109,61,245,0.1)}
+.nbody-edit:empty::before{
+  content:attr(data-placeholder);color:var(--muted);pointer-events:none;
+}
+/* Dark mode: tag & format dasar di dalam .nbody-edit */
+.nbody-edit table{border-collapse:collapse;width:100%;margin:8px 0;font-size:12px}
+.nbody-edit th,.nbody-edit td{
+  border:1px solid var(--border-strong);padding:6px 9px;text-align:left;vertical-align:top;
+}
+.nbody-edit th{background:var(--surface-2);font-weight:600;color:var(--text)}
+.nbody-edit tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+.nbody-edit b,.nbody-edit strong{font-weight:700}
+.nbody-edit i,.nbody-edit em{font-style:italic}
+.nbody-edit u{text-decoration:underline}
+.nbody-edit s,.nbody-edit strike{text-decoration:line-through}
+.nbody-edit ul,.nbody-edit ol{margin:6px 0 6px 22px;padding:0}
+.nbody-edit li{margin:2px 0}
+.nbody-edit h1{font-size:18px;font-weight:700;margin:10px 0 6px}
+.nbody-edit h2{font-size:16px;font-weight:700;margin:10px 0 6px}
+.nbody-edit h3{font-size:14px;font-weight:700;margin:8px 0 4px}
+.nbody-edit h4,.nbody-edit h5,.nbody-edit h6{font-size:13px;font-weight:700;margin:6px 0 4px}
+.nbody-edit blockquote{
+  border-left:3px solid var(--primary);padding:4px 10px;margin:8px 0;
+  color:var(--text-2);background:var(--surface-2);border-radius:0 4px 4px 0;
+}
+.nbody-edit code{
+  background:var(--surface-2);padding:2px 5px;border-radius:3px;
+  font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+}
+.nbody-edit pre{
+  background:var(--surface-2);padding:8px 10px;border-radius:6px;
+  overflow-x:auto;margin:8px 0;font-size:11.5px;line-height:1.5;
+}
+.nbody-edit pre code{background:none;padding:0}
+.nbody-edit hr{border:none;border-top:1px solid var(--border);margin:10px 0}
+.nbody-edit a{color:var(--primary);text-decoration:underline;cursor:pointer}
+.nbody-edit img{max-width:100%;height:auto;border-radius:4px;margin:4px 0}
+.nbody-edit mark{background:#fef3c7;color:#92400e;padding:1px 3px;border-radius:2px}
+.nbody-edit sub,.nbody-edit sup{font-size:10px}
 
 /* Tools drawer */
 .tools{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}

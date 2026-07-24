@@ -90,6 +90,11 @@ let noteSaveTimer = null;
 let attachSelected = new Set();
 // v3.7.2 (Issue 5): filter grup catatan aktif ('' = semua, atau nama grup spesifik)
 let currentNoteGroup = '';
+// v3.13.0 (Issue #3 — Any.do-inspired): state untuk search/sort/view mode di notes.
+// Persist ke vault.settings.notesPrefs via saveVault() supaya tahan reload + cross-device.
+let notesSortMode = 'recent';        // 'recent' | 'title' | 'created'
+let notesViewMode = 'list';          // 'list' | 'grid'
+let notesSearchQuery = '';           // string, case-insensitive
 
 // ============ Helpers ============
 const $ = (s) => document.querySelector(s);
@@ -100,6 +105,130 @@ function esc(s) {
   });
 }
 function escAttr(s) { return esc(s); }
+
+// v3.13.0 (Issue #4): Rich text helpers — paste sanitization + body load + preview strip.
+// Whitelist approach: hanya tag & atribut yang aman yang dipertahankan, sisanya dibuang.
+// Tidak ada library WYSIWYG pihak ketiga — Vanilla JS murni.
+const NOTE_HTML_WHITELIST_TAGS = new Set([
+  'P','BR','B','STRONG','I','EM','U','S','STRIKE','SPAN','DIV',
+  'UL','OL','LI','DL','DT','DD',
+  'H1','H2','H3','H4','H5','H6',
+  'TABLE','THEAD','TBODY','TFOOT','TR','TD','TH','CAPTION','COLGROUP','COL',
+  'BLOCKQUOTE','PRE','CODE','HR','A','IMG','SUB','SUP','MARK','SMALL'
+]);
+const NOTE_HTML_WHITELIST_ATTRS = new Set([
+  'href','title','alt','src','colspan','rowspan','target','rel','width','height',
+  'align','valign','bgcolor','color','data-color'
+]);
+
+/**
+ * Sanitize HTML untuk contenteditable — hapus tag/atribut berbahaya.
+ * @param {string} html - HTML mentah dari clipboard
+ * @returns {string} HTML aman untuk innerHTML
+ */
+function sanitizeNoteHtml(html) {
+  if (!html) return '';
+  try {
+    const doc = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html');
+    const root = doc.body.firstChild;
+    if (!root) return '';
+    cleanNode(root);
+    return root.innerHTML;
+  } catch (e) {
+    // Fallback: escape semua + convert newline
+    return esc(html).replace(/\n/g, '<br>');
+  }
+}
+
+function cleanNode(node) {
+  // Iterasi child dari belakang supaya removal aman
+  const children = Array.from(node.childNodes);
+  for (const child of children) {
+    if (child.nodeType === Node.TEXT_NODE) continue;
+    if (child.nodeType === Node.COMMENT_NODE) {
+      node.removeChild(child);
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) {
+      node.removeChild(child);
+      continue;
+    }
+    const tag = child.tagName;
+    // Hapus tag berbahaya beserta isinya (script, style, iframe, object, embed, meta, link)
+    if (['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','META','LINK','NOSCRIPT','TEMPLATE','FORM','INPUT','BUTTON','TEXTAREA','SELECT','OPTION'].includes(tag)) {
+      node.removeChild(child);
+      continue;
+    }
+    // Unwrap tag yang tidak ada di whitelist (ganti dengan children-nya)
+    if (!NOTE_HTML_WHITELIST_TAGS.has(tag)) {
+      const parent = node;
+      const frag = document.createDocumentFragment();
+      while (child.firstChild) frag.appendChild(child.firstChild);
+      parent.insertBefore(frag, child);
+      parent.removeChild(child);
+      // Jangan recurse ke child yang sudah di-unwrap; tapi children-nya sudah di parent
+      continue;
+    }
+    // Bersihkan atribut
+    const attrs = Array.from(child.attributes);
+    for (const attr of attrs) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value;
+      // Hapus semua on* event handler
+      if (name.startsWith('on')) { child.removeAttribute(attr.name); continue; }
+      // Hapus atribut di luar whitelist
+      if (!NOTE_HTML_WHITELIST_ATTRS.has(name)) { child.removeAttribute(attr.name); continue; }
+      // Hapus javascript: URLs
+      if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(value)) {
+        child.removeAttribute(attr.name); continue;
+      }
+      // Hapus data: URLs di src (kecuali data:image)
+      if (name === 'src' && value.startsWith('data:') && !value.startsWith('data:image/')) {
+        child.removeAttribute(attr.name); continue;
+      }
+      // Force target=_blank + rel=noopener untuk <a>
+      if (tag === 'A' && name === 'href') {
+        child.setAttribute('target', '_blank');
+        child.setAttribute('rel', 'noopener noreferrer');
+      }
+    }
+    // Recurse ke child
+    cleanNode(child);
+  }
+}
+
+/**
+ * Load note body untuk ditampilkan di contenteditable editor.
+ * - Catatan lama (plain text) → escape + newline → <br>
+ * - Catatan baru (HTML) → sanitize untuk jaga-jaga XSS
+ * @param {string} body - body dari storage (plain text lama atau HTML baru)
+ * @returns {string} HTML aman untuk innerHTML
+ */
+function loadNoteBody(body) {
+  if (!body) return '';
+  // Deteksi: kalau body mengandung tag HTML yang umum → anggap HTML
+  if (/<(p|br|b|strong|i|em|u|s|strike|span|div|ul|ol|li|table|thead|tbody|tr|td|th|h[1-6]|blockquote|pre|code|hr|a|img)\b/i.test(body)) {
+    return sanitizeNoteHtml(body);
+  }
+  // Plain text lama — escape + convert newline ke <br>
+  return esc(body).replace(/\n/g, '<br>');
+}
+
+/**
+ * Strip HTML → plain text untuk preview di note-card list.
+ * @param {string} html - body (HTML atau plain text)
+ * @returns {string} plain text
+ */
+function stripHtmlForPreview(html) {
+  if (!html) return '';
+  // Kalau tidak ada tag HTML, kembalikan apa adanya
+  if (!/<[a-z][\s\S]*>/i.test(html)) return html;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // Ambil textContent, replace nbsp, collapse whitespace
+  let txt = (tmp.textContent || '').replace(/\u00a0/g, ' ');
+  return txt;
+}
 function timeAgo(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -529,7 +658,8 @@ function searchableTextFor(it) {
     const noteTexts = noteIds
       .map(nid => currentNotes.find(n => n.id === nid))
       .filter(Boolean)
-      .map(n => (n.title || '') + ' ' + (n.body || ''));
+      // v3.13.0 (Issue #4): Strip HTML dari note body supaya search index pakai plain text.
+      .map(n => (n.title || '') + ' ' + stripHtmlForPreview(n.body || ''));
     parts.push(noteTexts.join(' '));
   }
   return parts.join(' ').toLowerCase();
@@ -795,7 +925,8 @@ async function vaultBatchCopyBundleAction() {
       else sections.push(header + '\n' + (i.body || ''));
     }
     for (const n of notes) {
-      sections.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + (n.body || ''));
+      // v3.13.0 (Issue #4): Strip HTML untuk Markdown output supaya AI tidak bingung.
+      sections.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
     }
     return sections.join('\n\n');
   });
@@ -1283,7 +1414,7 @@ function bindItemClicks() {
               parts.push('## ' + (i.title || i.type) + '\n' + (i.body || ''));
             }
             for (const n of notes) {
-              parts.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + (n.body || ''));
+              parts.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
             }
             if (parts.length > 0) {
               const text = parts.join('\n\n---\n\n');
@@ -1463,7 +1594,7 @@ async function injectBundle(id) {
   // v3.10.2 (Issue 3 + 5 fix): Tambahkan catatan sebagai section terpisah
   for (const n of notes) {
     const noteTitle = n.title || 'Catatan';
-    allParts.push('## ' + noteTitle + ' [Catatan]\n' + (n.body || ''));
+    allParts.push('## ' + noteTitle + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
   }
   // v3.10.2 (Issue 3 + 5 fix): Tambahkan inline prompt kalau ada
   if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
@@ -2023,7 +2154,7 @@ function openBundleEditorSheet(bundleId) {
       if ((activeFilter === 'all' || activeFilter === 'note') && noteCandidates.length > 0) {
         html += '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
         for (const n of noteCandidates) {
-          const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
+          const noteTitle = n.title || stripHtmlForPreview(n.body || '').slice(0, 50) || 'Catatan';
           const checked = b._checkedNotes.has(n.id) ? ' checked' : '';
           html += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note"' + checked + '>'
             + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
@@ -2824,7 +2955,7 @@ function saveBundleSheet() {
       if ((activeFilter === 'all' || activeFilter === 'note') && noteCandidates.length > 0) {
         html += '<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #ccc;font-size:11px;color:#666">— Catatan (Notepad) —</div>';
         for (const n of noteCandidates) {
-          const noteTitle = n.title || (n.body || '').slice(0, 50) || 'Catatan';
+          const noteTitle = n.title || stripHtmlForPreview(n.body || '').slice(0, 50) || 'Catatan';
           const checked = b._checkedNotes.has(n.id) ? ' checked' : '';
           html += '<label class="pickrow"><input type="checkbox" value="' + n.id + '" data-kind="note"' + checked + '>'
             + '<span class="item-ic t-note" style="width:18px;height:18px;font-size:11px;flex-shrink:0">📝</span>'
@@ -3290,8 +3421,11 @@ function renderSearch() {
     // termasuk body, tags, linkUrl, source.url, source.title, dan bundle member titles.
     const its = getVaultItems().filter(i => searchableTextFor(i).indexOf(nq) >= 0);
     // v3.7.2 (Issue 4): Cari juga di catatan (title + body + group).
+    // v3.13.0 (Issue #4): Body sekarang HTML — strip ke plain text dulu supaya search
+    // tidak ketemu tag HTML seperti "table" atau "div".
     const noteHits = (currentNotes || []).filter(n => {
-      const text = ((n.title || '') + ' ' + (n.body || '') + ' ' + (n.group || '') + ' note catatan').toLowerCase();
+      const bodyPlain = stripHtmlForPreview(n.body || '');
+      const text = ((n.title || '') + ' ' + bodyPlain + ' ' + (n.group || '') + ' note catatan').toLowerCase();
       return text.indexOf(nq) >= 0;
     }).slice(0, 5);
     let h = '';
@@ -3304,7 +3438,8 @@ function renderSearch() {
       return '<div class="cmd-item" data-item="' + it.id + '"><div class="item-ic t-' + it.type + '" style="width:28px;height:28px">' + T.icon + '</div><div><div class="ct" style="font-size:12.5px">' + esc(it.title) + archiveBadge + '</div><div class="cs">' + T.label + ' · ' + esc(tagsStr) + '</div></div></div>';
     }).join('');
     if (noteHits.length) h += '<div class="sec-label">Catatan · ' + noteHits.length + '</div>' + noteHits.map(n => {
-      const title = n.title || (n.body || '').slice(0, 60) || '(kosong)';
+      // v3.13.0: title fallback pakai plain text strip, bukan HTML mentah
+      const title = n.title || stripHtmlForPreview(n.body || '').slice(0, 60) || '(kosong)';
       const group = n.group ? ' · 📁 ' + esc(n.group) : '';
       return '<div class="cmd-item" data-note="' + n.id + '"><div class="item-ic t-context" style="width:28px;height:28px">📝</div><div><div class="ct" style="font-size:12.5px">' + esc(title) + '</div><div class="cs">Catatan' + group + ' · ' + timeAgo(n.updatedAt || n.createdAt) + '</div></div></div>';
     }).join('');
@@ -3361,7 +3496,39 @@ function notesSorted() {
   if (currentNoteGroup) {
     arr = arr.filter(n => (n.group || '') === currentNoteGroup);
   }
-  return arr.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  // v3.13.0 (Issue #3): Filter berdasarkan search query (judul + body, case-insensitive).
+  // Body di-strip dulu ke plain text supaya tag HTML tidak ikut dicocok.
+  if (notesSearchQuery) {
+    const q = notesSearchQuery.toLowerCase();
+    arr = arr.filter(n => {
+      const title = (n.title || '').toLowerCase();
+      const body = stripHtmlForPreview(n.body || '').toLowerCase();
+      return title.includes(q) || body.includes(q);
+    });
+  }
+  // v3.13.0 (Issue #3): Apply sort mode (pinned selalu di atas kecuali sort by title).
+  const pinnedFirst = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+  if (notesSortMode === 'title') {
+    // Sort by title A-Z (pinned tetap di atas)
+    return arr.slice().sort((a, b) => {
+      const p = pinnedFirst(a, b);
+      if (p !== 0) return p;
+      return (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' });
+    });
+  } else if (notesSortMode === 'created') {
+    // Sort by createdAt desc (newest first), pinned di atas
+    return arr.slice().sort((a, b) => {
+      const p = pinnedFirst(a, b);
+      if (p !== 0) return p;
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+  }
+  // Default: 'recent' — by updatedAt desc (pinned di atas)
+  return arr.slice().sort((a, b) => {
+    const p = pinnedFirst(a, b);
+    if (p !== 0) return p;
+    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+  });
 }
 async function renderNotes() {
   currentNotes = await getNotes();
@@ -3374,6 +3541,17 @@ async function renderNotes() {
     const activeCount = currentNotes.filter(n => !n.archived).length;
     countMeta.textContent = activeCount + ' catatan';
   }
+  // v3.13.0 (Issue #3): Render search + sort + view toolbar (di atas group chips)
+  const toolbarHtml = '<div class="notes-toolbar">'
+    + '<input type="text" class="notes-search" id="notesSearch" placeholder="🔍 Cari catatan..." value="' + esc(notesSearchQuery) + '">'
+    + '<select class="notes-sort" id="notesSort" title="Urutkan">'
+    +   '<option value="recent"' + (notesSortMode === 'recent' ? ' selected' : '') + '>Terbaru</option>'
+    +   '<option value="created"' + (notesSortMode === 'created' ? ' selected' : '') + '>Dibuat</option>'
+    +   '<option value="title"' + (notesSortMode === 'title' ? ' selected' : '') + '>Judul A-Z</option>'
+    + '</select>'
+    + '<button class="notes-view-toggle" id="notesViewToggle" title="' + (notesViewMode === 'list' ? 'Mode grid' : 'Mode list') + '">' + (notesViewMode === 'list' ? '▦' : '☰') + '</button>'
+    + '</div>';
+
   // v3.7.2 (Issue 5): Group filter chips
   const groups = await getNoteGroups();
   let groupChipsHtml = '';
@@ -3387,36 +3565,40 @@ async function renderNotes() {
       + '</div>';
   }
   if (!currentNotes.length) {
-    list.innerHTML = groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
+    list.innerHTML = toolbarHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
+    bindNotesToolbar();
     bindGroupChips();
     return;
   }
   const sorted = notesSorted();
   if (!sorted.length) {
-    list.innerHTML = groupChipsHtml + '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
+    // v3.13.0: Empty state bisa karena grup kosong ATAU search tidak ketemu
+    let emptyMsg;
+    if (notesSearchQuery) {
+      emptyMsg = '<div class="notes-empty"><div class="big">🔍</div>Tidak ada catatan cocok dengan "<b>' + esc(notesSearchQuery) + '</b>".<br><span style="font-size:11px">Coba kata kunci lain atau hapus filter pencarian.</span></div>';
+    } else {
+      emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
+    }
+    list.innerHTML = toolbarHtml + groupChipsHtml + emptyMsg;
+    bindNotesToolbar();
     bindGroupChips();
     return;
   }
-  list.innerHTML = groupChipsHtml + sorted.map(n => {
+  // v3.13.0: Tambah class 'notes-grid-mode' ke list kalau viewMode = 'grid'
+  list.className = 'notes-list' + (notesViewMode === 'grid' ? ' notes-grid-mode' : '');
+  list.innerHTML = toolbarHtml + groupChipsHtml + sorted.map(n => {
     const titleHtml = n.title ? '<div class="note-title">' + esc(n.title) + '</div>' : '';
-    // v3.11.15: Preview yang lebih baik — ganti newline dengan spasi (bukan biarkan pre-wrap
-    // yang bikin area kosong di kiri). Naikkan limit dari 200 → 400 karakter supaya context
-    // lebih lengkap. CSS .note-body-txt pakai max-height:4.5em untuk clamp visual.
-    const preview = (n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
-    const previewHtml = preview ? esc(preview) : '<em style="color:var(--muted)">(kosong)</em>';
+    // v3.13.0 (Issue #4): Strip HTML untuk preview — catatan body sekarang bisa berisi HTML
+    // (paste tabel, bold, list, dll). Preview di list harus plain text.
+    // v3.11.15: Limit 400 karakter, collapse whitespace.
+    const plainBody = stripHtmlForPreview(n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
+    const previewHtml = plainBody ? esc(plainBody) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
-    // v3.11.16 (Issue dari Google Doc): Hapus note-card-actions (3 tombol ✏️📦🗑️ yang muncul
-    // saat hover) — bikin teks catatan sempit karena ada area kosong di kiri.
-    // User: "bagian ijo nya itu di hilangkan, jadi teksnya bisa lebih lebar. kan udah ada toggle batch"
-    // Sekarang: di non-batch mode, tidak ada elemen di kiri teks → teks full width.
-    // Aksi individual tetap tersedia: klik note → buka editor (ada Hapus/Arsip/Pin di footer).
-    // Aksi massal: pakai toggle batch (sudah ada).
     let batchHtml = '';
     if (notesBatchMode) {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
       batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer"></div>';
     }
-    // v3.11.16: else branch dihapus — tidak ada note-card-actions lagi.
     return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary)"' : '') + '>'
       + batchHtml
       + '<div class="note-card-main">'
@@ -3440,7 +3622,47 @@ async function renderNotes() {
     // Aksi Hapus/Arsip/Pin ada di footer editor. Aksi massal pakai toggle batch.
     openNoteEditor(c.dataset.nid);
   }));
+  bindNotesToolbar();
   bindGroupChips();
+}
+
+// v3.13.0 (Issue #3): Bind search/sort/view toolbar events.
+// Pakai debounce 250ms untuk search supaya tidak re-render di setiap keystroke.
+let notesSearchTimer = null;
+function bindNotesToolbar() {
+  const searchInput = $('#notesSearch');
+  const sortSelect = $('#notesSort');
+  const viewToggle = $('#notesViewToggle');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(notesSearchTimer);
+      notesSearchTimer = setTimeout(() => {
+        notesSearchQuery = searchInput.value.trim();
+        renderNotes();
+        // Re-focus + pindah cursor ke akhir setelah re-render
+        const newInput = $('#notesSearch');
+        if (newInput) {
+          newInput.focus();
+          const len = newInput.value.length;
+          newInput.setSelectionRange(len, len);
+        }
+      }, 250);
+    });
+  }
+  if (sortSelect) {
+    sortSelect.addEventListener('change', async () => {
+      notesSortMode = sortSelect.value;
+      await saveNotesPrefs();
+      renderNotes();
+    });
+  }
+  if (viewToggle) {
+    viewToggle.addEventListener('click', async () => {
+      notesViewMode = notesViewMode === 'list' ? 'grid' : 'list';
+      await saveNotesPrefs();
+      renderNotes();
+    });
+  }
 }
 
 // v3.9.0 (Issue 7): Quick action handler untuk note (dari list, tanpa buka editor)
@@ -3479,10 +3701,14 @@ function openNoteEditor(noteId) {
   const n = currentNotes.find(x => x.id === noteId);
   if (!n) return;
   openPage('📝 Catatan');
+  // v3.13.0 (Issue #4): Ganti <textarea> → <div contenteditable> supaya bisa
+  // paste tabel + format dasar (bold, italic, list, heading). Body disimpan sebagai HTML.
+  // Backward-compat: catatan lama (plain text) di-load via loadNoteBody() yang escape +
+  // convert newline ke <br>. Catatan baru (HTML) di-sanitize ulang untuk jaga-jaga XSS.
   $('#pageBody').innerHTML =
     '<div class="card" style="margin-bottom:10px">'
     + '<input class="f" id="nTitle" value="' + esc(n.title || '') + '" placeholder="Judul (opsional) — dikosongkan pakai preview isi" style="margin-bottom:8px;font-weight:600">'
-    + '<textarea class="f" id="nBody" rows="9" placeholder="Tulis catatan sementara di sini… (auto-save)" style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.55">' + esc(n.body || '') + '</textarea>'
+    + '<div class="f nbody-edit" id="nBody" contenteditable="true" data-placeholder="Tulis catatan sementara di sini… (auto-save). Paste tabel atau teks berformat akan dipertahankan.">' + loadNoteBody(n.body || '') + '</div>'
     // v3.10.0 (Issue 5): Compose + Parafrase untuk catatan
     + '<div style="display:flex;gap:6px;margin-top:8px">'
     +   '<button class="btn btn-g" id="nCompose" title="AI generate catatan dari judul — bisa diulang" style="flex:1;padding:6px 8px;font-size:11px">✨ Compose dengan AI</button>'
@@ -3513,13 +3739,14 @@ function openNoteEditor(noteId) {
     renderNotes();
   }
   // v3.7.2 (Issue 5): Auto-save title + body + group dengan debounce yang sama.
+  // v3.13.0 (Issue #4): Body sekarang HTML (dari contenteditable), bukan plain text.
   function scheduleSave() {
     const st = $('#pageSaveState'); st.textContent = 'Menyimpan…'; st.classList.remove('ok');
     clearTimeout(noteSaveTimer);
     noteSaveTimer = setTimeout(async () => {
       await updateNote(n.id, {
         title: titleInput.value.trim(),
-        body: ta.value,
+        body: ta.innerHTML,
         group: groupInput.value.trim(),
         updatedAt: new Date().toISOString()
       });
@@ -3529,6 +3756,34 @@ function openNoteEditor(noteId) {
   ta.addEventListener('input', scheduleSave);
   titleInput.addEventListener('input', scheduleSave);
   groupInput.addEventListener('input', scheduleSave);
+  // v3.13.0 (Issue #4): Paste handler — sanitize HTML dari clipboard.
+  // Whitelist tag + atribut aman, buang script/style/iframe/on* handler/javascript: URLs.
+  // Kalau clipboard hanya punya plain text (mis. dari Notepad), escape + convert newline → <br>.
+  ta.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    let insertHtml;
+    if (html && html.trim()) {
+      insertHtml = sanitizeNoteHtml(html);
+    } else if (text) {
+      insertHtml = esc(text).replace(/\n/g, '<br>');
+    } else {
+      return; // nothing to paste
+    }
+    // execCommand deprecated tapi masih best option untuk contenteditable insertHTML
+    // dengan undo/redo support. Alternatif: Selection API + Range.insertNode — lebih
+    // kompleks, dan undo stack manual. Pakai execCommand dulu, kalau nanti browser
+    // drop support, ganti ke Selection API.
+    try {
+      document.execCommand('insertHTML', false, insertHtml);
+    } catch (err) {
+      // Fallback: append ke akhir
+      ta.innerHTML += insertHtml;
+    }
+    // Trigger input event supaya auto-save jalan
+    ta.dispatchEvent(new Event('input'));
+  });
   $('#pageBody').querySelectorAll('.ndots button').forEach(d => {
     d.addEventListener('click', async () => {
       $('#pageBody').querySelectorAll('.ndots button').forEach(x => x.classList.remove('on'));
@@ -3547,6 +3802,8 @@ function openNoteEditor(noteId) {
   });
 
   // v3.10.0 (Issue 5): Compose + Parafrase untuk catatan
+  // v3.13.0 (Issue #4): Adaptasi ke contenteditable — pakai innerHTML (bukan .value),
+  // dan input AI (plain text dengan newline) di-escape + newline → <br> sebelum insert.
   $('#nCompose').addEventListener('click', async () => {
     const titleVal = ($('#nTitle').value || '').trim();
     if (!titleVal) { toast('Isi judul dulu, lalu klik Compose'); return; }
@@ -3559,19 +3816,29 @@ function openNoteEditor(noteId) {
       if (!(await isAssistantConfigured())) { toast('Setup AI Assistant dulu di Pengaturan'); return; }
       const sys = 'Anda adalah asisten yang menulis catatan yang rapi dan berguna. Berdasarkan judul, tulis catatan singkat (50-150 kata) dengan poin-poin penting. Jawab HANYA isinya.';
       let acc = '';
-      const ta = $('#nBody');
+      const taEl = $('#nBody');
       const resp = await chatWithFallback(
         [{ role: 'system', content: sys }, { role: 'user', content: 'Judul: "' + titleVal + '"\n\nTulis catatan.' }],
-        { onToken: (t) => { acc += t; ta.value = acc; ta.dispatchEvent(new Event('input')); } }
+        { onToken: (t) => {
+            acc += t;
+            // AI output plain text — escape + newline → <br> sebelum set innerHTML
+            taEl.innerHTML = esc(acc).replace(/\n/g, '<br>');
+            taEl.dispatchEvent(new Event('input'));
+          } }
       );
-      if (!acc && resp?.content) { ta.value = resp.content; ta.dispatchEvent(new Event('input')); }
+      if (!acc && resp?.content) {
+        taEl.innerHTML = esc(resp.content).replace(/\n/g, '<br>');
+        taEl.dispatchEvent(new Event('input'));
+      }
       toast('✨ Catatan di-generate. Klik lagi untuk varian lain.');
     } catch (e) { toast('Gagal compose: ' + e.message); }
     finally { btn.textContent = orig; btn.disabled = false; }
   });
   $('#nParafrase').addEventListener('click', async () => {
-    const ta = $('#nBody');
-    if (!ta || !ta.value.trim()) { toast('Isi catatan dulu, lalu klik Parafrase'); return; }
+    const taEl = $('#nBody');
+    // v3.13.0: Ambil innerText (bukan textContent) supaya format dirender sebagai newline.
+    const currentText = taEl ? taEl.innerText.trim() : '';
+    if (!currentText) { toast('Isi catatan dulu, lalu klik Parafrase'); return; }
     const btn = $('#nParafrase');
     const orig = btn.textContent;
     btn.textContent = '⏳ Parafrase...';
@@ -3582,10 +3849,17 @@ function openNoteEditor(noteId) {
       const sys = 'Parafrase teks berikut agar lebih jelas, rapi, dan mudah dibaca. Pertahankan semua informasi penting. Jawab HANYA teks hasil parafrase.';
       let acc = '';
       const resp = await chatWithFallback(
-        [{ role: 'system', content: sys }, { role: 'user', content: 'Teks asli:\n\n' + ta.value + '\n\nParafrase.' }],
-        { onToken: (t) => { acc += t; ta.value = acc; ta.dispatchEvent(new Event('input')); } }
+        [{ role: 'system', content: sys }, { role: 'user', content: 'Teks asli:\n\n' + currentText + '\n\nParafrase.' }],
+        { onToken: (t) => {
+            acc += t;
+            taEl.innerHTML = esc(acc).replace(/\n/g, '<br>');
+            taEl.dispatchEvent(new Event('input'));
+          } }
       );
-      if (!acc && resp?.content) { ta.value = resp.content; ta.dispatchEvent(new Event('input')); }
+      if (!acc && resp?.content) {
+        taEl.innerHTML = esc(resp.content).replace(/\n/g, '<br>');
+        taEl.dispatchEvent(new Event('input'));
+      }
       toast('🔄 Parafrase selesai. Klik lagi untuk varian lain.');
     } catch (e) { toast('Gagal parafrase: ' + e.message); }
     finally { btn.textContent = orig; btn.disabled = false; }
@@ -3602,12 +3876,19 @@ function openNoteEditor(noteId) {
     toast(newVal ? '📦 Catatan diarsipkan' : '📤 Dikeluarkan dari arsip');
   });
   $('#nCopy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(n.body || ''); toast('📋 Catatan disalin'); }
-    catch (e) { toast('Gagal salin', false); }
+    // v3.13.0 (Issue #4): Salin innerText dari contenteditable — preserve format
+    // (bold/list/heading → newline + bullet di plain text). Sebelumnya: n.body (HTML mentah).
+    try {
+      const textToCopy = ta.innerText || stripHtmlForPreview(n.body || '');
+      await navigator.clipboard.writeText(textToCopy);
+      toast('📋 Catatan disalin');
+    } catch (e) { toast('Gagal salin', false); }
   });
   $('#nDone').addEventListener('click', async () => {
     const cur = currentNotes.find(x => x.id === n.id);
-    if (cur && !cur.body?.trim() && !cur.title?.trim()) { await deleteNote(n.id); }
+    // v3.13.0: Cek body via innerText (bukan .trim() langsung pada HTML string).
+    const bodyText = ta.innerText.trim();
+    if (cur && !bodyText && !cur.title?.trim()) { await deleteNote(n.id); }
     await renderNotes();
     closePage();
   });
@@ -3704,6 +3985,29 @@ async function saveActiveTiles(ids) {
   const vault = await getVault();
   if (!vault.settings) vault.settings = {};
   vault.settings.activeTiles = ids.slice(0, MAX_ACTIVE_TILES);
+  await saveVault(vault);
+  currentVault = vault;
+}
+
+// v3.13.0 (Issue #3): Load/save notes prefs (sort mode + view mode) ke vault.settings.notesPrefs.
+// searchQuery TIDAK di-persist (temporal — reset setiap sesi biar tidak menyaring terus).
+function loadNotesPrefs() {
+  const prefs = currentVault?.settings?.notesPrefs || {};
+  if (prefs.sortMode && ['recent', 'title', 'created'].includes(prefs.sortMode)) {
+    notesSortMode = prefs.sortMode;
+  }
+  if (prefs.viewMode && ['list', 'grid'].includes(prefs.viewMode)) {
+    notesViewMode = prefs.viewMode;
+  }
+  // notesSearchQuery sengaja tidak di-load — biar tidak nyangkut filter saat user buka app
+}
+async function saveNotesPrefs() {
+  const vault = await getVault();
+  if (!vault.settings) vault.settings = {};
+  vault.settings.notesPrefs = {
+    sortMode: notesSortMode,
+    viewMode: notesViewMode
+  };
   await saveVault(vault);
   currentVault = vault;
 }
@@ -6385,6 +6689,8 @@ async function refreshVault() {
 async function init() {
   try { await initTheme(); } catch (e) { console.warn('initTheme failed:', e); }
   try { await refreshVault(); } catch (e) { console.warn('refreshVault failed:', e); }
+  // v3.13.0 (Issue #3): Load notes prefs (sort/view mode) dari vault.settings
+  try { loadNotesPrefs(); } catch (e) { console.warn('loadNotesPrefs failed:', e); }
   try { await detectAiContext(); } catch (e) {}
 
   // Sticky bars
