@@ -4111,6 +4111,25 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;  // async response
   }
 
+  // v3.14.3: SAVE_TAPE_TO_VAULT — simpan tape calculation ke vault sebagai note
+  if (msg.type === 'SAVE_TAPE_TO_VAULT') {
+    (async () => {
+      try {
+        const { markdown, text, grandTotal } = msg;
+        const { addNote } = await import('./lib/storage.js');
+        const note = await addNote(markdown || text, {
+          title: '🧮 RecallTape — Total: ' + (grandTotal || 0).toLocaleString('id-ID'),
+          group: 'RecallTape'
+        });
+        sendResponse({ ok: true, noteId: note.id });
+      } catch (e) {
+        console.error('[RecallFox] SAVE_TAPE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // AD_DISCARD_NOW & AD_FORCE_DISCARD_ALL — sudah dipindahkan ke listener 1 (v0.9.7)
 });
 
