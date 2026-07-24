@@ -4027,6 +4027,7 @@ function openNoteEditor(noteId) {
 
 // ============ Tools drawer ============
 const TOOLS = [
+  ['tape', 'RecallTape', 'Kalkulator pita · keyboard-first', '🧾'],
   ['shalat', 'Waktu Shalat', 'Muhammadiyah · countdown', ICONS.mosque],
   ['habits', 'Habits', 'Ngaji & olahraga harian', ICONS.heart],
   ['puasa', 'Puasa Sunnah', 'Kalender Islam & jadwal', ICONS.moonstar],
@@ -4229,7 +4230,13 @@ function openTilePicker() {
 
 function toolPage(k) {
   closeSheet();
-  const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { tape: '🧾 RecallTape — Kalkulator Pita', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  // v3.14.0: RecallTape — bukan halaman dalam popup, tapi popover di halaman aktif.
+  // Kirim message ke content script di tab aktif untuk toggle popover.
+  if (k === 'tape') {
+    openTapePopover();
+    return;
+  }
   openPage(names[k] || 'Alat');
   const B = $('#pageBody');
   if (k === 'shalat') renderShalatPage(B);
@@ -4242,6 +4249,72 @@ function toolPage(k) {
   else if (k === 'kontrol') renderKontrolSitusPage(B);
   else if (k === 'aimanage') renderAiManagePage(B);  // v3.11.1 (Issue 4)
   else renderToolStubPage(B, k, names[k]);
+}
+
+// v3.14.0: RecallTape — trigger popover di tab aktif via content script.
+// Untuk sidebar: kirim ke tab aktif di window utama.
+// Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
+async function openTapePopover() {
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0]) {
+      const tab = tabs[0];
+      // Hanya kirim ke http(s)/file — bukan about:*, moz-extension:*
+      if (/^(https?|file):/i.test(tab.url || '')) {
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' });
+          toast('🧾 RecallTape dibuka di tab aktif');
+          // Tutup popup (sidebar tidak terpengaruh — body.rf-sidebar-body)
+          if (!document.body.classList.contains('rf-sidebar-body')) {
+            setTimeout(() => window.close(), 600);
+          }
+          return;
+        } catch (e) {
+          console.warn('[RecallFox/Tape] Cannot reach content script on tab:', e.message);
+          // Fallback: inject script lalu coba lagi
+          try {
+            await browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['content/tape-cs.js']
+            });
+            await browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' });
+            toast('🧾 RecallTape dibuka di tab aktif');
+            if (!document.body.classList.contains('rf-sidebar-body')) {
+              setTimeout(() => window.close(), 600);
+            }
+            return;
+          } catch (e2) {
+            console.warn('[RecallFox/Tape] Fallback inject failed:', e2.message);
+          }
+        }
+      }
+    }
+    // Fallback: tampilkan halaman info di dalam popup/sidebar
+    openPage('🧾 RecallTape');
+    const B = $('#pageBody');
+    B.innerHTML = `
+      <div class="card" style="text-align:center;padding:20px 16px">
+        <div style="font-size:36px;margin-bottom:8px">🧾</div>
+        <h3 style="font-size:14px;margin-bottom:6px">RecallTape — Kalkulator Pita</h3>
+        <p style="font-size:11.5px;color:var(--text-2);line-height:1.6;margin-bottom:14px">
+          Buka halaman web mana saja (http/https), lalu klik tombol 🧾 di header RecallFox untuk memunculkan popover kalkulator pita.
+        </p>
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:left;font-size:11px;line-height:1.6;color:var(--text-2)">
+          <b style="color:var(--text)">Format input:</b><br>
+          <code style="font-family:var(--mono);font-size:10.5px;background:var(--surface);padding:1px 4px;border-radius:3px">250000 Gaji Utama</code><br>
+          <code style="font-family:var(--mono);font-size:10.5px;background:var(--surface);padding:1px 4px;border-radius:3px">+ 50k Bonus projek</code><br>
+          <code style="font-family:var(--mono);font-size:10.5px;background:var(--surface);padding:1px 4px;border-radius:3px">- 20rb Makan siang</code><br>
+          <code style="font-family:var(--mono);font-size:10.5px;background:var(--surface);padding:1px 4px;border-radius:3px">= Subtotal</code><br><br>
+          <b style="color:var(--text)">Suffix didukung:</b> <code>k</code>, <code>rb</code>, <code>jt</code>/<code>juta</code>, <code>m</code>, <code>b</code>/<code>bn</code><br>
+          <b style="color:var(--text)">Separator:</b> <code>1.250.000</code> (ID) atau <code>1,250,000</code> (EN)<br>
+          <b style="color:var(--text)">Operator:</b> <code>+</code> <code>-</code> <code>*</code> <code>/</code> <code>=</code> (subtotal)
+        </div>
+      </div>`;
+    return;
+  } catch (e) {
+    console.error('[RecallFox/Tape] openTapePopover failed:', e);
+    toast('Gagal membuka RecallTape: ' + e.message, false);
+  }
 }
 function renderShalatPage(B) {
   const s = currentVault?.settings || {};
@@ -6853,6 +6926,9 @@ function bindEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
+  // v3.14.0: RecallTape — tombol 🧾 di header → toggle popover di tab aktif
+  const tapeBtn = $('#tapeBtn');
+  if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);
   $('#scrim').addEventListener('click', closeSheet);
   $('#pageBack').addEventListener('click', closePage);
 

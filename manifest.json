@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.13.7",
+  "version": "3.14.0",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -171,6 +171,18 @@
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/tape-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
@@ -186,7 +198,8 @@
         "contentguard/blocked.js",
         "popup/viewer.html",
         "popup/viewer.js",
-        "popup/viewer.css"
+        "popup/viewer.css",
+        "lib/tape.js"
       ],
       "matches": [
         "<all_urls>"

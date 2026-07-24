@@ -289,6 +289,19 @@ async function setupContextMenu() {
     contexts: ['selection']
   });
 
+  // v3.14.0: RecallTape — "Add to RecallFox Tape" (klik kanan teks/angka terseleksi)
+  // Memunculkan popover RecallTape di tab aktif + menambahkan teks terseleksi sebagai baris baru.
+  browser.menus.create({
+    id: 'rf-separator-tape',
+    type: 'separator',
+    contexts: ['selection']
+  });
+  browser.menus.create({
+    id: 'rf-add-to-tape',
+    title: browser.i18n.getMessage('ctxMenuAddToTape') || '🧾 Tambah ke RecallTape',
+    contexts: ['selection']
+  });
+
   // ===== Content Guardian: "Blokir Konten Ini" (v0.8.21) =====
   // Hanya muncul di YouTube & X — klik kanan untuk blokir konten yang
   // sedang di-hover (video card / tweet).
@@ -537,6 +550,36 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     console.log('[RecallFox] Ask AI about:', text.slice(0, 80));
     // Use shared orchestration: store pending + open sidebar + deliver message
     await routeAiQuery(text, { sourceUrl: info.pageUrl || '', sourceTitle: tab?.title || '' });
+  } else if (info.menuItemId === 'rf-add-to-tape') {
+    // v3.14.0: RecallTape — kirim teks terseleksi ke popover Tape di tab aktif
+    const text = (info.selectionText || '').trim();
+    if (!text) return;
+    console.log('[RecallFox/Tape] Add to tape:', text.slice(0, 80));
+    try {
+      await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+    } catch (e) {
+      // Content script belum loaded — inject manual lalu kirim ulang
+      console.warn('[RecallFox/Tape] sendMessage failed, trying inject:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/tape-cs.js']
+        });
+        // Kasih waktu dynamic import selesai
+        await new Promise(r => setTimeout(r, 200));
+        await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+      } catch (e2) {
+        console.error('[RecallFox/Tape] Inject fallback failed:', e2.message);
+        try {
+          browser.notifications.create({
+            type: 'basic',
+            iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+            title: 'RecallTape',
+            message: 'Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.'
+          });
+        } catch (_) {}
+      }
+    }
   } else if (info.menuItemId === 'rf-cg-block-selection') {
     // Blokir teks terseleksi sebagai keyword
     const text = (info.selectionText || '').trim();
@@ -1216,6 +1259,30 @@ let syncTimer = null;
 
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+  if (msg.type === 'TAPE_SAVE_TO_VAULT') {
+    // v3.14.0: RecallTape — simpan tape ke vault sebagai tipe Prompt
+    try {
+      const { title, body, source } = msg.payload || {};
+      if (!body) { sendResponse({ ok: false, error: 'empty_body' }); return; }
+      const item = await addItem({
+        type: 'prompt',
+        title: title || 'RecallTape',
+        body,
+        tags: ['tape', 'calculator'],
+        source: source || { kind: 'tape', savedAt: new Date().toISOString() }
+      });
+      console.log('[RecallFox/Tape] Saved to vault:', item.id);
+      sendResponse({ ok: true, itemId: item.id });
+      // Notify sender tab with toast
+      try {
+        await browser.tabs.sendMessage(sender.tab.id, { type: 'SHOW_TOAST', message: 'toastSaved' });
+      } catch (e) {}
+    } catch (e) {
+      console.error('[RecallFox/Tape] Save failed:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return;
+  }
   if (msg.type === 'TRIGGER_SYNC') {
     // debounce 2s
     if (syncTimer) clearTimeout(syncTimer);
