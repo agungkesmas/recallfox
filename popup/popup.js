@@ -3542,8 +3542,13 @@ async function renderNotes() {
     countMeta.textContent = activeCount + ' catatan';
   }
   // v3.13.0 (Issue #3): Render search + sort + view toolbar (di atas group chips)
+  // v3.13.1: Search trigger saat Enter (bukan real-time debounce) + tombol X untuk clear.
+  const hasQuery = notesSearchQuery.length > 0;
   const toolbarHtml = '<div class="notes-toolbar">'
-    + '<input type="text" class="notes-search" id="notesSearch" placeholder="🔍 Cari catatan..." value="' + esc(notesSearchQuery) + '">'
+    + '<div class="notes-search-wrap">'
+    +   '<input type="text" class="notes-search" id="notesSearch" placeholder="🔍 Cari catatan... (Enter)" value="' + esc(notesSearchQuery) + '">'
+    +   (hasQuery ? '<button class="notes-search-clear" id="notesSearchClear" title="Hapus pencarian" aria-label="Hapus pencarian">✕</button>' : '')
+    + '</div>'
     + '<select class="notes-sort" id="notesSort" title="Urutkan">'
     +   '<option value="recent"' + (notesSortMode === 'recent' ? ' selected' : '') + '>Terbaru</option>'
     +   '<option value="created"' + (notesSortMode === 'created' ? ' selected' : '') + '>Dibuat</option>'
@@ -3627,16 +3632,20 @@ async function renderNotes() {
 }
 
 // v3.13.0 (Issue #3): Bind search/sort/view toolbar events.
-// Pakai debounce 250ms untuk search supaya tidak re-render di setiap keystroke.
-let notesSearchTimer = null;
+// v3.13.1: Search trigger saat Enter (bukan real-time debounce) supaya user
+//   bisa ngetik tenang tanpa re-render di setiap keystroke. Escape juga clear.
+//   Tambahan tombol X untuk clear search.
 function bindNotesToolbar() {
   const searchInput = $('#notesSearch');
+  const searchClearBtn = $('#notesSearchClear');
   const sortSelect = $('#notesSort');
   const viewToggle = $('#notesViewToggle');
   if (searchInput) {
-    searchInput.addEventListener('input', () => {
-      clearTimeout(notesSearchTimer);
-      notesSearchTimer = setTimeout(() => {
+    // v3.13.1: Enter → apply search. Escape → clear search.
+    // Tidak ada debounce real-time — user boleh ngetik panjang tanpa ganggu.
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
         notesSearchQuery = searchInput.value.trim();
         renderNotes();
         // Re-focus + pindah cursor ke akhir setelah re-render
@@ -3646,7 +3655,23 @@ function bindNotesToolbar() {
           const len = newInput.value.length;
           newInput.setSelectionRange(len, len);
         }
-      }, 250);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        if (notesSearchQuery || searchInput.value) {
+          notesSearchQuery = '';
+          renderNotes();
+          const newInput = $('#notesSearch');
+          if (newInput) newInput.focus();
+        }
+      }
+    });
+  }
+  if (searchClearBtn) {
+    searchClearBtn.addEventListener('click', () => {
+      notesSearchQuery = '';
+      renderNotes();
+      const newInput = $('#notesSearch');
+      if (newInput) newInput.focus();
     });
   }
   if (sortSelect) {

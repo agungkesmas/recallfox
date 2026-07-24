@@ -305,11 +305,24 @@ body.rf-sidebar-body .popup{
 
 /* v3.13.0 (Issue #3): Notes toolbar — search + sort + view toggle */
 .notes-toolbar{display:flex;gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+/* v3.13.1: Wrap search + tombol X supaya X menempel di kanan input */
+.notes-search-wrap{flex:1;min-width:120px;position:relative;display:flex;align-items:center}
 .notes-toolbar .notes-search{
-  flex:1;min-width:120px;padding:6px 10px;font-size:12px;
+  flex:1;width:100%;padding:6px 28px 6px 10px;font-size:12px;
   border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);
 }
 .notes-toolbar .notes-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(109,61,245,0.1)}
+/* v3.13.1: Tombol X clear search — menempel di kanan input */
+.notes-search-clear{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:20px;height:20px;border:none;border-radius:50%;
+  background:var(--surface-2);color:var(--text-2);cursor:pointer;
+  font-size:11px;line-height:1;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;
+}
+.notes-search-clear:hover{background:var(--border);color:var(--text)}
+.notes-search-clear:active{transform:translateY(-50%) scale(.92)}
 .notes-toolbar .notes-sort{
   padding:6px 8px;font-size:11px;border:1px solid var(--border);border-radius:8px;
   background:var(--surface);color:var(--text);cursor:pointer;flex-shrink:0;
