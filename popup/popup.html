@@ -64,15 +64,11 @@
     </div>
   </div>
 
-  <!-- Hero task bar — 6 trigger spesifik -->
-  <div class="tiles">
-    <button class="tile" id="qaPrompt" title="Simpan prompt baru"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/></svg>Prompt</button>
-    <button class="tile" id="qaKonteks" title="Simpan konteks baru"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>Konteks</button>
-    <button class="tile" id="qaLink" title="Simpan link tab aktif"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Link</button>
-    <button class="tile" id="qaBundle" title="Gabungkan item jadi bundle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>Bundle</button>
-    <button class="tile" id="qaSnap" title="Snapshot percakapan AI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/><path d="M8.5 10.5h7M8.5 13.5h4"/></svg>Snapshot</button>
-    <button class="tile" id="qaShot" title="Tangkap halaman"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M7 3v2M17 21v-2"/></svg>Shot</button>
-  </div>
+  <!-- v3.12.3 (Issue #2): Quick actions grid — customizable via JS.
+       Container kosong, diisi dinamis oleh renderTiles() di popup.js.
+       Default: 6 tombol (Prompt/Konteks/Link/Bundle/Snapshot/Shot).
+       User bisa add/remove via tombol "+" dan "×". Max 6, 2 cols, auto-fit row. -->
+  <div class="tiles" id="tilesContainer"></div>
 
   <!-- View: Beranda (Vault) -->
   <div class="view" id="vaultView">

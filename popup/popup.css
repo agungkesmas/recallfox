@@ -146,11 +146,25 @@ body.rf-sidebar-body .popup{
 .shortcut-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 
 /* Hero task bar — 6 trigger spesifik */
-.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 12px 10px;flex:none}
-.tile{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);font-size:11px;font-weight:650;color:var(--text-2);transition:.15s;white-space:nowrap}
+/* v3.12.3 (Issue #2 dari Google Doc): Quick actions grid 2 cols, customizable.
+   - grid-template-columns:repeat(2,1fr) → 2 kolom (sebelumnya 3)
+   - grid-auto-rows:auto → tinggi row auto-fit (no whitespace kalau <6 tombol)
+   - Max 6 tombol (3 baris) — dikelola via JS (vault.settings.activeTiles)
+   - Tombol "+" (tile-add) untuk tambah fitur, muncul kalau active < 6
+   User feedback: "Dapat Dikustomisasi: Pengguna bisa menambah atau menghapus
+   tombol fitur... Batas Maksimal: 6... Tinggi Dinamis (Auto-fit Row)." */
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);grid-auto-rows:auto;gap:8px;padding:0 12px 10px;flex:none}
+.tile{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);font-size:11px;font-weight:650;color:var(--text-2);transition:.15s;white-space:nowrap;cursor:pointer;position:relative}
 .tile svg{width:14px;height:14px;color:var(--primary);flex:none}
 .tile:hover{background:var(--primary-soft);border-color:transparent;color:var(--primary);transform:translateY(-1px);box-shadow:var(--sh-sm)}
 .tile:active{transform:translateY(0) scale(.96)}
+/* v3.12.3: Tombol "+" untuk add tile. Style berbeda (dashed border, muted). */
+.tile-add{border:1.5px dashed var(--border-strong);background:transparent;color:var(--muted);font-size:13px}
+.tile-add:hover{background:var(--surface-2);border-color:var(--primary);color:var(--primary);transform:none;box-shadow:none}
+/* v3.12.3: Tombol "×" di pojok kanan atas tile untuk remove (muncul saat hover) */
+.tile-remove{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:var(--danger);color:#fff;font-size:10px;line-height:1;display:none;align-items:center;justify-content:center;cursor:pointer;border:none;padding:0;z-index:2}
+.tile:hover .tile-remove{display:flex}
+.tile-remove:hover{transform:scale(1.15);background:#dc2626}
 
 /* Views */
 .view{flex:1;display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--border)}
@@ -188,8 +202,16 @@ body.rf-sidebar-body .popup{
 .chip[data-cat="archive"].on{background:var(--muted);border-color:var(--muted);color:#fff}
 .chip[data-cat="all"]{border-left:3px solid var(--text)}
 .chip[data-cat="all"].on{background:var(--text);border-color:var(--text);color:var(--bg)}
-.list{flex:1;overflow-y:auto;padding:2px 10px 12px}
-.list::-webkit-scrollbar,.cmdres::-webkit-scrollbar,.page-body::-webkit-scrollbar,.tools::-webkit-scrollbar,.notes-list::-webkit-scrollbar{width:8px}
+.list{flex:1;overflow-y:auto;padding:2px 10px 12px;min-height:0}
+/* v3.12.3 (Issue #1 dari Google Doc): Sembunyikan scrollbar secara visual untuk
+   semua area scrollable (Firefox + webkit/macOS). Scroll masih jalan, tapi
+   tidak ada garis scrollbar yang muncul — bersih secara visual.
+   - scrollbar-width:none → Firefox
+   - ::-webkit-scrollbar{display:none} → Chrome/Safari/macOS
+   User feedback: "sembunyikan garis scrollbar-nya secara visual (terutama
+   untuk macOS)". */
+.list,.cmdres,.page-body,.tools,.notes-list,.chips{scrollbar-width:none}
+.list::-webkit-scrollbar,.cmdres::-webkit-scrollbar,.page-body::-webkit-scrollbar,.tools::-webkit-scrollbar,.notes-list::-webkit-scrollbar{display:none}
 .list::-webkit-scrollbar-thumb,.cmdres::-webkit-scrollbar-thumb,.page-body::-webkit-scrollbar-thumb,.tools::-webkit-scrollbar-thumb,.notes-list::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;border:2px solid var(--bg)}
 .sec-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:8px 6px 5px}
 .item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-md);cursor:pointer;border:1px solid transparent;transition:background .12s,border-color .12s;outline:none}
@@ -293,7 +315,10 @@ body.rf-sidebar-body .popup{
 .tool-d{font-size:10.5px;color:var(--muted);margin-top:1px}
 
 /* Tab bar — 3 tab: Beranda · Catatan · Alat */
-.tabbar{flex:none;display:flex;border-top:1px solid var(--border);background:var(--surface);padding:6px 10px calc(8px)}
+/* v3.12.3 (Issue #1): tabbar statis menempel di bawah. position:relative +
+   z-index:5 supaya selalu di atas content yang scroll (defensive — kalau ada
+   content yang somehow overflow, tabbar tetap visible). */
+.tabbar{flex:none;display:flex;border-top:1px solid var(--border);background:var(--surface);padding:6px 10px calc(8px);position:relative;z-index:5}
 .tabbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px 4px;border-radius:10px;font-size:10px;font-weight:650;color:var(--muted);transition:.15s;position:relative}
 .tabbtn svg{width:16px;height:16px}
 .tabbtn:hover{color:var(--text-2)}
@@ -316,7 +341,7 @@ body.rf-sidebar-body .page-foot{width:100%;max-width:560px}
 .backbtn:hover{background:var(--hover)}
 .backbtn svg{width:15px;height:15px}
 .page-hd .pt{font-size:13.5px;font-weight:700;flex:1;min-width:0}
-.page-body{flex:1;overflow-y:auto;padding:14px 13px}
+.page-body{flex:1;overflow-y:auto;padding:14px 13px;min-height:0}
 .page-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px;margin-bottom:10px}
 .card h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:9px;font-weight:700}

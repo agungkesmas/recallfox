@@ -3341,6 +3341,8 @@ function setView(v) {
   const cmdWrap = $('#cmdWrap');
   if (cmdWrap) cmdWrap.style.display = homeOnly ? 'flex' : 'none';
   document.querySelector('.tiles').style.display = homeOnly ? 'grid' : 'none';
+  // v3.12.3: renderTiles() ulang saat ke home view (jaga-jaga kalau activeTiles berubah)
+  if (homeOnly) renderTiles();
   // v3.11.7-fix (Issue #6): Strip jadwal sholat SELALU terlihat di semua view
   // (home, notes, tools) supaya countdown sholat tidak hilang saat user di menu lain.
   // Sebelumnya: homeOnly ? '' : 'none' → ketutup saat di notes/tools.
@@ -3640,6 +3642,144 @@ function renderTools() {
   $('#toolgrid').innerHTML = TOOLS.map(t => '<button class="tool' + (t[4] ? ' ' + t[4] : '') + '" data-tool="' + t[0] + '"><div class="tool-ic">' + t[3] + '</div><div><div class="tool-n">' + t[1] + '</div><div class="tool-d">' + t[2] + '</div></div></button>').join('');
   $$('#toolgrid .tool').forEach(t => t.addEventListener('click', () => toolPage(t.dataset.tool)));
 }
+
+// ============================================================================
+// v3.12.3 (Issue #2 dari Google Doc): Customizable quick-action tiles
+// User feedback: "Dapat Dikustomisasi: Pengguna bisa menambah atau menghapus
+//   tombol fitur... Batas Maksimal: 6... Tinggi Dinamis (Auto-fit Row)."
+//
+// Arsitektur:
+//   - TILE_DEFS: pool 17 fitur available (6 quick-actions + 11 tools)
+//   - activeTiles: array ID yang aktif (max 6), disimpan di vault.settings.activeTiles
+//   - Default: 6 quick-actions lama (backward compatible)
+//   - renderTiles(): render dinamis ke #tilesContainer + tombol "+" jika <6
+//   - Event delegation: 1 click handler di container, dispatch by data-tile
+//   - removeTile(id): hapus dari active list + re-render
+//   - openTilePicker(): bottom sheet dengan fitur yang belum aktif
+// ============================================================================
+
+const TILE_DEFS = [
+  // Quick actions (6) — ID tetap qaPrompt/qaKonteks/dll supaya backward compat
+  { id: 'qaPrompt',  label: 'Prompt',   icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/></svg>', type: 'qa', action: 'savePromptSheet' },
+  { id: 'qaKonteks', label: 'Konteks',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>', type: 'qa', action: 'saveKonteksSheet' },
+  { id: 'qaLink',    label: 'Link',     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>', type: 'qa', action: 'saveLinkSheet' },
+  { id: 'qaBundle',  label: 'Bundle',   icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>', type: 'qa', action: 'saveBundleSheet' },
+  { id: 'qaSnap',    label: 'Snapshot', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/><path d="M8.5 10.5h7M8.5 13.5h4"/></svg>', type: 'qa', action: 'snapshotFlow' },
+  { id: 'qaShot',    label: 'Shot',     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M7 3v2M17 21v-2"/></svg>', type: 'qa', action: 'doShot' },
+  // Tools (11) — klik → toolPage(tool_id)
+  { id: 'shalat',    label: 'Shalat',   icon: ICONS.mosque,   type: 'tool', action: 'toolPage', arg: 'shalat' },
+  { id: 'habits',    label: 'Habits',   icon: ICONS.heart,    type: 'tool', action: 'toolPage', arg: 'habits' },
+  { id: 'puasa',     label: 'Puasa',    icon: ICONS.moonstar, type: 'tool', action: 'toolPage', arg: 'puasa' },
+  { id: 'volume',    label: 'Volume',   icon: ICONS.vol,      type: 'tool', action: 'toolPage', arg: 'volume' },
+  { id: 'kontrol',   label: 'Kontrol',  icon: ICONS.shield,   type: 'tool', action: 'toolPage', arg: 'kontrol' },
+  { id: 'aimanage',  label: 'AI Sites', icon: ICONS.spark,    type: 'tool', action: 'toolPage', arg: 'aimanage' },
+  { id: 'cache',     label: 'Cache',    icon: ICONS.trash,    type: 'tool', action: 'toolPage', arg: 'cache' },
+  { id: 'askai',     label: 'Tanya AI', icon: ICONS.spark,    type: 'tool', action: 'toolPage', arg: 'askai' },
+  { id: 'gdrive',    label: 'Sync',     icon: ICONS.cloud,    type: 'tool', action: 'toolPage', arg: 'gdrive' },
+  { id: 'backup',    label: 'Backup',   icon: ICONS.archive,  type: 'tool', action: 'toolPage', arg: 'backup' },
+  { id: 'keys',      label: 'Pintasan', icon: ICONS.kb,       type: 'tool', action: 'toolPage', arg: 'keys' }
+];
+
+const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaKonteks', 'qaLink', 'qaBundle', 'qaSnap', 'qaShot'];
+const MAX_ACTIVE_TILES = 6;
+
+/**
+ * Get active tile IDs from vault.settings, fallback to default.
+ */
+function getActiveTiles() {
+  const s = currentVault?.settings || {};
+  let active = s.activeTiles || DEFAULT_ACTIVE_TILES;
+  // Validasi: filter ID yang tidak ada di TILE_DEFS (mis. fitur dihapus di versi baru)
+  active = active.filter(id => TILE_DEFS.some(t => t.id === id));
+  // Pastikan tidak melebihi MAX
+  if (active.length > MAX_ACTIVE_TILES) active = active.slice(0, MAX_ACTIVE_TILES);
+  return active;
+}
+
+/**
+ * Save active tile IDs to vault.settings.
+ */
+async function saveActiveTiles(ids) {
+  const vault = await getVault();
+  if (!vault.settings) vault.settings = {};
+  vault.settings.activeTiles = ids.slice(0, MAX_ACTIVE_TILES);
+  await saveVault(vault);
+  currentVault = vault;
+}
+
+/**
+ * Render quick-action tiles ke #tilesContainer.
+ * - Active tiles: button dengan icon + label + tombol "×" (hover) untuk remove
+ * - Tombol "+": muncul kalau active < MAX (untuk add fitur baru)
+ */
+function renderTiles() {
+  const container = $('#tilesContainer');
+  if (!container) return;
+  const active = getActiveTiles();
+  let html = active.map(id => {
+    const def = TILE_DEFS.find(t => t.id === id);
+    if (!def) return '';
+    return `<button class="tile" data-tile="${def.id}" title="${def.label}">
+      ${def.icon}${def.label}
+      <span class="tile-remove" data-remove="${def.id}" title="Hapus dari quick actions">×</span>
+    </button>`;
+  }).join('');
+  // Tombol "+" kalau masih ada slot
+  if (active.length < MAX_ACTIVE_TILES) {
+    html += `<button class="tile tile-add" data-action="add-tile" title="Tambah fitur ke quick actions">+ Tambah</button>`;
+  }
+  container.innerHTML = html;
+}
+
+/**
+ * Remove tile dari active list.
+ */
+async function removeTile(id) {
+  const active = getActiveTiles().filter(t => t !== id);
+  await saveActiveTiles(active);
+  renderTiles();
+  toast('✓ Dihapus dari quick actions');
+}
+
+/**
+ * Add tile ke active list.
+ */
+async function addTile(id) {
+  const active = getActiveTiles();
+  if (active.length >= MAX_ACTIVE_TILES) {
+    toast('Maksimal ' + MAX_ACTIVE_TILES + ' tombol. Hapus salah satu dulu.', false);
+    return;
+  }
+  if (active.includes(id)) {
+    toast('Sudah ada di quick actions', false);
+    return;
+  }
+  active.push(id);
+  await saveActiveTiles(active);
+  renderTiles();
+  closeSheet();
+  toast('✓ Ditambahkan ke quick actions');
+}
+
+/**
+ * Open tile picker — bottom sheet dengan fitur yang belum aktif.
+ */
+function openTilePicker() {
+  const active = getActiveTiles();
+  const available = TILE_DEFS.filter(t => !active.includes(t.id));
+  if (available.length === 0) {
+    toast('Semua fitur sudah ditambahkan', false);
+    return;
+  }
+  const body = available.map(t => `<button class="tool" data-add-tile="${t.id}" style="padding:10px"><div class="tool-ic">${t.icon}</div><div><div class="tool-n">${t.label}</div></div></button>`).join('');
+  openSheet('Tambah Quick Action', `Pilih fitur (${available.length} tersedia)`, b => {
+    b.innerHTML = `<div class="toolgrid">${body}</div>`;
+    b.querySelectorAll('[data-add-tile]').forEach(btn => {
+      btn.addEventListener('click', () => addTile(btn.dataset.addTile));
+    });
+  });
+}
+
 function toolPage(k) {
   closeSheet();
   const names = { shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
@@ -6295,13 +6435,46 @@ function bindEvents() {
     if (s.exerciseEnabled !== false) { await logExerciseDone(s); await refreshVault(); await updateHabitsStrip(); toast('🏃 Olahraga tercatat'); }
   });
 
-  // Hero tiles
-  $('#qaPrompt').addEventListener('click', savePromptSheet);
-  $('#qaKonteks').addEventListener('click', saveKonteksSheet);
-  $('#qaLink').addEventListener('click', saveLinkSheet);
-  $('#qaBundle').addEventListener('click', saveBundleSheet);
-  $('#qaSnap').addEventListener('click', snapshotFlow);
-  $('#qaShot').addEventListener('click', () => doShot());
+  // v3.12.3 (Issue #2): Hero tiles — customizable. Render dinamis + event delegation.
+  // Sebelumnya: 6 hardcoded buttons dengan ID #qaPrompt, #qaKonteks, dll.
+  // Sekarang: renderTiles() isi #tilesContainer berdasarkan vault.settings.activeTiles.
+  // Event delegation: 1 click handler di container, dispatch by data-tile.
+  renderTiles();
+  const tilesContainer = $('#tilesContainer');
+  if (tilesContainer) {
+    tilesContainer.addEventListener('click', (e) => {
+      // Cek tombol "×" remove dulu (stopPropagation supaya tidak trigger tile click)
+      const removeBtn = e.target.closest('[data-remove]');
+      if (removeBtn) {
+        e.stopPropagation();
+        removeTile(removeBtn.dataset.remove);
+        return;
+      }
+      // Cek tombol "+" add
+      const addBtn = e.target.closest('[data-action="add-tile"]');
+      if (addBtn) {
+        openTilePicker();
+        return;
+      }
+      // Tile click — dispatch by data-tile
+      const tile = e.target.closest('[data-tile]');
+      if (!tile) return;
+      const id = tile.dataset.tile;
+      const def = TILE_DEFS.find(t => t.id === id);
+      if (!def) return;
+      // Dispatch ke function yang sesuai
+      if (def.type === 'qa') {
+        if (def.action === 'savePromptSheet') savePromptSheet();
+        else if (def.action === 'saveKonteksSheet') saveKonteksSheet();
+        else if (def.action === 'saveLinkSheet') saveLinkSheet();
+        else if (def.action === 'saveBundleSheet') saveBundleSheet();
+        else if (def.action === 'snapshotFlow') snapshotFlow();
+        else if (def.action === 'doShot') doShot();
+      } else if (def.type === 'tool') {
+        toolPage(def.arg);
+      }
+    });
+  }
 
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
