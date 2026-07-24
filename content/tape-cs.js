@@ -442,6 +442,12 @@
     const allLines = getAllLines();
     const result = evaluate(allLines);
 
+    // v3.14.2 FIX: Evaluate SEMUA baris termasuk active line.
+    // Sebelumnya: active line di-skip → user tidak lihat live calculation
+    // untuk baris yang sedang diketik. User report "hitung ga jalan".
+    // Sekarang: evaluate semua, tapi hanya skip FORMATTING (innerHTML override)
+    // untuk active line — result display tetap update dengan active line termasuk.
+
     // Map line index → entry (untuk lookup saat render)
     let entryIdx = 0;
     const lineDivs = Array.from(editor.children).filter(c => c.classList.contains('rft-line'));
@@ -451,9 +457,9 @@
       const raw = div.dataset.raw || '';
       const trimmed = raw.trim();
 
-      // Skip active line (sedang editable raw)
+      // Skip FORMATTING active line (jangan override contenteditable content)
+      // TAPI tetap evaluate (sudah di-include di allLines di atas)
       if (div === activeLineEl && document.activeElement === div) {
-        // Tambah class tetapi tidak override content
         continue;
       }
 
@@ -487,7 +493,7 @@
       renderLineFromEntry(div, parsed, entry);
     }
 
-    // Update result display
+    // Update result display — sekarang INCLUDES active line karena allLines sudah punya semua
     const lastEntry = result.entries[result.entries.length - 1];
     const blockVal = lastEntry ? lastEntry.running : 0;
     resultBlock.textContent = formatNumber(blockVal);
@@ -690,14 +696,23 @@
       return;
     }
     const html = RECEIPT_HTML(result);
-    // Buat iframe tersembunyi
+    // v3.14.2 FIX: Append iframe ke document.body (BUKAN shadow DOM).
+    // Firefox punya known issue: iframe di Shadow DOM → contentWindow.document.write()
+    // bisa fail atau print blank. document.body lebih reliable.
     const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;';
-    shadow.appendChild(iframe);
-    const doc = iframe.contentWindow.document;
-    doc.open();
-    doc.write(html);
-    doc.close();
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;z-index:-1;';
+    document.body.appendChild(iframe);
+    try {
+      const doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(html);
+      doc.close();
+    } catch (e) {
+      console.warn('[RecallFox/Tape] iframe document.write failed:', e);
+      toast('Gagal mencetak: ' + e.message);
+      iframe.remove();
+      return;
+    }
     // Wait for content to load, then print
     const tryPrint = () => {
       try {
@@ -707,13 +722,13 @@
         console.warn('[RecallFox/Tape] Print failed:', e);
         toast('Gagal mencetak: ' + e.message);
       }
-      // Cleanup iframe setelah print dialog (kasih delay 1 detik)
+      // Cleanup iframe setelah print dialog (kasih delay 1.5 detik)
       setTimeout(() => {
         try { iframe.remove(); } catch (e) {}
       }, 1500);
     };
     // Beri waktu untuk render
-    setTimeout(tryPrint, 250);
+    setTimeout(tryPrint, 300);
     flashBtn(shadow.querySelector('.rft-print'), '✓');
   }
 
@@ -838,7 +853,7 @@
   border-radius:12px;
   box-shadow:0 18px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
   display:flex; flex-direction:column; overflow:hidden;
-  font-family:"IBM Plex Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  font-family:Menlo,Consolas,"Courier New",monospace;
   font-size:13px;
   opacity:0; transform:translateY(-6px) scale(.98); pointer-events:none;
   transition:opacity .15s ease, transform .15s ease;
@@ -875,7 +890,7 @@
 .rft-title{
   font-size:11px; font-weight:700; color:var(--rft-ink); letter-spacing:-.01em;
   flex:1; display:flex; align-items:center; gap:5px;
-  font-family:"Nunito","Segoe UI",-apple-system,sans-serif;
+  font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
 }
 .rft-title-ic{ font-size:13px; line-height:1; }
 .rft-actions{ display:flex; gap:1px; }
@@ -886,7 +901,7 @@
   color:var(--rft-muted); cursor:pointer; font-size:10px; line-height:1;
   display:grid; place-items:center; transition:.12s; padding:0;
 }
-.rft-btn:hover{ background:color-mix(in srgb, var(--rft-ink) 8%, transparent); color:var(--rft-ink) }
+.rft-btn:hover{ background:rgba(255,255,255,.08); color:var(--rft-ink) }
 .rft-btn:active{ transform:scale(.92) }
 .rft-btn.rft-active{ background:var(--rft-accent-bg); color:var(--rft-accent) }
 .rft-btn.rft-flash{ background:var(--rft-pos); color:#fff }
@@ -896,19 +911,10 @@
 .rft-editor{
   flex:1; overflow-y:auto; min-height:160px; max-height:380px;
   background:var(--rft-paper); color:var(--rft-ink);
-  font-family:"IBM Plex Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  font-family:Menlo,Consolas,"Courier New",monospace;
   font-size:13px; line-height:24px;
   padding:4px 14px 20px;
   outline:none;
-  /* LINED PAPER — linear-gradient tiap 24px seperti CalcTape */
-  background-image:linear-gradient(
-    to bottom,
-    transparent calc(100% - 1px),
-    color-mix(in srgb, var(--rft-line) 65%, var(--rft-paper)) calc(100% - 1px)
-  );
-  background-size:100% 24px;
-  background-origin:content-box;
-  background-attachment:local;
   font-variant-numeric:tabular-nums;
 }
 .rft-editor::-webkit-scrollbar{ width:6px }
@@ -925,9 +931,10 @@
   color:transparent;
 }
 .rft-line.activeline{
-  background:color-mix(in srgb, var(--rft-accent-bg) 75%, transparent);
+  background:var(--rft-accent-bg);
   border-left:2px solid var(--rft-accent);
   padding-left:12px;
+  opacity:0.85;
 }
 .rft-line.rft-block-sep{
   border-top:1px dashed var(--rft-line);
@@ -936,7 +943,7 @@
 
 /* Text/comment line */
 .rft-line.rft-text{
-  font-family:"Nunito","Segoe UI",-apple-system,sans-serif;
+  font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
   color:var(--rft-muted);
 }
 .rft-line.rft-text .text{ color:var(--rft-muted) }
@@ -944,7 +951,7 @@
 /* Number line */
 .rft-line.rft-number{
   color:var(--rft-ink);
-  font-family:"IBM Plex Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  font-family:Menlo,Consolas,"Courier New",monospace;
 }
 .rft-line.rft-number .op{
   color:var(--rft-muted); font-weight:700; margin-right:2px;
@@ -953,7 +960,7 @@
 .rft-line.rft-number .number.negative{ color:var(--rft-neg); }
 .rft-line.rft-number .comment{
   color:var(--rft-muted);
-  font-family:"Nunito","Segoe UI",-apple-system,sans-serif;
+  font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
   margin-left:6px;
 }
 .rft-line.rft-number .hint{
@@ -969,12 +976,12 @@
 }
 .rft-line.rft-subtotal .op{ color:var(--rft-accent); font-weight:700 }
 .rft-line.rft-subtotal .subtotal-label{
-  color:var(--rft-muted); font-family:"Nunito",sans-serif;
+  color:var(--rft-muted); font-family:-apple-system,system-ui,sans-serif;
   flex:1;
 }
 .rft-line.rft-subtotal .subtotal-val{
   color:var(--rft-pos); font-weight:700;
-  font-family:"IBM Plex Mono",monospace;
+  font-family:Menlo,Consolas,monospace;
 }
 
 /* Status bar */
@@ -982,10 +989,10 @@
   flex:none; padding:4px 10px; background:var(--rft-card);
   border-top:1px solid var(--rft-border);
   display:flex; align-items:center; gap:8px;
-  font-family:"Nunito","Segoe UI",sans-serif;
+  font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
   font-size:10px; color:var(--rft-muted);
 }
-.rft-status .rft-cursor{ font-family:"IBM Plex Mono",monospace; }
+.rft-status .rft-cursor{ font-family:Menlo,Consolas,monospace; }
 .rft-status .rft-autosave{
   margin-left:auto; display:flex; align-items:center; gap:3px;
 }
@@ -1001,16 +1008,16 @@
 .rft-block, .rft-grand{ display:flex; flex-direction:column; gap:1px; }
 .rft-grand{ margin-left:auto; text-align:right; align-items:flex-end; }
 .rft-eyebrow{
-  font-family:"Nunito",sans-serif;
+  font-family:-apple-system,system-ui,sans-serif;
   font-size:9px; font-weight:700; letter-spacing:.05em;
   color:var(--rft-accent); text-transform:uppercase;
 }
 .rft-block-val{
-  font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600;
+  font-family:Menlo,Consolas,monospace; font-size:14px; font-weight:600;
   color:var(--rft-ink); font-variant-numeric:tabular-nums;
 }
 .rft-grand-val{
-  font-family:"IBM Plex Mono",monospace; font-size:20px; font-weight:700;
+  font-family:Menlo,Consolas,monospace; font-size:20px; font-weight:700;
   color:var(--rft-pos); font-variant-numeric:tabular-nums;
   line-height:1;
 }
@@ -1021,7 +1028,7 @@
   background:var(--rft-ink); color:var(--rft-paper); padding:5px 10px; border-radius:6px;
   font-size:11px; font-weight:600; opacity:0; pointer-events:none; transition:.2s;
   white-space:nowrap; max-width:90%;
-  font-family:"Nunito",sans-serif;
+  font-family:-apple-system,system-ui,sans-serif;
 }
 .rft-toast.rft-show{ opacity:1; transform:translateX(-50%) translateY(0) }
 
@@ -1029,7 +1036,7 @@
 .rft-empty-hint{
   position:absolute; top:4px; left:14px;
   color:var(--rft-muted); opacity:.4; pointer-events:none;
-  font-family:"Nunito",sans-serif; font-size:11px;
+  font-family:-apple-system,system-ui,sans-serif; font-size:11px;
 }
 </style>
 <div class="rft-popover" role="dialog" aria-label="RecallTape calculator">
@@ -1111,7 +1118,7 @@
   *{ box-sizing:border-box; margin:0; padding:0 }
   html,body{
     background:#fff; color:#000;
-    font-family:"IBM Plex Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:Menlo,Consolas,"Courier New",monospace;
     font-size:10px; line-height:1.55;
   }
   body{ padding:4mm; max-width:72mm; margin:0 auto; }
@@ -1122,21 +1129,21 @@
     white-space:pre-wrap; word-break:break-word;
     padding:1px 0; display:flex; align-items:baseline;
   }
-  .rct-line.rct-comment{ color:#444; font-family:"Nunito",sans-serif; }
+  .rct-line.rct-comment{ color:#444; font-family:-apple-system,system-ui,sans-serif; }
   .rct-line.rct-op .rct-op{ width:8px; flex:none; font-weight:700; }
   .rct-line.rct-op .rct-amt{ flex:1; padding-left:4px; font-variant-numeric:tabular-nums; }
-  .rct-line.rct-op .rct-note{ flex:none; max-width:50%; overflow:hidden; color:#555; font-family:"Nunito",sans-serif; }
+  .rct-line.rct-op .rct-note{ flex:none; max-width:50%; overflow:hidden; color:#555; font-family:-apple-system,system-ui,sans-serif; }
   .rct-line.rct-sep{ color:#666; padding:0; letter-spacing:1px; }
   .rct-line.rct-sep.rct-double{ font-weight:700; color:#000; }
   .rct-line.rct-subtotal{ padding-top:2px; }
   .rct-line.rct-subtotal .rct-op{ width:8px; flex:none; font-weight:700; }
-  .rct-line.rct-subtotal .rct-label{ flex:1; padding-left:4px; font-family:"Nunito",sans-serif; }
+  .rct-line.rct-subtotal .rct-label{ flex:1; padding-left:4px; font-family:-apple-system,system-ui,sans-serif; }
   .rct-line.rct-subtotal .rct-val{ flex:none; font-weight:700; font-variant-numeric:tabular-nums; }
   .rct-line.rct-total{ padding-top:3px; margin-top:2px; border-top:1px solid #000; font-weight:700; font-size:11px; }
   .rct-line.rct-total .rct-op{ width:8px; flex:none; }
-  .rct-line.rct-total .rct-label{ flex:1; padding-left:4px; font-family:"Nunito",sans-serif; }
+  .rct-line.rct-total .rct-label{ flex:1; padding-left:4px; font-family:-apple-system,system-ui,sans-serif; }
   .rct-line.rct-total .rct-val{ flex:none; font-variant-numeric:tabular-nums; }
-  .rct-foot{ margin-top:4mm; padding-top:2mm; border-top:1px dashed #000; text-align:center; font-size:9px; color:#666; font-family:"Nunito",sans-serif; }
+  .rct-foot{ margin-top:4mm; padding-top:2mm; border-top:1px dashed #000; text-align:center; font-size:9px; color:#666; font-family:-apple-system,system-ui,sans-serif; }
 </style>
 </head>
 <body>
