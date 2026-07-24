@@ -98,6 +98,21 @@ browser.runtime.onInstalled.addListener(async () => {
   try { await initGDriveSync(); }
   catch (e) { console.warn('[RecallFox] onInstalled: GDriveSync init failed:', e); }
 
+  // v3.13.3 (A1 fix): Start Supabase realtime sync + alarm saat onInstalled.
+  // BUG A1: Sebelumnya alarm hanya di-start di onStartup. Setelah update addon,
+  // alarm mati sampai Firefox di-restart → sync tidak real-time.
+  // Solusi: gated isLoggedIn() (mirror onStartup pattern).
+  try {
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    const loggedIn = await isLoggedIn();
+    if (loggedIn) {
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+      await startRealtimeSync();
+      await subscribeRealtimeVault();
+      console.log('[RecallFox] onInstalled: Supabase realtime sync started (v3.13.3)');
+    }
+  } catch (e) { console.warn('[RecallFox] onInstalled: Supabase realtime start failed:', e.message); }
+
   // v0.8.36: HAPUS force-inject di onInstalled — bikin duplikat panel + loop.
   // Content script dari manifest.json akan auto-load saat tab di-refresh.
   // User cukup refresh tab YouTube/X manual setelah install.
@@ -2837,8 +2852,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_PULL — download cloud state ke local
   if (msg.type === 'SUPABASE_PULL') {
     try {
-      const { pullFromSupabase } = await import('./lib/supabase-sync.js');
-      const res = await pullFromSupabase();
+      // v3.13.3 (A2 fix): Pakai pullFromSupabaseV33 — variant yang filter
+      // deleted_at IS NULL server-side + hapus item lokal yang sudah di-hard-delete
+      // di device lain. Variant lama (pullFromSupabase) tidak ada reconciliation.
+      const { pullFromSupabaseV33 } = await import('./lib/supabase-sync.js');
+      const res = await pullFromSupabaseV33();
       sendResponse(res); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
