@@ -1675,9 +1675,136 @@ function openImageModalViewer(item, pages) {
   iconSpan.textContent = isDoc ? '📄' : '📸';
   iconSpan.style.fontSize = '16px';
 
+  // v3.14.5 (Sesi 1, Issue #2): In-place edit judul.
+  // Sebelumnya: tombol ✏️ → prompt() popup native browser (mengganggu alur kerja).
+  // Sekarang: titleSpan (display) + titleInput (edit, hidden by default).
+  // Tombol ✏️ toggle mode edit. Saat edit aktif: titleSpan hidden, titleInput visible + focus + select-all.
+  // Tombol Simpan / Batal muncul menggantikan tombol lain (newTabBtn, editTitleBtn).
   const titleSpan = document.createElement('span');
   titleSpan.textContent = title;
   titleSpan.style.cssText = 'flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fafaf9';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.value = title;
+  titleInput.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:#fafaf9;background:#0c0a09;border:1px solid #6d3df5;border-radius:6px;padding:5px 9px;outline:none;display:none;min-width:0';
+  titleInput.setAttribute('aria-label', 'Edit judul');
+  // Enter = save, Esc = cancel
+  titleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+  });
+  // Auto-grow tidak perlu — input text single line cukup.
+
+  // Edit mode state
+  let isEditing = false;
+  // Cached values for cancel
+  let originalTitle = title;
+  let originalAnnotation = '';
+
+  // Tombol Simpan (muncul saat edit mode)
+  const saveEditBtn = document.createElement('button');
+  saveEditBtn.title = 'Simpan judul & anotasi (Enter)';
+  saveEditBtn.style.cssText = 'background:#10b981;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;display:none;font-weight:600';
+  saveEditBtn.textContent = '💾 Simpan';
+  saveEditBtn.addEventListener('click', commitEdit);
+
+  // Tombol Batal (muncul saat edit mode)
+  const cancelEditBtn = document.createElement('button');
+  cancelEditBtn.title = 'Batal edit (Esc)';
+  cancelEditBtn.style.cssText = 'background:transparent;color:#a8a29e;border:1px solid #44403c;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0;display:none';
+  cancelEditBtn.textContent = 'Batal';
+  cancelEditBtn.addEventListener('click', cancelEdit);
+
+  function enterEditMode() {
+    if (isEditing) return;
+    isEditing = true;
+    originalTitle = titleInput.value;
+    originalAnnotation = annotationTextarea.value;
+    titleSpan.style.display = 'none';
+    titleInput.style.display = '';
+    titleInput.focus();
+    titleInput.select();
+    // Sembunyikan tombol lain, tampilkan Simpan/Batal
+    newTabBtn.style.display = 'none';
+    editTitleBtn.style.display = 'none';
+    saveEditBtn.style.display = '';
+    cancelEditBtn.style.display = '';
+    // Focus annotation supaya mudah tab
+    annotationArea.style.borderTopColor = '#6d3df5';
+    annotationTextarea.readOnly = false;
+    annotationTextarea.style.background = '#0c0a09';
+    annotationTextarea.style.color = '#fafaf9';
+    annotationLabel.style.display = '';
+  }
+
+  function exitEditMode() {
+    isEditing = false;
+    titleSpan.style.display = '';
+    titleInput.style.display = 'none';
+    newTabBtn.style.display = '';
+    editTitleBtn.style.display = '';
+    saveEditBtn.style.display = 'none';
+    cancelEditBtn.style.display = 'none';
+    annotationArea.style.borderTopColor = '#292524';
+    // Annotation tetap bisa di-edit inline (auto-save on blur) — tidak perlu lock
+    annotationTextarea.readOnly = false;
+    annotationTextarea.style.background = 'transparent';
+    annotationTextarea.style.color = '#d6d3d1';
+  }
+
+  async function commitEdit() {
+    const newTitle = titleInput.value.trim();
+    const newAnnot = annotationTextarea.value.trim();
+    if (!newTitle) {
+      toast('Judul tidak boleh kosong', false);
+      titleInput.focus();
+      return;
+    }
+    // Build patch
+    const patch = {};
+    if (newTitle !== item.title) patch.title = newTitle;
+    // Annotation: dokumen → source.annotationNote; screenshot → top-level annotationNote
+    const currentAnnot = item.annotationNote || item.source?.annotationNote || '';
+    if (newAnnot !== currentAnnot) {
+      if (isDoc) {
+        const newSource = { ...(item.source || {}), annotationNote: newAnnot };
+        patch.source = newSource;
+        patch.annotationNote = newAnnot; // mirror for backward compat
+      } else {
+        patch.annotationNote = newAnnot;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      // Tidak ada perubahan
+      exitEditMode();
+      return;
+    }
+    try {
+      await updateItem(item.id, patch);
+      // Update local state
+      if (patch.title) {
+        item.title = patch.title;
+        titleSpan.textContent = patch.title;
+        titleInput.value = patch.title;
+        // Update option di navigator select
+        const opt = selectEl.querySelector('option[value="' + item.id + '"]');
+        if (opt) opt.textContent = patch.title.slice(0, 35);
+      }
+      if (isDoc && patch.source) item.source = patch.source;
+      if (patch.annotationNote !== undefined) item.annotationNote = patch.annotationNote;
+      toast('✓ Judul & anotasi tersimpan');
+      exitEditMode();
+    } catch (e) {
+      toast('Gagal simpan: ' + e.message, false);
+    }
+  }
+
+  function cancelEdit() {
+    titleInput.value = originalTitle;
+    annotationTextarea.value = originalAnnotation;
+    exitEditMode();
+  }
 
   // Escape hatch button — buka di tab/viewer besar
   const newTabBtn = document.createElement('button');
@@ -1710,12 +1837,15 @@ function openImageModalViewer(item, pages) {
 
   header.appendChild(iconSpan);
   header.appendChild(titleSpan);
+  header.appendChild(titleInput);
   if (isMulti) {
     const countSpan = document.createElement('span');
     countSpan.textContent = totalPages + ' halaman';
     countSpan.style.cssText = 'font-size:11px;color:#a8a29e;flex-shrink:0';
     header.appendChild(countSpan);
   }
+  header.appendChild(saveEditBtn);
+  header.appendChild(cancelEditBtn);
   header.appendChild(newTabBtn);
   header.appendChild(closeBtn);
 
@@ -1727,6 +1857,48 @@ function openImageModalViewer(item, pages) {
   img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,0.6)';
   img.alt = title;
   body.appendChild(img);
+
+  // v3.14.5 (Sesi 1, Issue #2b): Field anotasi inline di area viewer.
+  // Sebelumnya: anotasi harus diedit via sheet terpisah (openAnnotationNoteSheet).
+  // Sekarang: textarea collapsible di antara body dan footer nav.
+  // Auto-save on blur (debounced) + tombol Simpan eksplisit di header (saat edit mode aktif).
+  const annotationArea = document.createElement('div');
+  annotationArea.style.cssText = 'flex:none;background:#1c1917;border-top:1px solid #292524;padding:8px 14px;display:flex;flex-direction:column;gap:4px;max-height:120px';
+
+  const annotationLabel = document.createElement('label');
+  annotationLabel.textContent = '📝 Anotasi / Catatan';
+  annotationLabel.style.cssText = 'font-size:10.5px;color:#a8a29e;font-weight:600;letter-spacing:.02em;display:none'; // show only in edit mode
+  annotationArea.appendChild(annotationLabel);
+
+  const annotationTextarea = document.createElement('textarea');
+  const existingAnnot = item.annotationNote || item.source?.annotationNote || '';
+  annotationTextarea.value = existingAnnot;
+  annotationTextarea.placeholder = 'Klik untuk tambah anotasi / catatan untuk gambar ini… (auto-save saat blur)';
+  annotationTextarea.rows = 2;
+  annotationTextarea.style.cssText = 'width:100%;resize:vertical;min-height:36px;max-height:100px;background:transparent;color:#d6d3d1;border:1px solid #44403c;border-radius:6px;padding:6px 9px;font-family:inherit;font-size:11.5px;line-height:1.5;outline:none;flex:1';
+  annotationTextarea.setAttribute('aria-label', 'Anotasi / catatan untuk gambar ini');
+  annotationTextarea.readOnly = false; // always editable (auto-save on blur)
+  // Auto-save on blur
+  annotationTextarea.addEventListener('blur', async () => {
+    const newAnnot = annotationTextarea.value.trim();
+    const currentAnnot = item.annotationNote || item.source?.annotationNote || '';
+    if (newAnnot === currentAnnot) return; // no change
+    try {
+      if (isDoc) {
+        const newSource = { ...(item.source || {}), annotationNote: newAnnot };
+        await updateItem(item.id, { source: newSource, annotationNote: newAnnot });
+        item.source = newSource;
+      } else {
+        await updateItem(item.id, { annotationNote: newAnnot });
+      }
+      item.annotationNote = newAnnot;
+      toast('✓ Anotasi tersimpan');
+    } catch (e) {
+      toast('Gagal simpan anotasi: ' + e.message, false);
+    }
+  });
+  annotationArea.appendChild(annotationTextarea);
+
 
   // Dots (only if multi-page)
   let dotsWrap = null;
@@ -1744,39 +1916,40 @@ function openImageModalViewer(item, pages) {
   }
 
   // Footer — nav buttons + indicator
+  // v3.14.5 FIX (Sesi 1, Issue #1 dari Google Doc): Selalu tampilkan footer nav halaman,
+  // bahkan saat single-page. Sebelumnya: isMulti=false → footer hanya tampilkan hint text
+  // → layout berubah saat user switch dokumen via dropdown item (kotak hijau).
+  // Sekarang: prev/next/ind selalu dirender, hanya disabled saat 1 halaman.
+  // Konteks: "SaAT USER PILIH DOKUMEN LAIN VIA DROPDOWN, NAV HALAMAN INTERNAL HILANG".
+  // Penyebab: dokumen baru mungkin single-page (screenshot) → footer nav halaman disembunyikan.
+  // Solusi: konsistensi layout — footer nav selalu ada, state disabled mengikuti jumlah halaman.
   const footer = document.createElement('div');
   footer.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 14px;background:#1c1917;border-top:1px solid #292524;flex:none';
 
-  let prevBtn = null, nextBtn = null, ind = null;
-  if (isMulti) {
-    prevBtn = document.createElement('button');
-    prevBtn.textContent = '◀ Prev';
-    prevBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
-    prevBtn.disabled = true;
-    prevBtn.addEventListener('click', () => { if (cur > 0) render(cur - 1); });
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = '◀ Prev';
+  prevBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
+  prevBtn.disabled = true; // disabled at page 0 (or single-page)
+  prevBtn.addEventListener('click', () => { if (cur > 0) render(cur - 1); });
 
-    ind = document.createElement('span');
-    ind.style.cssText = 'font-size:12px;min-width:70px;text-align:center;color:#d6d3d1';
+  const ind = document.createElement('span');
+  ind.style.cssText = 'font-size:12px;min-width:70px;text-align:center;color:#d6d3d1';
 
-    nextBtn = document.createElement('button');
-    nextBtn.textContent = 'Next ▶';
-    nextBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
-    nextBtn.disabled = (totalPages <= 1);
-    nextBtn.addEventListener('click', () => { if (cur < totalPages - 1) render(cur + 1); });
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = 'Next ▶';
+  nextBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px';
+  nextBtn.disabled = (totalPages <= 1);
+  nextBtn.addEventListener('click', () => { if (cur < totalPages - 1) render(cur + 1); });
 
-    footer.appendChild(prevBtn);
-    footer.appendChild(ind);
-    footer.appendChild(nextBtn);
-  } else {
-    const hint = document.createElement('span');
-    hint.style.cssText = 'font-size:11px;color:#a8a29e';
-    hint.textContent = 'Esc tutup · "↗ Tab baru" untuk layar besar';
-    footer.appendChild(hint);
-  }
+  footer.appendChild(prevBtn);
+  footer.appendChild(ind);
+  footer.appendChild(nextBtn);
+
 
   // Assemble
   card.appendChild(header);
   card.appendChild(body);
+  card.appendChild(annotationArea); // v3.14.5: anotasi inline antara body & dots
   if (dotsWrap) card.appendChild(dotsWrap);
   card.appendChild(footer);
 
@@ -1898,23 +2071,14 @@ function openImageModalViewer(item, pages) {
   navBar.appendChild(nextItemBtn);
   card.appendChild(navBar);
 
-  // v3.14.4: Edit title button in header
+  // v3.14.5: Edit title button in header — sekarang toggle in-place edit mode (bukan prompt popup).
+  // Sebelumnya (v3.14.4): pakai prompt('Edit judul:', ...) yang mengganggu alur kerja.
+  // Sekarang: panggil enterEditMode() yang menampilkan titleInput inline + tombol Simpan/Batal.
   const editTitleBtn = document.createElement('button');
-  editTitleBtn.title = 'Edit judul';
+  editTitleBtn.title = 'Edit judul & anotasi (in-place)';
   editTitleBtn.style.cssText = 'background:#292524;color:#a8a29e;border:1px solid #44403c;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0';
   editTitleBtn.textContent = '✏️';
-  editTitleBtn.addEventListener('click', async () => {
-    const newTitle = prompt('Edit judul:', item.title || '');
-    if (newTitle && newTitle.trim() && newTitle.trim() !== item.title) {
-      await updateItem(item.id, { title: newTitle.trim() });
-      item.title = newTitle.trim();
-      titleSpan.textContent = newTitle.trim();
-      // Update select option
-      const opt = selectEl.querySelector(`option[value="${item.id}"]`);
-      if (opt) opt.textContent = newTitle.trim().slice(0, 35);
-      toast('✓ Judul diubah');
-    }
-  });
+  editTitleBtn.addEventListener('click', enterEditMode);
   header.appendChild(editTitleBtn);
   // Re-append newTabBtn + closeBtn after editTitleBtn
   header.appendChild(newTabBtn);
@@ -1935,15 +2099,15 @@ function openImageModalViewer(item, pages) {
     } else {
       img.style.display = 'none';
     }
-    if (isMulti) {
-      if (ind) ind.textContent = 'Hal ' + (i + 1) + '/' + totalPages;
-      if (prevBtn) prevBtn.disabled = (i === 0);
-      if (nextBtn) nextBtn.disabled = (i === totalPages - 1);
-      if (dotsWrap) {
-        Array.from(dotsWrap.children).forEach((d, k) => {
-          d.style.background = (k === i) ? '#fafaf9' : '#44403c';
-        });
-      }
+    // v3.14.5: Selalu update nav state — single-page → "Hal 1/1" dengan tombol disabled.
+    // Sebelumnya hanya update jika isMulti, jadi saat switch ke single-page, ind tetap kosong.
+    if (ind) ind.textContent = 'Hal ' + (i + 1) + '/' + totalPages;
+    if (prevBtn) prevBtn.disabled = (i === 0);
+    if (nextBtn) nextBtn.disabled = (i === totalPages - 1);
+    if (dotsWrap) {
+      Array.from(dotsWrap.children).forEach((d, k) => {
+        d.style.background = (k === i) ? '#fafaf9' : '#44403c';
+      });
     }
   }
 
