@@ -1855,6 +1855,71 @@ function openImageModalViewer(item, pages) {
   }));
 
   card.appendChild(copyFooter);
+
+  // v3.14.4: Navigator bar — prev/next/select untuk pindah antar vault item
+  const navBar = document.createElement('div');
+  navBar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;background:#1c1917;border-top:1px solid #292524;flex:none';
+
+  // Get all screenshot+document items for navigator
+  const navItems = (currentVault.items || []).filter(i => (i.type === 'screenshot' || i.type === 'document') && !i.archived);
+  const currentNavIdx = navItems.findIndex(i => i.id === item.id);
+
+  const prevItemBtn = document.createElement('button');
+  prevItemBtn.textContent = '◀';
+  prevItemBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;flex:none';
+  prevItemBtn.disabled = (currentNavIdx <= 0);
+  if (prevItemBtn.disabled) prevItemBtn.style.opacity = '0.4';
+  prevItemBtn.addEventListener('click', () => {
+    if (currentNavIdx > 0) { closeViewer(); openScreenshotViewer(navItems[currentNavIdx - 1].id); }
+  });
+
+  const selectEl = document.createElement('select');
+  selectEl.style.cssText = 'flex:1;padding:5px 6px;background:#0E182A;color:#E8EEF7;border:1px solid #44403c;border-radius:6px;font-size:11px;min-width:0';
+  navItems.forEach((it, i) => {
+    const opt = document.createElement('option');
+    opt.value = it.id;
+    opt.textContent = (it.title || 'Untitled').slice(0, 35);
+    if (i === currentNavIdx) opt.selected = true;
+    selectEl.appendChild(opt);
+  });
+  selectEl.addEventListener('change', () => { closeViewer(); openScreenshotViewer(selectEl.value); });
+
+  const nextItemBtn = document.createElement('button');
+  nextItemBtn.textContent = '▶';
+  nextItemBtn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;flex:none';
+  nextItemBtn.disabled = (currentNavIdx >= navItems.length - 1);
+  if (nextItemBtn.disabled) nextItemBtn.style.opacity = '0.4';
+  nextItemBtn.addEventListener('click', () => {
+    if (currentNavIdx < navItems.length - 1) { closeViewer(); openScreenshotViewer(navItems[currentNavIdx + 1].id); }
+  });
+
+  navBar.appendChild(prevItemBtn);
+  navBar.appendChild(selectEl);
+  navBar.appendChild(nextItemBtn);
+  card.appendChild(navBar);
+
+  // v3.14.4: Edit title button in header
+  const editTitleBtn = document.createElement('button');
+  editTitleBtn.title = 'Edit judul';
+  editTitleBtn.style.cssText = 'background:#292524;color:#a8a29e;border:1px solid #44403c;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0';
+  editTitleBtn.textContent = '✏️';
+  editTitleBtn.addEventListener('click', async () => {
+    const newTitle = prompt('Edit judul:', item.title || '');
+    if (newTitle && newTitle.trim() && newTitle.trim() !== item.title) {
+      await updateItem(item.id, { title: newTitle.trim() });
+      item.title = newTitle.trim();
+      titleSpan.textContent = newTitle.trim();
+      // Update select option
+      const opt = selectEl.querySelector(`option[value="${item.id}"]`);
+      if (opt) opt.textContent = newTitle.trim().slice(0, 35);
+      toast('✓ Judul diubah');
+    }
+  });
+  header.appendChild(editTitleBtn);
+  // Re-append newTabBtn + closeBtn after editTitleBtn
+  header.appendChild(newTabBtn);
+  header.appendChild(closeBtn);
+
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
