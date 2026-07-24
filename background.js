@@ -2133,20 +2133,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'DOWNLOAD_SCREENSHOT') {
     // Save full image to user's Downloads folder via browser.downloads API
-    const { getScreenshotBlob } = await import('./lib/storage.js');
-    const dataUrl = await getScreenshotBlob(msg.id);
-    if (!dataUrl) { sendResponse({ ok: false, error: 'no_blob' }); return; }
-    const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
-    const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
+    // v3.13.4: Pakai getOrDownloadScreenshotBlob (cloud fallback) bukan getScreenshotBlob (local-only).
+    // Sebelumnya, screenshot yang di-capture di PWA (tidak ada di cache lokal addon) gagal
+    // download dengan "no_blob". Sekarang addon bisa download dari cloud URL.
     try {
-      const id = await browser.downloads.download({
-        url: dataUrl,
-        filename: `RecallFox/${safeName}_${ts}.${ext}`,
-        saveAs: false
-      });
-      sendResponse({ ok: true, downloadId: id }); return;
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const res = await getOrDownloadScreenshotBlob(msg.id);
+      const dataUrl = res?.ok ? res.dataUrl : null;
+      if (!dataUrl) { sendResponse({ ok: false, error: res?.error || 'no_blob' }); return; }
+      const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
+      const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
+      try {
+        const id = await browser.downloads.download({
+          url: dataUrl,
+          filename: `RecallFox/${safeName}_${ts}.${ext}`,
+          saveAs: false
+        });
+        sendResponse({ ok: true, downloadId: id }); return;
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message }); return;
+      }
     } catch (e) {
+      console.warn('[RecallFox] DOWNLOAD_SCREENSHOT exception:', e.message);
       sendResponse({ ok: false, error: e.message }); return;
     }
   }

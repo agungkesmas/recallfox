@@ -1841,8 +1841,16 @@ function openScreenshotViewer(id) {
     if (res?.ok && res.dataUrl) {
       openImageModalViewer(item, [{ dataUrl: res.dataUrl }]);
     } else {
-      toast('Gagal memuat gambar', false);
+      // v3.13.4: Tampilkan error teknis supaya user/dev bisa diagnose.
+      // Sebelumnya hanya "Gagal memuat gambar" — tidak jelas apakah no_cloud_url,
+      // http_404, filereader_failed, dll.
+      const errMsg = res?.error || 'unknown';
+      console.error('[RecallFox] openScreenshotViewer failed:', id, errMsg);
+      toast('Gagal memuat gambar: ' + errMsg, false);
     }
+  }).catch(e => {
+    console.error('[RecallFox] openScreenshotViewer sendMessage exception:', e.message);
+    toast('Gagal memuat gambar: ' + e.message, false);
   });
 }
 
