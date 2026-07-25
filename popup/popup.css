@@ -179,6 +179,9 @@ body.rf-sidebar-body .popup{
 .addbtn{margin-left:auto;display:flex;align-items:center;gap:4px;font-size:11px;font-weight:650;color:var(--primary);padding:4px 10px;border-radius:var(--r-full);background:var(--primary-soft);transition:.15s}
 .addbtn:hover{background:var(--primary-soft-2)}
 .addbtn svg{width:11px;height:11px}
+/* v3.17.3: Pastikan tombol group SELALU tampil — !important supaya tidak ter-hidden
+   oleh responsive rules (w-sm/w-xs/w-xxs) atau overflow:hidden */
+#aiGroupBtn, #addGroupBtn { display:flex !important; visibility:visible !important; opacity:1 !important; }
 /* v3.9.0 (Issue 6): Chips jadi ribbon (wrap, no horizontal scroll) + warna per kategori */
 .chips{display:flex;gap:6px;padding:0 13px 9px;flex-wrap:wrap;flex:none}
 .chips::-webkit-scrollbar{display:none}
