@@ -1826,6 +1826,33 @@ async function doInject(body, itemId) {
   }
   await refreshVault();
 }
+
+// v3.16.5: Ringkas snapshot dengan AI sebelum inject — hemat token
+async function summarizeAndInject(itemId) {
+  const it = currentVault.items.find(i => i.id === itemId);
+  if (!it) { toast('Item tidak ditemukan', false); return; }
+  if (!it.body || it.body.trim().length < 50) { toast('Snapshot terlalu pendek untuk diringkas', false); return; }
+  if (!(await isAssistantConfigured())) {
+    toast('⚠ Setup AI Assistant dulu di Pengaturan → AI Assistant', false);
+    return;
+  }
+  toast('🤖 Meringkas snapshot dengan AI...');
+  try {
+    const messages = [
+      { role: 'system', content: 'Ringkas percakapan AI berikut dalam poin-poin penting. Sertakan: topik utama, kesimpulan, dan actionable items. Maksimal 200 kata. Tulis dalam bahasa Indonesia.' },
+      { role: 'user', content: it.body }
+    ];
+    const result = await chatWithFallback(messages);
+    if (!result?.content) { toast('AI tidak mengembalikan hasil', false); return; }
+    const summary = '=== Ringkasan Snapshot: ' + (it.title || 'Snapshot') + ' ===\n' + result.content;
+    toast('✓ Ringkasan siap. Menyisipkan...');
+    await doInject(summary, itemId);
+  } catch (e) {
+    console.error('[RecallFox] summarizeAndInject failed:', e);
+    toast('Gagal meringkas: ' + e.message, false);
+  }
+}
+
 async function injectBundle(id) {
   const bundle = currentVault.bundles.find(b => b.id === id);
   if (!bundle) return;
@@ -2760,6 +2787,8 @@ function itemSheet(id) {
           return '<button class="act" data-a="toggle-active">' + ICONS.zap + '<div>' + (isActive ? '🔴 Nonaktifkan Konteks' : '🟢 Aktifkan Konteks') + '<div class="ad">' + (isActive ? 'Tidak auto-prepend saat inject prompt' : 'Auto-prepend saat inject prompt (maks 3)') + '</div></div></button>';
         })() : '')
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
+      // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
+      + (it.type === 'snapshot' ? '<button class="act" data-a="summarize">' + ICONS.spark + '<div>🤖 Ringkas dengan AI<div class="ad">Ringkas snapshot sebelum sisipkan — hemat token</div></div></button>' : '')
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
@@ -2792,6 +2821,8 @@ function itemSheet(id) {
       if (k === 'primary') { closeSheet(); primaryAction(it.id); }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
+      // v3.16.5: Ringkas snapshot dengan AI
+      else if (k === 'summarize') { closeSheet(); summarizeAndInject(it.id); }
       else if (k === 'editbundle') { closeSheet(); openBundleEditorSheet(it.id); }
       else if (k === 'fav') { toggleFav(it.id).then(() => { closeSheet(); toast(it.favorite ? '★ Dihapus dari favorit' : '★ Jadikan favorit'); }); }
       // v3.16.0 K5: Toggle konteks aktif (auto-prepend saat inject prompt)
