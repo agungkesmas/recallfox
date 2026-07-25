@@ -133,7 +133,73 @@
   // Jarak tetap: OP_GAP = '   ' (3 spasi) — supaya operator rata kiri, angka rata kanan
   // ============================================================================
 
-  const OP_GAP = '   ';  // 3 spasi — jarak tetap antara operator dan angka
+  // ============================================================================
+  // v3.14.14: FORMAT RAPI — operator rata kiri, angka rata kanan (right-aligned)
+  // ============================================================================
+  // Format baris op: "<op>   <angka right-aligned ke lebar AMT_WIDTH>  <note>"
+  //   - op: 1 char (+, -, *, /)
+  //   - OP_GAP: 3 spasi (jarak operator ↔ angka)
+  //   - AMT_WIDTH: 12 char (lebar tetap untuk angka, right-aligned)
+  //   - NOTE_GAP: 2 spasi (jarak angka ↔ keterangan)
+  //   - note: keterangan opsional
+  //
+  // Contoh:
+  //   +        1.200  Gaji
+  //   -          200  Makan
+  //   *            2  Pajak 2x
+  //   /            4  Bagi 4 orang
+  //   +           10%  PPN
+  //
+  // Baris hasil juga right-aligned:
+  //   →        1.000  📋
+  // ============================================================================
+
+  const OP_GAP = '   ';      // 3 spasi — jarak operator ↔ angka
+  const AMT_WIDTH = 12;      // lebar tetap untuk angka (right-aligned)
+  const NOTE_GAP = '  ';     // 2 spasi — jarak angka ↔ keterangan
+
+  // Format satu baris op menjadi format rapi
+  // Input: raw line seperti "+   1200  Gaji" atau "1200" atau "+10% PPN"
+  // Output: "+        1.200  Gaji" (operator + padding + angka right-aligned + note)
+  function formatOpLine(rawLine) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) return rawLine;  // baris kosong, biarkan
+
+    // Skip separator + hasil
+    if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) return rawLine;
+    if (/^[→»•]/.test(trimmed)) return rawLine;
+
+    // Parse: optional operator + angka (dengan suffix/percent) + optional note
+    const m = trimmed.match(/^([+\-*/]?)\s*([\d.,]+(?:\s*(?:juta|jt|ribu|rb|bn|k|m|b)\b)?\s*%?)\s*(.*)$/i);
+    if (!m) return rawLine;  // bukan op line (comment), biarkan apa adanya
+
+    const op = m[1] || '+';
+    const amtStr = m[2].trim().replace(/\s+/g, '');  // normalize spasi dalam amount
+    const note = (m[3] || '').trim();
+
+    // Right-align angka ke AMT_WIDTH
+    const amtPadded = amtStr.padStart(AMT_WIDTH, ' ');
+
+    // Build baris rapi
+    let line = op + OP_GAP + amtPadded;
+    if (note) line += NOTE_GAP + note;
+    return line;
+  }
+
+  // Format baris hasil (subtotal) — right-aligned juga supaya sejajar dengan baris op
+  function formatResultLine(running) {
+    const formatted = formatNumber(running);
+    const amtPadded = formatted.padStart(AMT_WIDTH, ' ');
+    return '→' + OP_GAP + amtPadded + NOTE_GAP + '📋';
+  }
+
+  // Re-format semua baris op di textarea (dipanggil saat Enter)
+  // supaya setelah user ketik manual, semua baris op jadi right-aligned rapi
+  function reformatAllOpLines(val) {
+    const lines = val.split('\n');
+    const reformatted = lines.map(ln => formatOpLine(ln));
+    return reformatted.join('\n');
+  }
 
   function handleAutoFormatKey(e) {
     // Hanya intercept single character key tanpa modifier
@@ -161,7 +227,9 @@
 
     const key = e.key;
 
-    // ===== Case 1: Ketik digit di baris kosong → auto-prefix "+   " =====
+    // ===== v3.14.14: Ketik digit di baris kosong → auto-prefix "+   " =====
+    // (angka pertama otomatis dianggap positif)
+    // Format sementara "+   1" — akan di-reformat right-aligned saat Enter
     if (/^\d$/.test(key) && trimmedCurrent === '') {
       e.preventDefault();
       const insert = '+' + OP_GAP + key;
@@ -174,7 +242,8 @@
       return;
     }
 
-    // ===== Case 2: Ketik operator (+ - * /) di akhir baris berisi → auto-newline =====
+    // ===== Ketik operator (+ - * /) di akhir baris berisi → auto-newline =====
+    // Baris baru dengan operator + jarak, cursor di akhir siap ketik angka
     if (/[+\-*/]/.test(key) && trimmedCurrent !== '') {
       e.preventDefault();
       const op = key;
@@ -188,6 +257,9 @@
       scheduleSave();
       return;
     }
+
+    // ===== v3.14.14: Ketik % di akhir angka → biarkan (percent support) =====
+    // Tidak perlu intercept — % akan di-parse evaluator sebagai percent flag
   }
 
   function handleEnterKey(e) {
@@ -223,6 +295,28 @@
     // ===== ENTER = HITUNG =====
     e.preventDefault();
 
+    // v3.14.14: Re-format semua baris op supaya right-aligned rapi
+    // (user mungkin ketik manual dengan spasi acak, kita normalize)
+    const reformattedVal = reformatAllOpLines(val);
+    if (reformattedVal !== val) {
+      textarea.value = reformattedVal;
+      // Update posisi cursor supaya tetap di akhir baris saat ini
+      // (karena reformat bisa ubah panjang baris, hitung ulang)
+      const newLines = reformattedVal.split('\n');
+      const currentLineIdxNew = val.slice(0, pos).split('\n').length - 1;
+      let newPos = 0;
+      for (let i = 0; i <= currentLineIdxNew; i++) {
+        newPos += newLines[i].length + 1;  // +1 for \n
+      }
+      // newPos sekarang di awal baris baru (setelah \n baris saat ini)
+      // Kita mau cursor di akhir baris saat ini (sebelum \n)
+      newPos = newPos - 1;  // back up ke sebelum \n
+      textarea.setSelectionRange(newPos, newPos);
+      // Update val + pos untuk langkah berikutnya
+      val = textarea.value;
+      pos = newPos;
+    }
+
     // Ambil semua baris dari awal sampai baris saat ini (INCLUSIVE)
     const allLines = val.split('\n');
     const currentLineIdx = val.slice(0, pos).split('\n').length - 1;
@@ -243,10 +337,9 @@
     const result = evaluate(opLinesForEval);
     const running = result.grandTotal;
 
-    // Sisipkan: separator + baris hasil + baris baru kosong
-    const formatted = formatNumber(running);
+    // v3.14.14: Sisipkan separator + baris hasil (right-aligned) + baris baru kosong
     const separator = '─────';
-    const resultLine = '→  ' + formatted + '  📋';
+    const resultLine = formatResultLine(running);
     const insert = '\n' + separator + '\n' + resultLine + '\n';
 
     // Insert di posisi cursor (yang ada di akhir baris saat ini)
@@ -740,7 +833,7 @@
       </button>
     </div>
   </div>
-  <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, operator auto-format.
+  <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, operator auto-format. Saat Enter, angka jadi right-aligned rapi.
 
 Contoh:
 1. Ketik 1200 → otomatis jadi:
@@ -754,22 +847,35 @@ Contoh:
 +   1200
 -   200
 
-4. Tekan Enter → eksekusi + garis hasil:
-+   1200
--   200
+4. Tekan Enter → eksekusi + angka right-aligned rapi:
++        1.200
+-          200
 ─────
-→  1.000,00  📋
+→        1.000  📋
 
 5. Lanjut ketik / (bagi) → baris baru:
 /   
 
-Keterangan? Ketik spasi setelah angka:
-+   1200  Gaji
--   200   Makan
+6. Ketik 2 → Enter:
++        1.200
+-          200
+─────
+→        1.000  📋
+/            2
+─────
+→          500  📋
+
+PERCENT (semua operator support):
++   10%   ← tambah 10% dari running
+-   10%   ← kurang 10% dari running
+*   50%   ← kalikan dengan 50% (= 0.5)
+/   25%   ← bagi dengan 25% (= 0.25)
+
+KETERANGAN (spasi setelah angka):
++        1.200  Gaji
+-          200  Makan
 
 Suffix: k/rb/jt/juta
-Percent: +10% PPN
-
 Enter = hitung otomatis
 Double-click baris hasil (→) untuk copy nilai"></textarea>
   <div class="rft-status">
