@@ -3806,19 +3806,85 @@ async function snapshotFlow() {
   toast('Menganalisis percakapan…');
   try {
     const res = await browser.runtime.sendMessage({ type: 'QUICK_SNAPSHOT' });
-    if (res?.ok) {
-      await refreshVault();
-      toast('📸 Snapshot tersimpan ✓');
-      if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 800);
+    if (res?.ok && res.body) {
+      // v3.16.1: Tampilkan modal preview di popup context (bukan di tab).
+      // Sebelumnya: QUICK_SNAPSHOT buka modal di tab, popup close terlalu cepat → user tidak lihat.
+      // Sekarang: popup handle modal + save → user pasti lihat di sidebar.
+      openSnapshotPreviewSheet(res);
+    } else if (res?.ok && !res.body) {
+      toast('Tidak ada percakapan terdeteksi di halaman ini', false);
     } else {
       const err = res?.error || 'gagal';
       let msg = 'Gagal';
       if (err === 'no_active_tab') msg = 'Tidak ada tab aktif';
+      else if (err === 'not_ai_domain') msg = 'Bukan halaman AI (buka ChatGPT/Claude/Gemini/dll)';
       else if (err.includes('Could not establish connection')) msg = 'Bukan halaman AI';
       else msg = 'Error: ' + String(err).slice(0, 40);
       toast(msg, false);
     }
   } catch (e) { toast('Error: ' + e.message, false); }
+}
+
+// v3.16.1: Modal preview snapshot di popup context — user isi title/tags, klik save.
+// S5: Tampilkan notifikasi "N pesan · dipotong?" kalau ada pesan yang ter-truncate.
+// S6: Debug info dipindah ke console.debug (tidak ditampilkan ke user).
+function openSnapshotPreviewSheet(data) {
+  const body = data.body || '';
+  const msgCount = data.snapshotMessageCount || 0;
+  const domain = data.snapshotDomain || '';
+  const pageTitle = data.pageTitle || '';
+  const url = data.url || '';
+  const hasContent = body.length > 0;
+  const summary = hasContent
+    ? (body.slice(0, 400) + (body.length > 400 ? '...' : ''))
+    : '(Tidak ada percakapan terdeteksi)';
+  // v3.16.1 S5: Notifikasi potong — kalau body mendekati 50 pesan atau ada truncation
+  const MAX_MSGS = 50;
+  const isTruncated = msgCount >= MAX_MSGS || body.includes('...[truncated]');
+  const truncNote = isTruncated
+    ? '<div class="hintbox" style="font-size:11px;color:#92400e;background:#fef3c7;padding:6px 8px;border-radius:4px;margin-top:6px">⚠️ ' + (msgCount >= MAX_MSGS ? 'Hanya ' + MAX_MSGS + ' pesan terakhir diambil' : 'Beberapa pesan dipotong') + ' — percakapan panjang mungkin tidak lengkap</div>'
+    : '';
+  // v3.16.1 S6: Debug info ke console, bukan UI
+  if (data.debug) console.debug('[RecallFox] Snapshot debug:', data.debug);
+
+  const titleGuess = (pageTitle || 'Snapshot ' + new Date().toLocaleString('id-ID')).slice(0, 80);
+  openSheet('📸 Snapshot Percakapan', domain + (msgCount ? ' · ' + msgCount + ' pesan' : ''), b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div class="hintbox" style="font-size:11px;line-height:1.55">Sumber: <b>' + esc(pageTitle) + '</b><br>Domain: ' + esc(domain) + ' · ' + msgCount + ' pesan</div>'
+      + truncNote
+      + '<div><label>Judul</label><input class="f" id="snapTitle" value="' + esc(titleGuess) + '"></div>'
+      + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label><input class="f" id="snapTags" placeholder="debug, chatgpt, ..." value="snapshot, ' + esc(domain) + '"></div>'
+      + '<div><label>Preview (400 char pertama)</label><div class="hintbox" style="font-size:11px;max-height:120px;overflow-y:auto;white-space:pre-wrap">' + esc(summary) + '</div></div>'
+      + '<div><label>Catatan <span class="field-hint">(opsional)</span></label><textarea class="f" id="snapNote" rows="2" placeholder="Catatan tambahan..."></textarea></div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="snapCancel">Batal</button>'
+      + '<button class="btn btn-p" id="snapSave">' + ICONS.check + 'Simpan Snapshot</button></div></div>';
+    b.querySelector('#snapCancel').addEventListener('click', closeSheet);
+    b.querySelector('#snapSave').addEventListener('click', async () => {
+      const title = b.querySelector('#snapTitle').value.trim() || 'Snapshot';
+      const tags = b.querySelector('#snapTags').value.split(',').map(s => s.trim()).filter(Boolean);
+      const note = b.querySelector('#snapNote').value.trim();
+      closeSheet();
+      toast('📸 Menyimpan snapshot...');
+      try {
+        const res = await browser.runtime.sendMessage({
+          type: 'CAPTURE_SNAPSHOT',
+          title, body, tags,
+          url, pageTitle,
+          snapshotDomain: domain,
+          snapshotMessageCount: msgCount,
+          note
+        });
+        if (res?.ok) {
+          await refreshVault();
+          toast('📸 Snapshot tersimpan ✓ · ' + msgCount + ' pesan');
+        } else {
+          toast('Gagal simpan: ' + (res?.error || 'unknown'), false);
+        }
+      } catch (e) {
+        toast('Gagal simpan: ' + e.message, false);
+      }
+    });
+  });
 }
 async function doShot(mode) {
   // mode: 'entire' | 'visible' | 'selection' | 'upload' | undefined (shows picker)

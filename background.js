@@ -1416,12 +1416,15 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'QUICK_SNAPSHOT') {
-    // Sent from popup quick-action button — open snapshot modal on active tab
+    // v3.16.1: QUICK_SNAPSHOT sekarang return conversation data ke popup (bukan buka modal di tab).
+    // Popup yang handle modal preview (lebih reliable — user pasti lihat di sidebar).
+    // Sebelumnya: QUICK_SNAPSHOT → OPEN_SNAPSHOT_MODAL di tab, tapi popup close terlalu cepat
+    // → user tidak lihat modal → kira snapshot gagal.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
-      await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-      sendResponse({ ok: true }); return;
+      const res = await browser.tabs.sendMessage(tab.id, { type: 'EXTRACT_SNAPSHOT' });
+      sendResponse(res || { ok: false, error: 'no_response' }); return;
     } catch (e) {
       // Content script not loaded — try to inject it
       try {
@@ -1434,8 +1437,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           files: ['content/content.css']
         });
         await new Promise(r => setTimeout(r, 500));
-        await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-        sendResponse({ ok: true }); return;
+        const res = await browser.tabs.sendMessage(tab.id, { type: 'EXTRACT_SNAPSHOT' });
+        sendResponse(res || { ok: false, error: 'no_response' }); return;
       } catch (e2) {
         sendResponse({ ok: false, error: e2.message }); return;
       }
