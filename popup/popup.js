@@ -76,6 +76,10 @@ async function setGuardianFloatingEnabled(enabled) {
 let currentVault = null;
 let currentNotes = [];
 let currentChip = 'all';
+// v3.16.7 #5: Bundle scope — filter vault by bundle (workspace proyek)
+// Kalau set, visibleItems() hanya tampilkan item yang jadi anggota bundle ini.
+// User bisa klik "👁 Lihat anggota" di bundle card untuk set scope.
+let currentBundleScope = null;  // bundle id atau null
 let currentQuery = '';
 let currentView = 'home';
 let editingId = null;
@@ -1414,6 +1418,18 @@ function visibleItems() {
   } else {
     vi = items.filter(i => i.type === currentChip && !i.archived);
   }
+  // v3.16.7 #5: Bundle scope — filter hanya item yang jadi anggota bundle terpilih
+  // Ini mengubah Bundle menjadi "workspace proyek" — user bisa lihat vault scoped ke proyek tertentu.
+  if (currentBundleScope) {
+    const bundle = currentVault?.bundles?.find(b => b.id === currentBundleScope);
+    if (bundle) {
+      const memberIds = new Set(bundle.itemIds || []);
+      vi = vi.filter(i => memberIds.has(i.id));
+    } else {
+      // Bundle sudah tidak ada — reset scope
+      currentBundleScope = null;
+    }
+  }
   if (currentQuery && !currentQuery.startsWith('>')) {
     const q = currentQuery.toLowerCase();
     vi = vi.filter(i => searchableTextFor(i).indexOf(q) >= 0);
@@ -1427,12 +1443,26 @@ function renderList() {
     return;
   }
   list.style.display = '';
+  // v3.16.7 #5: Scope banner — tampilkan kalau lagi scoped ke bundle
+  let scopeBanner = '';
+  if (currentBundleScope) {
+    const bundle = currentVault?.bundles?.find(b => b.id === currentBundleScope);
+    if (bundle) {
+      const memberCount = (bundle.itemIds || []).length;
+      scopeBanner = '<div class="scope-banner" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--primary-soft,rgba(99,102,241,.1));border:1px solid var(--primary,rgba(99,102,241,.3));border-radius:8px;margin-bottom:8px;font-size:11px;color:var(--text-2)">' +
+        '<span style="font-size:14px">👁</span>' +
+        '<span style="flex:1">Scope: <b style="color:var(--text)">' + esc(bundle.name || 'Bundle') + '</b> · ' + memberCount + ' anggota</span>' +
+        '<button id="exitScopeBtn" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:11px;font-weight:600;padding:4px 8px;border-radius:4px">✕ Exit scope</button>' +
+        '</div>';
+    }
+  }
   const vi = visibleItems();
   if (!vi.length) {
-    list.innerHTML = '<div class="empty"><div class="big">🦊</div>Tidak ada item di filter ini.<br><span style="font-size:11px">Blok teks di halaman → klik kanan → Simpan ke RecallFox.</span></div>';
+    list.innerHTML = scopeBanner + '<div class="empty"><div class="big">🦊</div>' + (currentBundleScope ? 'Bundle ini kosong atau anggotanya diarsipkan.' : 'Tidak ada item di filter ini.') + '<br><span style="font-size:11px">' + (currentBundleScope ? 'Tambah item ke bundle ini dari halaman utama.' : 'Blok teks di halaman → klik kanan → Simpan ke RecallFox.') + '</span></div>';
+    wireExitScope();
     return;
   }
-  list.innerHTML = vi.map(function (it) {
+  list.innerHTML = scopeBanner + vi.map(function (it) {
     const T = TYPE[it.type] || { label: it.type, icon: '' };
     const tagsStr = Array.isArray(it.tags) ? it.tags.join(', ') : (it.tags || '');
     const vars = it.body ? extractVariables(it.body).length : 0;
@@ -1451,8 +1481,11 @@ function renderList() {
         + '<button class="link-mini-btn" data-link-action="open" title="Buka link di tab baru">' + ICONS.spark + '</button>'
         + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
     } else if (it.type === 'bundle') {
+      // v3.16.7 #5: Tambah tombol "Lihat anggota" untuk scope vault ke bundle (workspace proyek)
+      const memberCount = (it._bundle?.itemIds || []).length;
       ctaHtml =
         '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin ↵</span>'
+        + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle (scope ke proyek ini)">👁</button>' : '')
         + (currentAiDomain ? '<button class="link-mini-btn" data-bundle-action="inject" title="Sisipkan semua item ke chat AI">' + ICONS.zap + '</button>' : '');
     } else if (it.type === 'screenshot') {
       ctaHtml =
@@ -1528,6 +1561,8 @@ function renderList() {
       + '</div></div>';
   }).join('');
   bindItemClicks();
+  // v3.16.7 #5: Wire exit scope button (kalau scope banner ada)
+  wireExitScope();
   // v3.11.11 (Issue #1) + v3.11.12 (Sesi 11, Issue #2): Bind batch checkbox handlers.
   // V3.11.12: HANYA bind change handler untuk checkbox itself.
   // Click handler untuk toggle via item body dipindah ke bindItemClicks (return early
@@ -1597,6 +1632,16 @@ function bindItemClicks() {
         const it = findItem(el.dataset.id);
         if (!it) return;
         if (action === 'copy') { injectBundle(it.id); return; }
+        else if (action === 'scope') {
+          // v3.16.7 #5: Scope vault ke bundle ini (workspace proyek)
+          currentBundleScope = it.id;
+          currentChip = 'all';  // reset chip supaya semua tipe tampil
+          currentQuery = '';
+          $('#search').value = '';
+          renderVault();
+          toast('👁 Scope: ' + (it.title || 'Bundle') + ' · ' + (it._bundle?.itemIds?.length || 0) + ' anggota');
+          return;
+        }
         else if (action === 'inject') {
           // Sisipkan semua teks item bundle ke chat AI
           // v3.10.2 (Issue 3 + 5 fix): Sertakan juga catatan (bundle.noteIds)
@@ -2770,6 +2815,18 @@ function openAnnotationNoteSheet(id) {
   });
 }
 function renderVault() { renderChips(); renderList(); }
+
+// v3.16.7 #5: Wire exit scope button — clear bundle scope + re-render
+function wireExitScope() {
+  const btn = $('#exitScopeBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      currentBundleScope = null;
+      renderVault();
+      toast('✕ Scope direset — tampilkan semua item');
+    });
+  }
+}
 
 // ============ Item sheet (⋯ menu) ============
 function itemSheet(id) {
