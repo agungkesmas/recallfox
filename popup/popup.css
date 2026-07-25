@@ -180,19 +180,7 @@ body.rf-sidebar-body .popup{
 .addbtn:hover{background:var(--primary-soft-2)}
 .addbtn svg{width:11px;height:11px}
 /* v3.17.6: Vault toggle button — responsive (text di sidebar lebar, icon-only di sempit)
-   Auto/Grup tombol: sidebar lebar = 🪄 Auto, sidebar sempit = 🪄 (icon only + tooltip) */
-.vault-toggle-btn{flex:none;display:flex;align-items:center;justify-content:center;gap:3px;font-size:11px;font-weight:650;color:var(--primary);padding:4px 8px;border-radius:var(--r-full);background:var(--primary-soft);transition:.15s;cursor:pointer;border:none;line-height:1}
-.vault-toggle-btn:hover{background:var(--primary-soft-2)}
-.vault-toggle-btn:active{transform:scale(.92)}
-.vault-toggle-btn .vtb-icon{font-size:12px;line-height:1}
-.vault-toggle-btn .vtb-label{font-size:11px;font-weight:600}
-/* Sidebar sempit (≤310px): hide label, jadi icon-only */
-#popup.w-sm .vault-toggle-btn .vtb-label,
-#popup.w-xs .vault-toggle-btn .vtb-label,
-#popup.w-xxs .vault-toggle-btn .vtb-label{display:none}
-#popup.w-sm .vault-toggle-btn,
-#popup.w-xs .vault-toggle-btn,
-#popup.w-xxs .vault-toggle-btn{padding:4px;width:24px;height:24px;border-radius:50%}
+/* v3.18.0: vault-toggle-btn DIHAPUS — semua tombol pakai class .addbtn (text selalu visible) */
 /* v3.17.7: Hapus duplicate body.rf-sidebar-body.w-sm — w-sm di-set di #popup, bukan body */
 /* v3.17.4: Unparenting drop zone — muncul saat drag item dari folder */
 .vault-root-dropzone{padding:10px 14px;margin:6px 0;border:2px dashed var(--primary);border-radius:var(--r-md);background:var(--primary-soft);color:var(--primary);font-size:11px;font-weight:600;text-align:center;transition:.15s;cursor:default}

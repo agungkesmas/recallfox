@@ -24,7 +24,7 @@ import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
 import { AI_TOOLS, groupByRegion, matchCurrentTool, getEffectiveTools, getVisibleTools } from '../lib/ai-tools.js';
 import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
 import { getNextPrayerIncludingSunnah, getLastPassedPrayer, getSunnahPrayers, formatCountdown, to12Hour } from '../lib/salahtime.js';
-import { buildTree, createGroupItem, moveToGroup, aiAutoGroup, getParentId, getIsGroup, setIsGroup, setParentId } from '../lib/vault-tree.js';
+import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGroup } from '../lib/vault-tree.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
@@ -88,8 +88,8 @@ let editingNoteId = null;
 let pendingInjectItem = null;
 let editorToppings = [];
 // v3.17.1: Tree/grouping state
-let expandedGroupIds = [];  // array of group ID yang expanded
-let draggedItemId = null;   // item ID yang sedang di-drag
+let expandedGroupIds = [];  // v3.18.0: group IDs yang expanded (persisted ke vault.settings)
+let draggedItemId = null;   // v3.18.0: item ID yang sedang di-drag
 let allToppingsCache = [];
 let prayerPendingLocation = null;
 let prayerGeocodeTimer = null;
@@ -1527,90 +1527,78 @@ function visibleItems() {
   return vi;
 }
 
-// ============================================================================
-// v3.17.1: Tree/grouping render
-// ============================================================================
+// v3.18.0: Tree/grouping — START FRESH. Simple, clean, follows wireframe.
+// Folder tree HANYA di kategori spesifik (Prompt, Link, Media, dll). "Semua" = flat.
 
-// Render vault list sebagai tree (groups + items).
-// Pakai buildTree dari lib/vault-tree.js.
-// Group → collapsible header (▶/▼ + nama + count). Children → indent 16px.
-// Item → render seperti biasa (via renderItemHtml) + draggable.
-function renderTreeHtml(items) {
-  // v3.17.6: Folder/group HANYA tampil di tab kategori spesifik (Prompt/Link/Media/dll).
-  // Di tab "Semua" → semua item flat (no group), supaya tidak campur.
-  // Di tab "Arsip" → juga flat (no group).
-  // categoryFilter = null kalau "Semua"/"Arsip" → buildTree tidak filter, TAPI kita
-  //   juga pass showGroups=false supaya group tidak dirender (flat list).
-  // categoryFilter = 'link' (mis.) → buildTree filter + tampilkan group yang berisi Link.
-  const isSpecificCategory = (currentChip && currentChip !== 'all' && currentChip !== 'archive');
-  const categoryFilter = isSpecificCategory ? currentChip : null;
-  const showGroups = isSpecificCategory;  // group hanya tampil di kategori spesifik
-  const nodes = buildTree(items, expandedGroupIds, categoryFilter, showGroups);
-  const html = [];
+// ===== renderFlatList: generate HTML untuk vault list =====
+// "Semua"/"Arsip" → flat, group items SKIP
+// Kategori spesifik → tree dengan groups + connectors
+function renderFlatList(items) {
+  const isSpecificCategory = currentChip !== 'all' && currentChip !== 'archive';
+  if (!isSpecificCategory) {
+    // Flat mode — "Semua"/"Arsip". Group items TIDAK tampil.
+    return items.filter(it => !isGroupItem(it)).map(it => renderItemHtml(it, 0, '')).join('');
+  }
+  // Tree mode — kategori spesifik
+  const categoryFilter = currentChip === 'screenshot' ? 'screenshot' : currentChip;
+  const nodes = buildTree(items, expandedGroupIds, categoryFilter, true);
+  let html = '';
   for (const node of nodes) {
     if (node.kind === 'group') {
-      html.push(renderGroupHeaderHtml(node));
+      html += renderGroupHtml(node);
       if (node.isExpanded) {
-        // v3.17.5: Tree connector lines — ├── untuk middle, └── untuk last child
-        const children = node.children;
-        for (let i = 0; i < children.length; i++) {
-          const isLast = (i === children.length - 1);
-          const connector = isLast ? '└──' : '├──';
-          html.push(renderItemHtml(children[i].item, 16, connector));
-        }
+        node.children.forEach((child, i) => {
+          const isLast = i === node.children.length - 1;
+          const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ';
+          html += renderItemHtml(child.item, 1, connector);
+        });
       }
     } else {
-      html.push(renderItemHtml(node.item, 0, null));
+      html += renderItemHtml(node.item, 0, '');
     }
   }
-  return html.join('');
+  return html;
 }
 
-function renderGroupHeaderHtml(groupNode) {
-  const g = groupNode.group;
-  const chevron = groupNode.isExpanded ? '▼' : '▶';
-  const count = groupNode.childCount;
-  return '<div class="item item-group" data-group-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true">'
-    + '<div class="item-ic" style="background:var(--surface-2)">📁</div>'
-    + '<div class="item-main">'
-    + '<div class="item-title"><span class="group-chevron" style="cursor:pointer;margin-right:6px;font-size:10px;color:var(--muted)">' + chevron + '</span>' + esc(g.title) + ' <span class="group-count" style="font-size:10px;color:var(--muted);background:var(--surface-2);padding:1px 6px;border-radius:6px">' + count + '</span></div>'
-    + '<div class="item-meta">Grup · ' + count + ' item</div>'
-    + '</div>'
-    + '<div class="item-cta">'
-    + '<button class="morebtn" data-more="' + g.id + '" title="Aksi lainnya">' + ICONS.dots + '</button>'
-    + '</div></div>';
+// ===== renderGroupHtml: group header dengan chevron + count =====
+function renderGroupHtml(node) {
+  const g = node.item;
+  const chevron = node.isExpanded ? '\u25BC' : '\u25B6';
+  const count = node.children.length;
+  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0">'
+    + '<span style="font-size:12px;margin-right:4px;flex-shrink:0">' + chevron + '</span>'
+    + '<span style="font-size:16px;margin-right:6px">\uD83D\uDCC1</span>'
+    + '<span style="flex:1;font-weight:600;font-size:13px">' + esc(g.title) + '</span>'
+    + '<span style="font-size:10px;color:var(--muted);background:var(--surface);padding:1px 6px;border-radius:8px">' + count + '</span>'
+    + '</div>';
 }
 
-// Render item biasa (extract dari kode lama). indent = padding-left dalam px.
+// ===== renderItemHtml: generate HTML untuk satu item (dengan indent + connector) =====
 function renderItemHtml(it, indent, connector) {
   const T = TYPE[it.type] || { label: it.type, icon: '' };
   const tagsStr = Array.isArray(it.tags) ? it.tags.join(', ') : (it.tags || '');
   const vars = it.body ? extractVariables(it.body).length : 0;
-  const fav = it.favorite ? '<span class="fav">★</span>' : '';
-  const arch = it.archived ? '<span class="fav" title="Diarsipkan" style="color:var(--muted)">📦</span>' : '';
+  const fav = it.favorite ? '<span class="fav">\u2605</span>' : '';
+  const arch = it.archived ? '<span class="fav" title="Diarsipkan" style="color:var(--muted)">\uD83D\uDCE6</span>' : '';
   const uses = it.useCount || it.uses || 0;
   let ctaHtml = '';
   if (it.type === 'link') {
-    ctaHtml =
-      '<span class="cta-pill" data-link-action="copy">' + ICONS.copy + 'Salin ↵</span>'
+    ctaHtml = '<span class="cta-pill" data-link-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
       + '<button class="link-mini-btn" data-link-action="open" title="Buka link di tab baru">' + ICONS.spark + '</button>'
       + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
   } else if (it.type === 'bundle') {
     const memberCount = (it._bundle?.itemIds || []).length;
-    ctaHtml =
-      '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin ↵</span>'
-      + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle (scope ke proyek ini)">👁</button>' : '')
+    ctaHtml = '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
+      + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '')
       + (currentAiDomain ? '<button class="link-mini-btn" data-bundle-action="inject" title="Sisipkan semua item ke chat AI">' + ICONS.zap + '</button>' : '');
   } else if (it.type === 'screenshot') {
-    ctaHtml =
-      '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat ↵</span>'
+    ctaHtml = '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
   } else if (it.type === 'document') {
-    ctaHtml =
-      '<span class="cta-pill" data-shot-action="view">📄 Lihat ↵</span>'
+    ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
   } else {
-    const cta = currentAiDomain ? ICONS.zap + 'Sisipkan ↵' : ICONS.copy + 'Salin ↵';
+    const cta = currentAiDomain ? ICONS.zap + 'Sisipkan \u21B5' : ICONS.copy + 'Salin \u21B5';
     ctaHtml = '<span class="cta-pill">' + cta + '</span>';
   }
   let batchCheckboxHtml = '';
@@ -1620,45 +1608,38 @@ function renderItemHtml(it, indent, connector) {
   }
   const docPageCount = (it.type === 'document' && Array.isArray(it.source?.pages)) ? it.source.pages.length : 0;
   const docBadge = docPageCount > 1
-    ? ' <span title="' + docPageCount + ' halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 ' + docPageCount + ' hal</span>'
-    : (it.type === 'document' ? ' <span title="1 halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 1 hal</span>' : '');
+    ? ' <span title="' + docPageCount + ' halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">\uD83D\uDCC4 ' + docPageCount + ' hal</span>'
+    : (it.type === 'document' ? ' <span title="1 halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">\uD83D\uDCC4 1 hal</span>' : '');
   let snapshotBadge = '';
   if (it.type === 'snapshot') {
     const parts = [];
     if (it.snapshotDomain) parts.push(esc(it.snapshotDomain));
     if (it.snapshotMessageCount) parts.push(it.snapshotMessageCount + ' pesan');
-    if (parts.length > 0) {
-      snapshotBadge = '<span title="Snapshot dari ' + esc(it.snapshotDomain || '?') + '" style="font-size:10px;color:var(--muted)">📸 ' + parts.join(' · ') + '</span>';
-    }
+    if (parts.length > 0) snapshotBadge = '<span title="Snapshot dari ' + esc(it.snapshotDomain || '?') + '" style="font-size:10px;color:var(--muted)">\uD83D\uDCF8 ' + parts.join(' \u00B7 ') + '</span>';
   }
   let contextPurposeBadge = '';
   if (it.type === 'context' && it.contextPurpose && it.contextPurpose !== 'custom') {
     const purposeLabels = { system: 'Sistem', project: 'Proyek', domain: 'Domain', reference: 'Referensi', instruction: 'SOP' };
     const label = purposeLabels[it.contextPurpose] || it.contextPurpose;
-    contextPurposeBadge = '<span title="Tujuan: ' + esc(label) + '" style="font-size:10px;color:var(--muted)">📋 ' + esc(label) + '</span>';
+    contextPurposeBadge = '<span title="Tujuan: ' + esc(label) + '" style="font-size:10px;color:var(--muted)">\uD83D\uDCCB ' + esc(label) + '</span>';
   }
   let activeContextBadge = '';
   if (it.type === 'context') {
     const activeIds = (currentVault?.settings?.activeContextIds) || [];
-    if (activeIds.includes(it.id)) {
-      activeContextBadge = ' <span title="Konteks aktif — auto-prepend saat inject prompt" style="font-size:10px;color:#10b981">🟢</span>';
-    }
+    if (activeIds.includes(it.id)) activeContextBadge = ' <span title="Konteks aktif" style="font-size:10px;color:#10b981">\uD83D\uDFE2</span>';
   }
-  // v3.17.5: Tree connector lines — tampilkan ├── atau └── di depan item child
-  const connectorHtml = connector
-    ? '<span class="tree-connector" style="flex:none;color:var(--muted);font-family:monospace;font-size:11px;margin-right:2px;user-select:none">' + connector + '</span>'
-    : '';
-  const indentStyle = indent > 0 ? ' style="padding-left:' + (8 + indent - 16) + 'px"' : '';
+  const indentStyle = indent > 0 ? ' style="padding-left:' + (10 + indent * 16) + 'px"' : '';
+  const connectorSpan = connector ? '<span style="font-size:10px;color:var(--muted);flex-shrink:0;width:24px">' + connector + '</span>' : '';
   return '<div class="item" data-id="' + it.id + '" tabindex="0" draggable="true"' + indentStyle + '>'
     + batchCheckboxHtml
-    + connectorHtml
+    + connectorSpan
     + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
     + '<div class="item-main">'
-    + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
+    + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">\u2699\uFE0F</span>' : '') + '</div>'
     + '<div class="item-meta">' + T.label
-    + (snapshotBadge ? ' · ' + snapshotBadge : '')
-    + (contextPurposeBadge ? ' · ' + contextPurposeBadge : '')
-    + ' · ' + esc(tagsStr) + (uses ? ' · <span class="uses">' + uses + '× dipakai</span>' : '') + '</div>'
+    + (snapshotBadge ? ' \u00B7 ' + snapshotBadge : '')
+    + (contextPurposeBadge ? ' \u00B7 ' + contextPurposeBadge : '')
+    + ' \u00B7 ' + esc(tagsStr) + (uses ? ' \u00B7 <span class="uses">' + uses + '\u00D7 dipakai</span>' : '') + '</div>'
     + '</div>'
     + '<div class="item-cta">'
     + ctaHtml
@@ -1666,197 +1647,144 @@ function renderItemHtml(it, indent, connector) {
     + '</div></div>';
 }
 
-// Wire tree events: expand/collapse group + DnD
-function wireTreeEvents() {
-  // v3.17.4: Unparenting drop zone — element reference
+// ===== wireVaultEvents: DnD + expand/collapse. Bind SEKALI dengan guard. =====
+function wireVaultEvents() {
+  const listEl = $('#list');
+  if (!listEl) return;
+  if (listEl.dataset.vaultEventsBound === '1') return;
+  listEl.dataset.vaultEventsBound = '1';
+
   const dropzoneEl = $('#vaultRootDropzone');
 
-  // Helper: cek apakah item yang di-drag punya parentId (berada di dalam folder)
-  // Kalau ya, tampilkan drop zone untuk unparenting
-  function showDropzoneIfApplicable() {
-    if (!dropzoneEl || !draggedItemId || !currentVault) return;
-    const item = currentVault.items.find(i => i.id === draggedItemId);
-    if (item && getParentId(item)) {
-      // Item ada di dalam folder → tampilkan drop zone
-      dropzoneEl.style.display = 'block';
+  // Expand/collapse group header
+  listEl.addEventListener('click', (e) => {
+    const groupEl = e.target.closest('[data-is-group="1"]');
+    if (!groupEl) return;
+    e.stopPropagation();
+    const gid = groupEl.dataset.groupId;
+    if (expandedGroupIds.includes(gid)) {
+      expandedGroupIds = expandedGroupIds.filter(id => id !== gid);
     } else {
-      dropzoneEl.style.display = 'none';
+      expandedGroupIds.push(gid);
     }
-  }
-  function hideDropzone() {
-    if (dropzoneEl) dropzoneEl.style.display = 'none';
-  }
+    renderList();
+  });
 
-  // v3.17.4: Drop zone event handlers
+  // Drag start
+  listEl.addEventListener('dragstart', (e) => {
+    const itemEl = e.target.closest('.item');
+    if (!itemEl || itemEl.dataset.isGroup === '1') return;
+    draggedItemId = itemEl.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', draggedItemId);
+    itemEl.style.opacity = '0.4';
+    // Show dropzone kalau item punya parent (bisa unparent)
+    if (dropzoneEl) {
+      const item = currentVault?.items?.find(i => i.id === draggedItemId);
+      if (item && getParentId(item)) {
+        dropzoneEl.style.display = '';
+      }
+    }
+  });
+
+  // Drag end
+  listEl.addEventListener('dragend', (e) => {
+    const itemEl = e.target.closest('.item');
+    if (itemEl) itemEl.style.opacity = '';
+    draggedItemId = null;
+    if (dropzoneEl) dropzoneEl.style.display = 'none';
+  });
+
+  // Drag over group — highlight
+  listEl.addEventListener('dragover', (e) => {
+    if (!draggedItemId) return;
+    const groupEl = e.target.closest('[data-is-group="1"]');
+    if (groupEl && groupEl.dataset.groupId !== draggedItemId) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      groupEl.style.background = 'var(--primary-soft, rgba(99,102,241,.15))';
+    }
+  });
+
+  // Drag leave group — remove highlight
+  listEl.addEventListener('dragleave', (e) => {
+    const groupEl = e.target.closest('[data-is-group="1"]');
+    if (groupEl) groupEl.style.background = '';
+  });
+
+  // Drop on group
+  listEl.addEventListener('drop', (e) => {
+    if (!draggedItemId) return;
+    const groupEl = e.target.closest('[data-is-group="1"]');
+    if (groupEl && groupEl.dataset.groupId !== draggedItemId) {
+      e.preventDefault();
+      e.stopPropagation();
+      groupEl.style.background = '';
+      moveItemToGroup(draggedItemId, groupEl.dataset.groupId);
+    }
+  });
+
+  // Dropzone (unparent)
   if (dropzoneEl) {
     dropzoneEl.addEventListener('dragover', (e) => {
       if (!draggedItemId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      dropzoneEl.classList.add('drag-over');
     });
-    dropzoneEl.addEventListener('dragleave', () => {
-      dropzoneEl.classList.remove('drag-over');
-    });
-    dropzoneEl.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      dropzoneEl.classList.remove('drag-over');
-      if (!draggedItemId) return;
-      await moveItemToGroup(draggedItemId, null);  // null = top-level (unparent)
-      draggedItemId = null;
-      hideDropzone();
-    });
-  }
-
-  // Expand/collapse: klik group header (atau chevron)
-  $$('#list .item-group').forEach(el => {
-    el.addEventListener('click', (e) => {
-      // Jangan trigger kalau klik tombol more/drag
-      if (e.target.closest('.morebtn') || e.target.closest('.cta-pill')) return;
-      e.stopPropagation();
-      const gid = el.dataset.groupId;
-      if (expandedGroupIds.includes(gid)) {
-        expandedGroupIds = expandedGroupIds.filter(id => id !== gid);
-      } else {
-        expandedGroupIds.push(gid);
-      }
-      renderList();
-    });
-
-    // DnD: group sebagai drop target
-    el.addEventListener('dragover', (e) => {
+    dropzoneEl.addEventListener('drop', (e) => {
       if (!draggedItemId) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      el.style.background = 'var(--primary-soft, rgba(109,61,245,0.1))';
-      el.style.border = '2px dashed var(--primary)';
-    });
-    el.addEventListener('dragleave', () => {
-      el.style.background = '';
-      el.style.border = '';
-    });
-    el.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      el.style.background = '';
-      el.style.border = '';
-      if (!draggedItemId) return;
-      const groupId = el.dataset.groupId;
-      if (groupId === draggedItemId) return;  // tidak bisa drop ke diri sendiri
-      await moveItemToGroup(draggedItemId, groupId);
-      draggedItemId = null;
-      hideDropzone();
-    });
-  });
-
-  // DnD: semua item (termasuk group) bisa di-drag
-  $$('#list .item').forEach(el => {
-    el.addEventListener('dragstart', (e) => {
-      const id = el.dataset.id || el.dataset.groupId;
-      if (!id) return;
-      draggedItemId = id;
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', id);
-      el.style.opacity = '0.5';
-      // v3.17.4: Tampilkan drop zone kalau item ada di dalam folder
-      setTimeout(showDropzoneIfApplicable, 50);
-    });
-    el.addEventListener('dragend', () => {
-      el.style.opacity = '';
-      draggedItemId = null;
-      hideDropzone();
-    });
-  });
-
-  // DnD: drop ke list area (top-level) = pindahkan keluar dari group
-  // (fallback kalau user drop di area kosong, bukan di drop zone)
-  const listEl = $('#list');
-  if (listEl) {
-    listEl.addEventListener('dragover', (e) => {
-      if (!draggedItemId) return;
-      // Hanya allow drop kalau cursor di area kosong (bukan di atas item/group/dropzone)
-      const overItem = e.target.closest('.item');
-      const overDropzone = e.target.closest('#vaultRootDropzone');
-      if (!overItem && !overDropzone) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-      }
-    });
-    listEl.addEventListener('drop', async (e) => {
-      if (!draggedItemId) return;
-      const overItem = e.target.closest('.item');
-      const overDropzone = e.target.closest('#vaultRootDropzone');
-      if (overItem || overDropzone) return;  // drop di item/dropzone ditangani oleh handler masing-masing
-      e.preventDefault();
-      await moveItemToGroup(draggedItemId, null);  // null = top-level
-      draggedItemId = null;
-      hideDropzone();
+      moveItemToGroup(draggedItemId, null);
     });
   }
 }
 
-// Pindahkan item ke group (atau top-level kalau groupId=null)
+// ===== moveItemToGroup: set parentId + save + sync =====
 async function moveItemToGroup(itemId, groupId) {
   if (!currentVault) return;
   const item = currentVault.items.find(i => i.id === itemId);
-  if (!item) {
-    toast('Item tidak ditemukan', false);
-    return;
-  }
-  // Cek kalau item adalah group — tidak bisa pindahkan group ke group (1 level only)
-  if (getIsGroup(item) && groupId) {
-    toast('Grup tidak bisa dimasukkan ke grup lain', false);
-    return;
-  }
+  if (!item) return;
   const oldParent = getParentId(item);
-  moveToGroup(item, groupId);
-  await saveVault(currentVault);
-  // Sync ke cloud
+  if (oldParent === groupId) return; // tidak berubah
+  setParentId(item, groupId);
+  item.updatedAt = new Date().toISOString();
   try {
-    await updateItem(itemId, { source: item.source });
-  } catch (e) { /* non-fatal */ }
-  const groupName = groupId
-    ? (currentVault.items.find(i => i.id === groupId)?.title || 'grup')
-    : 'top-level';
-  toast('📁 ' + (item.title || 'Item').slice(0, 30) + ' → ' + groupName);
-  renderList();
-}
-
-// ============================================================================
-// v3.17.1: Buat Grup + AI Auto-Group
-// ============================================================================
-
-async function handleAddGroup() {
-  const name = prompt('Nama grup:');
-  if (!name || !name.trim()) return;
-  const group = createGroupItem(name.trim());
-  if (!currentVault) return;
-  currentVault.items.push(group);
-  await saveVault(currentVault);
-  // Sync ke cloud
-  try {
-    const { directUpsertVaultItem } = await import('../lib/supabase-sync.js');
-    if (directUpsertVaultItem) directUpsertVaultItem(group).catch(() => {});
-  } catch (e) { /* non-fatal */ }
-  expandedGroupIds.push(group.id);  // auto-expand grup baru
-  toast('✓ Grup "' + name.trim() + '" dibuat');
-  renderVault();
-}
-
-async function handleAiAutoGroup() {
-  if (!currentVault) return;
-  const items = getVaultItems();
-  // Cek apakah AI assistant configured
-  try {
-    const { isAssistantConfigured } = await import('../lib/assistant.js');
-    if (!(await isAssistantConfigured())) {
-      toast('Setup AI Assistant dulu di Pengaturan', false);
-      return;
+    await updateItem(itemId, { source: item.source, updatedAt: item.updatedAt });
+    await refreshVault();
+    if (groupId) {
+      const grp = currentVault.items.find(i => i.id === groupId);
+      toast('\uD83D\uDCC1 Dipindahkan ke \u201C' + (grp?.title || 'grup') + '\u201D');
+    } else {
+      toast('\uD83D\uDCE5 Dikeluarkan dari grup');
     }
   } catch (e) {
-    toast('AI Assistant tidak tersedia', false);
-    return;
+    toast('Gagal pindah: ' + e.message, false);
   }
-  toast('🤖 AI sedang mengelompokkan...');
+}
+
+// ===== handleAddGroup: buat grup baru =====
+async function handleAddGroup() {
+  const name = prompt('Nama grup baru:');
+  if (!name || !name.trim()) return;
+  // Type group = type chip aktif (prompt/link/screenshot/dll)
+  const groupType = (currentChip === 'screenshot') ? 'screenshot' : currentChip;
+  const group = createGroup(name.trim(), groupType);
+  try {
+    await addItem(group);
+    expandedGroupIds.push(group.id);
+    await refreshVault();
+    toast('\uD83D\uDCC1 Grup \u201C' + name.trim() + '\u201D dibuat');
+  } catch (e) {
+    toast('Gagal buat grup: ' + e.message, false);
+  }
+}
+
+// ===== handleAiAutoGroup: AI grouping otomatis =====
+async function handleAiAutoGroup() {
+  if (!currentVault?.items?.length) { toast('Vault kosong', false); return; }
+  const items = currentVault.items.filter(i => !isGroupItem(i));
+  if (items.length < 2) { toast('Butuh minimal 2 item untuk grouping', false); return; }
+  toast('\uD83E\uDD16 AI menganalisis ' + items.length + ' item...');
   try {
     const { chatWithFallback } = await import('../lib/assistant.js');
     const result = await aiAutoGroup(items, chatWithFallback);
@@ -1864,33 +1792,18 @@ async function handleAiAutoGroup() {
       toast('Gagal: ' + result.error, false);
       return;
     }
-    // Buat group items + set parentId untuk setiap item
-    let groupCount = 0;
+    const groupType = (currentChip === 'screenshot') ? 'screenshot' : currentChip;
     for (const g of result.groups) {
-      const group = createGroupItem(g.name);
-      currentVault.items.push(group);
+      const group = createGroup(g.name, groupType);
+      await addItem(group);
       expandedGroupIds.push(group.id);
       for (const itemId of g.itemIds) {
         const item = currentVault.items.find(i => i.id === itemId);
-        if (item) {
-          moveToGroup(item, group.id);
-        }
+        if (item) setParentId(item, group.id);
       }
-      groupCount++;
     }
-    await saveVault(currentVault);
-    // Sync semua group baru ke cloud (fire-and-forget)
-    try {
-      const { directUpsertVaultItem } = await import('../lib/supabase-sync.js');
-      if (directUpsertVaultItem) {
-        for (const g of result.groups) {
-          // Find the group we just created
-          // (skipping sync untuk simplicity — sync akan catch up di next pull)
-        }
-      }
-    } catch (e) { /* non-fatal */ }
-    toast('✓ ' + groupCount + ' grup dibuat oleh AI');
-    renderVault();
+    await refreshVault();
+    toast('\uD83E\uDD16 ' + result.groups.length + ' grup dibuat');
   } catch (e) {
     toast('Gagal: ' + e.message, false);
   }
@@ -1922,10 +1835,10 @@ function renderList() {
     wireExitScope();
     return;
   }
-  list.innerHTML = scopeBanner + renderTreeHtml(vi);
+  list.innerHTML = scopeBanner + renderFlatList(vi);
   bindItemClicks();
   // v3.17.1: Wire tree events (expand/collapse + DnD)
-  wireTreeEvents();
+  wireVaultEvents();
   // v3.16.7 #5: Wire exit scope button (kalau scope banner ada)
   wireExitScope();
   // v3.11.11 (Issue #1) + v3.11.12 (Sesi 11, Issue #2): Bind batch checkbox handlers.
@@ -1952,9 +1865,6 @@ function bindItemClicks() {
   $$('#list .item').forEach(el => {
     el.addEventListener('click', e => {
       // v3.17.1: Kalau klik group header, jangan trigger primaryAction (expand/collapse sudah di-handle wireTreeEvents)
-      if (el.dataset.isGroup === '1') {
-        return;
-      }
       // v3.11.12 (Sesi 11, Issue #2): Fix klik checkbox malah buka gambar viewer.
       // User feedback: "ketika klik centang untuk memilih daftar gambar, eh malah
       // buka gambarnya jg jadinya kebanyakan tab."
@@ -8376,10 +8286,10 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
-  // v3.17.1: Tombol Buat Grup + Auto-Grup AI
+  // v3.18.0: Tombol Buat Grup + Auto-Grup AI — bind event listeners
   const addGroupBtnEl = $('#addGroupBtn');
-  if (addGroupBtnEl) addGroupBtnEl.addEventListener('click', handleAddGroup);
   const aiGroupBtnEl = $('#aiGroupBtn');
+  if (addGroupBtnEl) addGroupBtnEl.addEventListener('click', handleAddGroup);
   if (aiGroupBtnEl) aiGroupBtnEl.addEventListener('click', handleAiAutoGroup);
   // v3.11.11 (Issue #1): Batch mode untuk screenshot di vault
   // v3.11.14: Generalisasi — batch mode untuk SEMUA tipe (prompt, link, bundle, archive, dll)

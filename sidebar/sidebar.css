@@ -568,40 +568,12 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   -webkit-line-clamp:2;
 }
 
-/* v3.17.3: Pastikan tombol group SELALU tampil di SEMUA width mode.
-   Override SEMUA responsive rules (w-sm/w-xs/w-xxs) yang mungkin hide tombol. */
-.popup.w-sm .addbtn#aiGroupBtn,
-.popup.w-sm .addbtn#addGroupBtn,
-.popup.w-xs .addbtn#aiGroupBtn,
-.popup.w-xs .addbtn#addGroupBtn,
-.popup.w-xxs .addbtn#aiGroupBtn,
-.popup.w-xxs .addbtn#addGroupBtn,
-body.rf-sidebar-body .addbtn#aiGroupBtn,
-body.rf-sidebar-body .addbtn#addGroupBtn {
-  display:flex !important;
-  visibility:visible !important;
-  opacity:1 !important;
-  font-size:11px;
-  padding:4px 8px;
-}
+/* v3.18.0: SEMUA responsive hide rules DIHAPUS — tombol text SELALU visible.
+   User: "auto dan grup jika sidebar dikecilkan masih ada tulisannya bukan icon only"
+   Semua tombol (Batch, Auto, Grup, Baru) pakai class .addbtn, text selalu tampil. */
 
-/* v3.11.3: Hide addbtn label di w-xxs (icon-only) supaya tidak tabrakan */
-.popup.w-xxs .vault-hd .addbtn .lbl,
-.popup.w-xxs .addbtn{
-  font-size:0;
-  padding:4px 6px;
-}
-.popup.w-xxs .addbtn svg{
-  width:12px;
-  height:12px;
-}
-/* v3.17.2: Tombol group (🤖 Auto, 📁 Grup) tidak punya SVG — emoji text jadi icon.
-   Override font-size:0 supaya emoji tetap terlihat di w-xxs mode. */
-.popup.w-xxs .addbtn#aiGroupBtn,
-.popup.w-xxs .addbtn#addGroupBtn{
-  font-size:13px;
-  padding:4px 6px;
-}
+/* v3.18.0: HAPUS font-size:0 rule yang nuke text di w-xxs mode */
+/* v3.18.0: HAPUS stale selectors untuk #aiGroupBtn/#addGroupBtn (sudah pakai .addbtn) */
 
 /* ============================================================
    v3.11.14 (Issue #2): Responsive rules untuk batch bar, confirmstrip,
