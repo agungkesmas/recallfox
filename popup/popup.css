@@ -518,6 +518,13 @@ body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
 .toast.ok .tk{color:#4ade80}
 .toast.err .tk{color:#f87171}
 .toast.out{opacity:0;transform:translateY(8px);transition:.25s}
+
+/* v3.17.0: Flash button feedback — tombol berubah teks + warna sementara 1.8s */
+/* Dipakai oleh flashButtonFeedback() helper untuk feedback visual aksi copy */
+.btn-flash-ok,.btn-flash-err{transition:background .15s, color .15s, border-color .15s !important;font-weight:700 !important}
+.btn-flash-ok{background:#10b981 !important;color:#fff !important;border-color:#059669 !important}
+.btn-flash-err{background:#dc2626 !important;color:#fff !important;border-color:#991b1b !important}
+.btn-flash-ok:disabled,.btn-flash-err:disabled{cursor:wait;opacity:1}
 @keyframes tin{from{opacity:0;transform:translateY(10px) scale(.95)}}
 
 /* Penyesuaian lebar sempit (uji 300px ≈ 20%) */

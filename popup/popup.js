@@ -297,6 +297,92 @@ function toast(msg, ok) {
   setTimeout(function () { t.classList.add('out'); setTimeout(function () { t.remove(); }, 280); }, 1900);
 }
 
+// v3.17.0: Flash button feedback — utility reusable untuk semua tombol aksi.
+// User feedback (Google Doc Sesi 1): "TIDAK ADA konfirmasi visual bahwa tombol
+// tersebut telah berhasil diklik." Solusi: tombol berubah teks + warna sementara
+// 1.8 detik, lalu restore ke state asli.
+//
+// Spec:
+//   - ok=true  → background hijau (#10b981), text "✓ Tersalin!" (atau msg kustom)
+//   - ok=false → background merah (#dc2626), text "✗ Gagal" (atau msg kustom)
+//   - disabled=true selama flash (anti double-click)
+//   - Setelah 1.8s, restore textContent + style + disabled ke state asli
+//
+// @param {HTMLButtonElement} btn - tombol yang di-flash
+// @param {string} [message] - pesan kustom (default: ok?'✓ Tersalin!':'✗ Gagal')
+// @param {boolean} [ok=true] - true=sukses (hijau), false=error (merah)
+// @param {number} [duration=1800] - durasi flash dalam ms
+function flashButtonFeedback(btn, message, ok = true, duration = 1800) {
+  if (!btn) return;
+  // Simpan state asli (hanya jika belum sedang di-flash)
+  if (!btn.dataset.flashOriginal) {
+    btn.dataset.flashOriginal = '1';
+    btn.dataset.flashOrigText = btn.textContent || '';
+    btn.dataset.flashOrigBg = btn.style.background || '';
+    btn.dataset.flashOrigColor = btn.style.color || '';
+    btn.dataset.flashOrigBorder = btn.style.borderColor || '';
+    btn.dataset.flashOrigDisabled = btn.disabled ? '1' : '';
+  } else {
+    // Sudah di-flash — jangan overlap, tapi update message
+  }
+  // Apply flash state
+  btn.textContent = message || (ok ? '✓ Tersalin!' : '✗ Gagal');
+  btn.style.background = ok ? '#10b981' : '#dc2626';
+  btn.style.color = '#ffffff';
+  btn.style.borderColor = ok ? '#059669' : '#991b1b';
+  btn.disabled = true;
+  btn.classList.add(ok ? 'btn-flash-ok' : 'btn-flash-err');
+  // Schedule restore
+  clearTimeout(btn._flashTimer);
+  btn._flashTimer = setTimeout(() => {
+    btn.textContent = btn.dataset.flashOrigText;
+    btn.style.background = btn.dataset.flashOrigBg;
+    btn.style.color = btn.dataset.flashOrigColor;
+    btn.style.borderColor = btn.dataset.flashOrigBorder;
+    btn.disabled = btn.dataset.flashOrigDisabled === '1';
+    btn.classList.remove('btn-flash-ok', 'btn-flash-err');
+    delete btn.dataset.flashOriginal;
+    delete btn.dataset.flashOrigText;
+    delete btn.dataset.flashOrigBg;
+    delete btn.dataset.flashOrigColor;
+    delete btn.dataset.flashOrigBorder;
+    delete btn.dataset.flashOrigDisabled;
+  }, duration);
+}
+
+// v3.17.0: Toast khusus untuk modal viewer — tampil DI DALAM modal (z-index 250)
+// supaya tidak tertutup overlay modal (z-index 200).
+// User feedback: "TIDAK ADA konfirmasi visual" — root cause: toast global
+// z-index 60 < modal z-index 200 → toast tersembunyi di belakang modal.
+function showViewerToast(msg, ok = true, duration = 2200) {
+  // Cari modal viewer yang aktif
+  const overlay = document.getElementById('rfImageViewerOverlay');
+  if (!overlay) {
+    // Fallback ke global toast
+    toast(msg, ok);
+    return;
+  }
+  // Cari atau buat toast container di dalam modal
+  let toastBox = overlay.querySelector('.rf-viewer-toasts');
+  if (!toastBox) {
+    toastBox = document.createElement('div');
+    toastBox.className = 'rf-viewer-toasts';
+    toastBox.style.cssText = 'position:absolute;left:0;right:0;bottom:14px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:250;pointer-events:none';
+    overlay.appendChild(toastBox);
+  }
+  const t = document.createElement('div');
+  t.className = 'toast' + (ok ? ' ok' : ' err');
+  t.style.cssText = 'display:flex;align-items:center;gap:8px;background:#fafaf9;color:#1c1917;font-size:12px;font-weight:600;padding:9px 15px;border-radius:999px;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-width:90%;animation:tin .22s cubic-bezier(.2,.8,.2,1)';
+  t.innerHTML = '<span class="tk">' + (ok ? ICONS.check : ICONS.trash) + '</span>' + esc(msg);
+  toastBox.appendChild(t);
+  setTimeout(() => {
+    t.style.opacity = '0';
+    t.style.transform = 'translateY(8px)';
+    t.style.transition = 'opacity .25s, transform .25s';
+    setTimeout(() => t.remove(), 280);
+  }, duration);
+}
+
 // ============ Sheet / Page helpers ============
 function openSheet(title, sub, build) {
   $('#sheetHd').innerHTML = '<div><div>' + title + '</div>' + (sub ? '<div class="sh-sub">' + sub + '</div>' : '') + '</div>';
@@ -2380,12 +2466,15 @@ function openImageModalViewer(item, pages) {
   const copyFooter = document.createElement('div');
   copyFooter.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px;background:#1c1917;border-top:1px solid #292524;flex:none;flex-wrap:wrap';
 
+  // v3.17.0: makeCopyBtn sekarang kirim reference tombol ke onClick supaya
+  // handler bisa panggil flashButtonFeedback(btn, msg, ok) untuk feedback visual.
+  // onClick signature: async (btn) => { ...; flashButtonFeedback(btn, '✓ Tersalin!', true); }
   const makeCopyBtn = (label, title, onClick) => {
     const btn = document.createElement('button');
     btn.textContent = label;
     btn.title = title;
-    btn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px';
-    btn.addEventListener('click', onClick);
+    btn.style.cssText = 'background:#292524;color:#fafaf9;border:1px solid #44403c;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;transition:background .15s, border-color .15s';
+    btn.addEventListener('click', () => onClick(btn));
     return btn;
   };
 
@@ -2423,13 +2512,15 @@ function openImageModalViewer(item, pages) {
   copyFooter.appendChild(makeCopyBtn(
     '🖼️ Salin Gambar',
     isMulti ? 'Salin semua halaman jadi 1 gambar (grid bernomor)' : 'Salin gambar saja ke clipboard',
-    async () => {
+    async (btn) => {
       const dataUrls = getAllPageDataUrls();
       if (dataUrls.length === 0) {
-        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        showViewerToast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        flashButtonFeedback(btn, '✗ Belum termuat', false);
         return;
       }
-      toast(isMulti ? '🖼️ Menggabungkan ' + dataUrls.length + ' halaman jadi 1 gambar...' : '📋 Menyalin gambar...');
+      flashButtonFeedback(btn, '⏳ Menyalin...', true, 60000);
+      showViewerToast(isMulti ? '🖼️ Menggabungkan ' + dataUrls.length + ' halaman jadi 1 gambar...' : '📋 Menyalin gambar...');
       try {
         let targetDataUrl;
         if (isMulti && dataUrls.length > 1) {
@@ -2437,7 +2528,8 @@ function openImageModalViewer(item, pages) {
           const screenshots = buildScreenshotsArray();
           const compositeResult = await buildCompositeImage(screenshots);
           if (!compositeResult.blob) {
-            toast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            showViewerToast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            flashButtonFeedback(btn, '✗ Gagal', false);
             return;
           }
           targetDataUrl = await blobToDataUrl(compositeResult.blob);
@@ -2448,27 +2540,27 @@ function openImageModalViewer(item, pages) {
         // v3.14.8: Pakai writeImageOnlyToClipboard (image-only, 3 strategi robust).
         const result = await writeImageOnlyToClipboard(targetDataUrl);
         if (result.ok) {
-          // Pesan berbeda per fallback:
-          // - default: '✓ Gambar tersalin ke clipboard' (strategi A berhasil — best case)
-          // - html_embedded: '✓ Gambar tersalin (embedded HTML)' (strategi B — paste ke rich text editor)
-          // - data_url_text: '✓ Data URL gambar tersalin (text-only)' (strategi C — last resort)
+          let msg;
           if (result.fallback === 'html_embedded') {
-            toast('✓ Gambar tersalin — paste ke Google Docs/Gmail untuk menampilkan', true);
+            msg = '✓ Gambar tersalin — paste ke Google Docs/Gmail';
           } else if (result.fallback === 'data_url_text') {
-            toast('✓ Data URL tersalin (browser blokir clipboard image)', true);
+            msg = '✓ Data URL tersalin (text-only)';
           } else {
-            toast(isMulti
+            msg = isMulti
               ? '✓ ' + dataUrls.length + ' halaman tersalin (1 gambar gabungan) — paste ke WA/Telegram/Docs'
-              : '✓ Gambar tersalin — paste ke WA/Telegram/Docs',
-              true);
+              : '✓ Gambar tersalin — paste ke WA/Telegram/Docs';
           }
+          showViewerToast(msg, true);
+          flashButtonFeedback(btn, '✓ Tersalin!', true);
         } else {
           console.error('[RecallFox] Salin Gambar failed:', result);
-          toast('Gagal salin gambar: ' + (result.error || 'unknown'), false);
+          showViewerToast('Gagal salin gambar: ' + (result.error || 'unknown'), false);
+          flashButtonFeedback(btn, '✗ Gagal', false);
         }
       } catch (e) {
         console.error('[RecallFox] Salin Gambar exception:', e);
-        toast('Gagal salin: ' + e.message, false);
+        showViewerToast('Gagal salin: ' + e.message, false);
+        flashButtonFeedback(btn, '✗ Error', false);
       }
     }
   ));
@@ -2480,13 +2572,15 @@ function openImageModalViewer(item, pages) {
   copyFooter.appendChild(makeCopyBtn(
     '📋 Salin + Keterangan',
     isMulti ? 'Gambar gabungan + keterangan semua halaman (URL, judul, waktu)' : 'Gambar + URL, judul, waktu, mode',
-    async () => {
+    async (btn) => {
       const dataUrls = getAllPageDataUrls();
       if (dataUrls.length === 0) {
-        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        showViewerToast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        flashButtonFeedback(btn, '✗ Belum termuat', false);
         return;
       }
-      toast(isMulti ? '📋 Menggabungkan ' + dataUrls.length + ' halaman + keterangan...' : '📋 Menyalin gambar + keterangan...');
+      flashButtonFeedback(btn, '⏳ Menyalin...', true, 60000);
+      showViewerToast(isMulti ? '📋 Menggabungkan ' + dataUrls.length + ' halaman + keterangan...' : '📋 Menyalin gambar + keterangan...');
       try {
         let targetDataUrl, cap;
         if (isMulti && dataUrls.length > 1) {
@@ -2494,7 +2588,8 @@ function openImageModalViewer(item, pages) {
           const screenshots = buildScreenshotsArray();
           const compositeResult = await buildCompositeImage(screenshots);
           if (!compositeResult.blob) {
-            toast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            showViewerToast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            flashButtonFeedback(btn, '✗ Gagal', false);
             return;
           }
           targetDataUrl = await blobToDataUrl(compositeResult.blob);
@@ -2534,17 +2629,20 @@ function openImageModalViewer(item, pages) {
         }
         const result = await writeScreenshotToClipboard(targetDataUrl, cap.textPlain, cap.textHtml);
         if (result.ok) {
-          toast(result.fallback === 'text_only'
+          const msg = result.fallback === 'text_only'
             ? '✓ Keterangan tersalin (text-only — gambar tidak ikut)'
-            : (isMulti ? '✓ ' + dataUrls.length + ' halaman + keterangan tersalin' : '✓ Gambar + keterangan tersalin'),
-            true);
+            : (isMulti ? '✓ ' + dataUrls.length + ' halaman + keterangan tersalin' : '✓ Gambar + keterangan tersalin');
+          showViewerToast(msg, true);
+          flashButtonFeedback(btn, '✓ Tersalin!', true);
         } else {
           console.error('[RecallFox] Salin + Keterangan failed:', result);
-          toast('Gagal salin: ' + (result.error || 'unknown'), false);
+          showViewerToast('Gagal salin: ' + (result.error || 'unknown'), false);
+          flashButtonFeedback(btn, '✗ Gagal', false);
         }
       } catch (e) {
         console.error('[RecallFox] Salin + Keterangan exception:', e);
-        toast('Gagal salin: ' + e.message, false);
+        showViewerToast('Gagal salin: ' + e.message, false);
+        flashButtonFeedback(btn, '✗ Error', false);
       }
     }
   ));
@@ -2556,13 +2654,15 @@ function openImageModalViewer(item, pages) {
   copyFooter.appendChild(makeCopyBtn(
     '📝 Salin Teks Metadata',
     isMulti ? 'Teks saja (judul, waktu, semua halaman) - paste ke WA/Gemini/AI chat' : 'Teks saja (judul, waktu, URL) - paste ke WA/Gemini/AI chat',
-    async () => {
+    async (btn) => {
       const dataUrls = getAllPageDataUrls();
       if (dataUrls.length === 0) {
-        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        showViewerToast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        flashButtonFeedback(btn, '✗ Belum termuat', false);
         return;
       }
-      toast('📝 Menyalin teks metadata...');
+      flashButtonFeedback(btn, '⏳ Menyalin...', true, 60000);
+      showViewerToast('📝 Menyalin teks metadata...');
       try {
         let textPlain;
         if (isMulti && dataUrls.length > 1) {
@@ -2588,22 +2688,26 @@ function openImageModalViewer(item, pages) {
           textPlain = c.textPlain;
         }
         if (!textPlain) {
-          toast('Tidak ada metadata untuk disalin', false);
+          showViewerToast('Tidak ada metadata untuk disalin', false);
+          flashButtonFeedback(btn, '✗ Kosong', false);
           return;
         }
         // Text-only: langsung navigator.clipboard.writeText (tidak pakai writeScreenshotToClipboard
         // karena tidak ada image yang perlu di-clip).
         if (navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(textPlain);
-          toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)', true);
+          showViewerToast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)', true);
+          flashButtonFeedback(btn, '✓ Tersalin!', true);
         } else {
           // Fallback: delegate ke background
           await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: textPlain });
-          toast('✓ Teks metadata tersalin', true);
+          showViewerToast('✓ Teks metadata tersalin', true);
+          flashButtonFeedback(btn, '✓ Tersalin!', true);
         }
       } catch (e) {
         console.error('[RecallFox] Salin Teks Metadata exception:', e);
-        toast('Gagal salin teks: ' + e.message, false);
+        showViewerToast('Gagal salin teks: ' + e.message, false);
+        flashButtonFeedback(btn, '✗ Error', false);
       }
     }
   ));
