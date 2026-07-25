@@ -1447,12 +1447,37 @@ function renderList() {
     const docBadge = docPageCount > 1
       ? ' <span title="' + docPageCount + ' halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 ' + docPageCount + ' hal</span>'
       : (it.type === 'document' ? ' <span title="1 halaman" style="font-size:10px;background:var(--surface-2);padding:1px 5px;border-radius:6px;color:var(--muted)">📄 1 hal</span>' : '');
+    // v3.15.0 P0-S1: Badge snapshot metadata — tampilkan domain + jumlah pesan.
+    // Sebelumnya: snapshotDomain + snapshotMessageCount tidak pernah di-persist → badge selalu kosong.
+    // Sekarang: persist end-to-end → badge tampil "chatgpt.com · 12 pesan".
+    let snapshotBadge = '';
+    if (it.type === 'snapshot') {
+      const parts = [];
+      if (it.snapshotDomain) parts.push(esc(it.snapshotDomain));
+      if (it.snapshotMessageCount) parts.push(it.snapshotMessageCount + ' pesan');
+      if (parts.length > 0) {
+        snapshotBadge = '<span title="Snapshot dari ' + esc(it.snapshotDomain || '?') + '" style="font-size:10px;color:var(--muted)">📸 ' + parts.join(' · ') + '</span>';
+      }
+    }
+    // v3.15.0 P0-K1: Badge context purpose — tampilkan kategori tujuan konteks.
+    let contextPurposeBadge = '';
+    if (it.type === 'context' && it.contextPurpose && it.contextPurpose !== 'custom') {
+      const purposeLabels = {
+        system: 'Sistem', project: 'Proyek', domain: 'Domain',
+        reference: 'Referensi', instruction: 'SOP'
+      };
+      const label = purposeLabels[it.contextPurpose] || it.contextPurpose;
+      contextPurposeBadge = '<span title="Tujuan: ' + esc(label) + '" style="font-size:10px;color:var(--muted)">📋 ' + esc(label) + '</span>';
+    }
     return '<div class="item" data-id="' + it.id + '" tabindex="0">'
       + batchCheckboxHtml
       + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
       + '<div class="item-main">'
       + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
-      + '<div class="item-meta">' + T.label + ' · ' + esc(tagsStr) + (uses ? ' · <span class="uses">' + uses + '× dipakai</span>' : '') + '</div>'
+      + '<div class="item-meta">' + T.label
+      + (snapshotBadge ? ' · ' + snapshotBadge : '')
+      + (contextPurposeBadge ? ' · ' + contextPurposeBadge : '')
+      + ' · ' + esc(tagsStr) + (uses ? ' · <span class="uses">' + uses + '× dipakai</span>' : '') + '</div>'
       + '</div>'
       + '<div class="item-cta">'
       + ctaHtml
@@ -3528,7 +3553,12 @@ function saveKonteksSheet() {
       const bodyVal = $('#cBody').value;
       // Jika tujuan dipilih, prepends header ke body
       const tujuanLabel = TUJUAN_OPTIONS.find(o => o[0] === tujuan);
-      const finalBody = tujuan !== 'custom' ? '[Tujuan: ' + (tujuanLabel ? tujuanLabel[1] : tujuan) + ']\n\n' + bodyVal : bodyVal;
+      // v3.15.0 P0-K2: STOP prepend [Tujuan: ...] ke body.
+      // Sebelumnya: tujuan ditempel jadi teks di awal body sebagai kompensasi karena
+      // contextPurpose tidak di-persist. Sekarang contextPurpose di-persist sebagai
+      // field terpisah (context_purpose column di DB) + tampil sebagai badge di vault list.
+      // Body tetap bersih — tidak ikut ter-inject ke chat AI sebagai teks sampah.
+      const finalBody = bodyVal;
       await addItem({ type: 'context', title: t, tags: tg.split(',').map(s => s.trim()).filter(Boolean), body: finalBody, contextPurpose: tujuan, useCount: 0 });
       closeSheet(); await refreshVault(); toast('Konteks disimpan ✓' + (tujuan !== 'custom' ? ' · ' + tujuanLabel[1] : ''));
     });

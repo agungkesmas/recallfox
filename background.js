@@ -116,6 +116,52 @@ browser.runtime.onInstalled.addListener(async () => {
   // v0.8.36: HAPUS force-inject di onInstalled — bikin duplikat panel + loop.
   // Content script dari manifest.json akan auto-load saat tab di-refresh.
   // User cukup refresh tab YouTube/X manual setelah install.
+
+  // v3.15.0 P0-K1+K2: Migration — backfill contextPurpose untuk existing context items.
+  // Sebelumnya: tujuan ditempel jadi teks [Tujuan: ...] di awal body karena tidak ada kolom DB.
+  // Sekarang: kolom context_purpose ada di DB + field contextPurpose di local vault.
+  // Migration: parse [Tujuan: ...] dari body → set contextPurpose → bersihkan body.
+  // Juga backfill snapshotDomain dari source.url untuk existing snapshots.
+  try {
+    const { getVault, saveVault } = await import('./lib/storage.js');
+    const vault = await getVault();
+    let migrated = 0;
+    for (const item of (vault.items || [])) {
+      let changed = false;
+      // Migration K1+K2: context — parse [Tujuan: ...] dari body
+      if (item.type === 'context' && !item.contextPurpose) {
+        const m = (item.body || '').match(/^\[Tujuan:\s*([^\]]+)\]\s*\n\n/);
+        if (m) {
+          const purposeLabel = m[1].trim();
+          // Reverse map label → key
+          const labelToKey = {
+            'Instruksi Sistem': 'system', 'Konteks Proyek': 'project',
+            'Pengetahuan Domain': 'domain', 'Referensi': 'reference',
+            'Instruksi Kerja': 'instruction'
+          };
+          item.contextPurpose = labelToKey[purposeLabel] || 'custom';
+          item.body = item.body.slice(m[0].length);
+          changed = true;
+        } else {
+          item.contextPurpose = 'custom';
+        }
+      }
+      // Migration S1: snapshot — backfill snapshotDomain dari source.url
+      if (item.type === 'snapshot' && !item.snapshotDomain && item.source?.url) {
+        try {
+          item.snapshotDomain = new URL(item.source.url).hostname;
+          changed = true;
+        } catch (e) { /* ignore invalid URL */ }
+      }
+      if (changed) migrated++;
+    }
+    if (migrated > 0) {
+      await saveVault(vault);
+      console.log('[RecallFox] onInstalled: migrated', migrated, 'items (context purpose + snapshot domain backfill)');
+    }
+  } catch (e) {
+    console.warn('[RecallFox] onInstalled: migration failed:', e.message);
+  }
 });
 
 browser.runtime.onStartup.addListener(async () => {
@@ -2761,6 +2807,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     // v3.11.10 fix: pakai sendResponse (bukan return await) supaya tidak
     // "Promised response from onMessage listener went out of scope"
+    // v3.15.0 P0-S1: pass snapshotDomain + snapshotMessageCount ke addItem.
+    //   Sebelumnya tidak diteruskan → storage.js addItem() tidak simpan →
+    //   DB columns snapshot_domain/snapshot_message_count selalu NULL/0.
     const result = await addItem({
       type: 'snapshot',
       title: msg.title || 'Untitled snapshot',
@@ -2770,7 +2819,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         url: msg.url || tab?.url,
         title: msg.pageTitle || tab?.title,
         capturedAt: new Date().toISOString()
-      }
+      },
+      snapshotDomain: msg.snapshotDomain || (msg.url ? new URL(msg.url).hostname : (tab?.url ? new URL(tab.url).hostname : '')),
+      snapshotMessageCount: msg.snapshotMessageCount || msg.messageCount || 0
     });
     sendResponse(result); return;
   }

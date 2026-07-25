@@ -283,6 +283,11 @@
       url: location.href,
       pageTitle: document.title,
       messageCount: sliced.length,
+      // v3.15.0 P0-S1: tambah snapshotDomain + snapshotMessageCount (key benar)
+      // Sebelumnya hanya return messageCount (key salah — harusnya snapshotMessageCount).
+      // background.js CAPTURE_SNAPSHOT sekarang baca snapshotMessageCount + snapshotDomain.
+      snapshotDomain: location.hostname,
+      snapshotMessageCount: sliced.length,
       debug: matchedSelector || 'No selectors matched'
     };
   }
