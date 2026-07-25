@@ -119,6 +119,77 @@
   //   - Live preview running total di status bar (kecil, tidak mengganggu)
   // ============================================================================
 
+  // ============================================================================
+  // v3.14.13: AUTO-FORMAT saat ketik
+  // ============================================================================
+  // Behavior baru (per request user 2026-07-25):
+  //   1. Ketik digit di baris kosong → auto-prefix "+   " (operator + jarak tetap)
+  //      User ketik "1" → jadi "+   1", lanjut "200" → "+   1200"
+  //   2. Ketik operator (+ - * /) di akhir baris berisi → auto-newline + operator + jarak
+  //      User di baris "+   1200", tekan "-" → baris baru "-   " (cursor di akhir)
+  //   3. Enter → garis pemisah + hasil (sudah ada di v3.14.12)
+  //   4. Format rapi: operator (1 char) + 3 spasi + angka + spasi + note opsional
+  //
+  // Jarak tetap: OP_GAP = '   ' (3 spasi) — supaya operator rata kiri, angka rata kanan
+  // ============================================================================
+
+  const OP_GAP = '   ';  // 3 spasi — jarak tetap antara operator dan angka
+
+  function handleAutoFormatKey(e) {
+    // Hanya intercept single character key tanpa modifier
+    if (e.key.length !== 1) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    const pos = textarea.selectionStart;
+    const val = textarea.value;
+
+    // Kalau ada selection, biarkan default (replace selection)
+    if (textarea.selectionStart !== textarea.selectionEnd) return;
+
+    // Cari baris saat ini
+    const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+    const currentLine = val.slice(lineStart, pos);  // dari awal baris sampai cursor
+    const trimmedCurrent = currentLine.trim();
+
+    // Cek apakah cursor di akhir baris (atau end of text)
+    const atEndOfLine = (pos === val.length) || (val[pos] === '\n');
+    if (!atEndOfLine) return;  // hanya intercept di akhir baris
+
+    // Skip baris separator dan hasil
+    if (/^[─=─]{3,}$/.test(trimmedCurrent) || /^-{3,}$/.test(trimmedCurrent) || /^={3,}$/.test(trimmedCurrent)) return;
+    if (/^[→»•]/.test(trimmedCurrent)) return;
+
+    const key = e.key;
+
+    // ===== Case 1: Ketik digit di baris kosong → auto-prefix "+   " =====
+    if (/^\d$/.test(key) && trimmedCurrent === '') {
+      e.preventDefault();
+      const insert = '+' + OP_GAP + key;
+      const before = val.slice(0, pos);
+      const after = val.slice(pos);
+      textarea.value = before + insert + after;
+      textarea.setSelectionRange(pos + insert.length, pos + insert.length);
+      updateStatus();
+      scheduleSave();
+      return;
+    }
+
+    // ===== Case 2: Ketik operator (+ - * /) di akhir baris berisi → auto-newline =====
+    if (/[+\-*/]/.test(key) && trimmedCurrent !== '') {
+      e.preventDefault();
+      const op = key;
+      const insert = '\n' + op + OP_GAP;
+      const before = val.slice(0, pos);
+      const after = val.slice(pos);
+      textarea.value = before + insert + after;
+      textarea.setSelectionRange(pos + insert.length, pos + insert.length);
+      textarea.scrollTop = textarea.scrollHeight;
+      updateStatus();
+      scheduleSave();
+      return;
+    }
+  }
+
   function handleEnterKey(e) {
     // Cek apakah cursor di akhir baris (atau di akhir text)
     const pos = textarea.selectionStart;
@@ -480,7 +551,7 @@
     // TIDAK auto-sisipkan baris hasil (hanya Enter yang trigger)
     textarea.addEventListener('input', () => { updateStatus(); scheduleSave(); });
 
-    // KEYDOWN — Enter = hitung otomatis
+    // KEYDOWN — auto-format + Enter = hitung otomatis
     textarea.addEventListener('keydown', (e) => {
       // Ctrl+Enter → save to vault
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -494,6 +565,8 @@
         hide();
         return;
       }
+      // v3.14.13: Auto-format saat ketik (digit → auto-prefix +, operator → auto-newline)
+      handleAutoFormatKey(e);
       // v3.14.12: Enter = hitung otomatis (bukan =)
       if (e.key === 'Enter' && !e.shiftKey) {
         handleEnterKey(e);
@@ -667,21 +740,32 @@
       </button>
     </div>
   </div>
-  <textarea class="rft-editor" spellcheck="false" placeholder="Ngetik bebas seperti di Word.
+  <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, operator auto-format.
 
 Contoh:
-1300
-+500          ← tekan Enter
-─────
-→  1.800,00  📋
+1. Ketik 1200 → otomatis jadi:
++   1200
 
-/2            ← tekan Enter
-─────
-→  900,00  📋
+2. Ketik - (minus) → otomatis baris baru:
++   1200
+-   
 
-*3            ← tekan Enter
+3. Ketik 200 → jadi:
++   1200
+-   200
+
+4. Tekan Enter → eksekusi + garis hasil:
++   1200
+-   200
 ─────
-→  2.700,00  📋
+→  1.000,00  📋
+
+5. Lanjut ketik / (bagi) → baris baru:
+/   
+
+Keterangan? Ketik spasi setelah angka:
++   1200  Gaji
+-   200   Makan
 
 Suffix: k/rb/jt/juta
 Percent: +10% PPN
