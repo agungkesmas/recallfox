@@ -210,5 +210,69 @@
   }
 
   window.__RecallFoxDomainConfig__ = getDomainConfig();
-  window.__RecallFoxIsAIDomain__ = !!window.__RecallFoxDomainConfig__;
+
+  // v3.16.0 S2: Perluas snapshot ke SEMUA AI tools (bukan cuma 7 yang punya selectors).
+  // AI_TOOLS_LIST = daftar domain semua AI tool dari lib/ai-tools.js (22 tools).
+  // Kalau domain match AI_TOOLS_LIST tapi tidak ada config spesifik → pakai generic fallback.
+  // Kalau domain match config spesifik → pakai config itu (selectors presisi).
+  // Sebelumnya: __RecallFoxIsAIDomain__ hanya true kalau ada config spesifik (7 domain).
+  // Sekarang: true kalau match AI_TOOLS_LIST (22+ domain) — snapshot bisa jalan di semua AI.
+  const AI_TOOLS_DOMAINS = [
+    'chatgpt.com', 'claude.ai', 'gemini.google.com', 'copilot.microsoft.com',
+    'perplexity.ai', 'www.perplexity.ai', 'grok.com', 'chat.mistral.ai',
+    'huggingface.co', 'pi.ai', 'you.com', 'arena.ai', 'chat.lmsys.org', 'lmsys.org',
+    'chat.z.ai', 'chat.deepseek.com', 'tongyi.aliyun.com', 'chat.qwen.ai',
+    'kimi.com', 'kimi.moonshot.cn', 'doubao.com', 'www.doubao.com',
+    'chatglm.cn', 'yiyan.baidu.com', 'yuanbao.tencent.com',
+    'baichuan-ai.com', 'www.baichuan-ai.com', 'chat.minimaxi.com', 'hailuoai.com',
+    'chat.sensetime.com'
+  ];
+  const currentHost = location.hostname;
+  const isAiToolDomain = AI_TOOLS_DOMAINS.some(d => currentHost === d || currentHost.endsWith('.' + d));
+
+  // Generic fallback config — dipakai kalau domain AI tool tapi tidak ada selectors spesifik
+  const GENERIC_FALLBACK_CONFIG = {
+    id: 'generic',
+    name: 'AI Chat (generic)',
+    patterns: AI_TOOLS_DOMAINS,
+    selectors: {
+      textarea: [
+        'div[contenteditable="true"][role="textbox"]',
+        'textarea[data-testid*="input" i]',
+        'textarea[placeholder*="message" i]',
+        'textarea[placeholder*="ask" i]',
+        'textarea',
+        'div[contenteditable="true"]'
+      ],
+      sendButton: [
+        'button[type="submit"]',
+        'button[aria-label*="send" i]',
+        'button[aria-label*="submit" i]',
+        'button[data-testid*="send" i]'
+      ],
+      userMessage: [
+        '[data-message-author-role="user"]',
+        '[data-message-author="user"]',
+        '.user-message', '.message-user',
+        '[data-role="user"]',
+        '[class*="user"][class*="message"]'
+      ],
+      aiMessage: [
+        '[data-message-author-role="assistant"]',
+        '[data-message-author="assistant"]',
+        '.assistant-message', '.message-assistant',
+        '[data-role="assistant"]',
+        '[class*="assistant"][class*="message"]',
+        '[class*="ai"][class*="message"]',
+        '.markdown-body'
+      ]
+    }
+  };
+
+  // Set config: pakai spesifik kalau ada, kalau tidak pakai generic fallback
+  if (!window.__RecallFoxDomainConfig__ && isAiToolDomain) {
+    window.__RecallFoxDomainConfig__ = GENERIC_FALLBACK_CONFIG;
+  }
+  // __RecallFoxIsAIDomain__ = true kalau ada config (spesifik ATAU generic)
+  window.__RecallFoxIsAIDomain__ = !!window.__RecallFoxDomainConfig__ && isAiToolDomain;
 })();

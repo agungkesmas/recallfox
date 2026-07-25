@@ -1469,11 +1469,19 @@ function renderList() {
       const label = purposeLabels[it.contextPurpose] || it.contextPurpose;
       contextPurposeBadge = '<span title="Tujuan: ' + esc(label) + '" style="font-size:10px;color:var(--muted)">📋 ' + esc(label) + '</span>';
     }
+    // v3.16.0 K5: Badge konteks aktif — indikator visual bahwa konteks ini akan auto-prepend.
+    let activeContextBadge = '';
+    if (it.type === 'context') {
+      const activeIds = (currentVault?.settings?.activeContextIds) || [];
+      if (activeIds.includes(it.id)) {
+        activeContextBadge = ' <span title="Konteks aktif — auto-prepend saat inject prompt" style="font-size:10px;color:#10b981">🟢</span>';
+      }
+    }
     return '<div class="item" data-id="' + it.id + '" tabindex="0">'
       + batchCheckboxHtml
       + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
       + '<div class="item-main">'
-      + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
+      + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'
       + '<div class="item-meta">' + T.label
       + (snapshotBadge ? ' · ' + snapshotBadge : '')
       + (contextPurposeBadge ? ' · ' + contextPurposeBadge : '')
@@ -1695,6 +1703,35 @@ async function injectLinkToChat(it) {
 async function doInject(body, itemId) {
   const settings = currentVault?.settings || {};
   const mode = settings.injectMode || 'append';
+
+  // v3.16.0 K5: Auto-prepend konteks aktif saat inject prompt.
+  // Hanya untuk item type 'prompt' (bukan context/snapshot/link/bundle).
+  // Sebelumnya: user harus ingat klik konteks manual tiap chat baru.
+  // Sekarang: konteks aktif (maks 3) otomatis di-prepend ke body sebelum inject.
+  if (itemId) {
+    const item = currentVault.items.find(i => i.id === itemId);
+    if (item && item.type === 'prompt') {
+      const activeIds = settings.activeContextIds || [];
+      if (activeIds.length > 0) {
+        const activeContexts = activeIds
+          .map(id => currentVault.items.find(i => i.id === id))
+          .filter(it => it && it.type === 'context' && it.body);
+        if (activeContexts.length > 0) {
+          const contextBlock = activeContexts.map(c => {
+            const purposeLabel = {
+              system: 'Instruksi Sistem', project: 'Konteks Proyek',
+              domain: 'Pengetahuan Domain', reference: 'Referensi',
+              instruction: 'Instruksi Kerja'
+            }[c.contextPurpose] || 'Konteks';
+            return '=== ' + purposeLabel + ': ' + (c.title || 'Konteks') + ' ===\n' + c.body;
+          }).join('\n\n');
+          body = contextBlock + '\n\n=== Prompt ===\n' + body;
+          console.log('[RecallFox] doInject: auto-prepended', activeContexts.length, 'active context(s)');
+        }
+      }
+    }
+  }
+
   try {
     const res = await browser.runtime.sendMessage({ type: 'INJECT_TO_ACTIVE_TAB', text: body, mode });
     if (itemId) await incrementUseCount(itemId);
@@ -2661,6 +2698,13 @@ function itemSheet(id) {
     b.innerHTML =
       '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
       + (it.type === 'prompt' || it.type === 'context' ? '<button class="act" data-a="attach">' + ICONS.clipA + '<div>Sisipkan dengan lampiran<div class="ad">Prompt + link referensi sekaligus</div></div></button>' : '')
+      // v3.16.0 K5: Konteks Aktif — toggle flag untuk auto-prepend saat inject prompt.
+      // Maks 3 konteks aktif. Saat user inject prompt, semua konteks aktif di-prepend.
+      + (it.type === 'context' ? (function() {
+          const activeIds = (currentVault?.settings?.activeContextIds) || [];
+          const isActive = activeIds.includes(it.id);
+          return '<button class="act" data-a="toggle-active">' + ICONS.zap + '<div>' + (isActive ? '🔴 Nonaktifkan Konteks' : '🟢 Aktifkan Konteks') + '<div class="ad">' + (isActive ? 'Tidak auto-prepend saat inject prompt' : 'Auto-prepend saat inject prompt (maks 3)') + '</div></div></button>';
+        })() : '')
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
@@ -2696,6 +2740,8 @@ function itemSheet(id) {
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
       else if (k === 'editbundle') { closeSheet(); openBundleEditorSheet(it.id); }
       else if (k === 'fav') { toggleFav(it.id).then(() => { closeSheet(); toast(it.favorite ? '★ Dihapus dari favorit' : '★ Jadikan favorit'); }); }
+      // v3.16.0 K5: Toggle konteks aktif (auto-prepend saat inject prompt)
+      else if (k === 'toggle-active') { closeSheet(); toggleActiveContext(it.id); }
       else if (k === 'archive') { toggleArchive(it.id).then(() => { closeSheet(); toast(it.archived ? '📦 Dikeluarkan dari arsip' : '📦 Diarsipkan'); }); }
       else if (k === 'bundle') { closeSheet(); openReassignBundleSheet(it.id); }
       else if (k === 'dl') { closeSheet(); downloadScreenshot(it.id); }
@@ -2727,6 +2773,37 @@ async function toggleFav(id) {
   if (!it) return;
   await updateItem(id, { favorite: !it.favorite });
   await refreshVault();
+}
+
+// v3.16.0 K5: Toggle konteks aktif — tandai context untuk auto-prepend saat inject prompt.
+// Maks 3 konteks aktif. Disimpan di vault.settings.activeContextIds (array of id).
+// Saat user inject prompt, semua konteks aktif di-prepend ke body (lihat doInject).
+async function toggleActiveContext(id) {
+  const it = currentVault.items.find(i => i.id === id);
+  if (!it || it.type !== 'context') {
+    toast('Hanya konteks yang bisa diaktifkan', false);
+    return;
+  }
+  const settings = currentVault?.settings || {};
+  const activeIds = settings.activeContextIds || [];
+  const MAX_ACTIVE = 3;
+  if (activeIds.includes(id)) {
+    // Nonaktifkan
+    const newActiveIds = activeIds.filter(aid => aid !== id);
+    await saveSettings({ ...settings, activeContextIds: newActiveIds });
+    await refreshVault();
+    toast('🔴 Konteks dinonaktifkan');
+  } else {
+    // Aktifkan — cek maks 3
+    if (activeIds.length >= MAX_ACTIVE) {
+      toast('Maksimal ' + MAX_ACTIVE + ' konteks aktif. Nonaktifkan salah satu dulu.', false);
+      return;
+    }
+    const newActiveIds = [...activeIds, id];
+    await saveSettings({ ...settings, activeContextIds: newActiveIds });
+    await refreshVault();
+    toast('🟢 Konteks aktif — akan auto-prepend saat inject prompt');
+  }
 }
 // v3.7.2 (Issue 1): Toggle arsip — item tetap tersimpan, hanya disembunyikan dari list default.
 async function toggleArchive(id) {

@@ -1804,11 +1804,31 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         func: (maxLen) => {
           // v3.11.11: JANGAN pakai sendResponse di sini — return value saja.
           // Function ini di-inject ke page context, bukan listener context.
+          // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/dll.
           try {
-            const main = document.querySelector('main')
-                      || document.querySelector('[role="main"]')
-                      || document.querySelector('article')
-                      || document.body;
+            // Clone body, hapus elemen noise
+            const bodyClone = document.body.cloneNode(true);
+            const noiseSelectors = [
+              'nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript',
+              'iframe', 'svg', 'canvas', 'form', 'button', 'input', 'select', 'textarea',
+              '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+              '[role="search"]', '[aria-hidden="true"]',
+              '.nav', '.navbar', '.menu', '.sidebar', '.footer', '.header',
+              '.cookie', '.banner', '.popup', '.modal', '.overlay',
+              '.advertisement', '.ads', '.ad', '.sponsor',
+              '.social', '.share', '.comment', '.comments',
+              '.breadcrumb', '.pagination', '.related', '.recommended',
+              '[class*="cookie" i]', '[class*="banner" i]', '[class*="popup" i]',
+              '[class*="modal" i]', '[class*="overlay" i]', '[class*="advert" i]',
+              '[id*="cookie" i]', '[id*="banner" i]', '[id*="popup" i]'
+            ];
+            for (const sel of noiseSelectors) {
+              bodyClone.querySelectorAll(sel).forEach(el => el.remove());
+            }
+            const main = bodyClone.querySelector('main')
+                      || bodyClone.querySelector('[role="main"]')
+                      || bodyClone.querySelector('article')
+                      || bodyClone;
             let text = (main?.innerText || '').trim();
             text = text.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
             const metaDesc = document.querySelector('meta[name="description"]')?.content || '';

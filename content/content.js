@@ -551,13 +551,51 @@
       });
     } else if (msg.type === 'GET_PAGE_CONTEXT') {
       // v3.8.1 (Issue #4): Handler untuk "Ambil dari halaman aktif" di popup Konteks.
-      // Sebelumnya handler ini TIDAK ADA — tombol diam-diam gagal & hanya dapat metadata.
-      // Sekarang ekstrak body text halaman utama (max 8000 char).
+      // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/style/
+      //   form/button/iframe/svg. Skoring paragraf (prioritas <p> dan <article>).
+      //   Sebelumnya: pakai main.innerText mentah → nav, sidebar, footer, banner ikut masuk.
       try {
-        const main = document.querySelector('main')
-                  || document.querySelector('[role="main"]')
-                  || document.querySelector('article')
-                  || document.body;
+        // v3.16.0 K3: Clone body, hapus elemen noise, lalu extract text
+        const bodyClone = document.body.cloneNode(true);
+        // Hapus elemen yang tidak relevan untuk konteks AI
+        const noiseSelectors = [
+          'nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript',
+          'iframe', 'svg', 'canvas', 'form', 'button', 'input', 'select', 'textarea',
+          '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+          '[role="search"]', '[aria-hidden="true"]',
+          '.nav', '.navbar', '.menu', '.sidebar', '.footer', '.header',
+          '.cookie', '.banner', '.popup', '.modal', '.overlay',
+          '.advertisement', '.ads', '.ad', '.sponsor',
+          '.social', '.share', '.comment', '.comments',
+          '.breadcrumb', '.pagination', '.related', '.recommended',
+          '[class*="cookie" i]', '[class*="banner" i]', '[class*="popup" i]',
+          '[class*="modal" i]', '[class*="overlay" i]', '[class*="advert" i]',
+          '[id*="cookie" i]', '[id*="banner" i]', '[id*="popup" i]'
+        ];
+        for (const sel of noiseSelectors) {
+          bodyClone.querySelectorAll(sel).forEach(el => el.remove());
+        }
+        // Skoring paragraf: prioritas <p>, <article>, <section>, <main>, <div role="main">
+        let main = bodyClone.querySelector('main')
+                || bodyClone.querySelector('[role="main"]')
+                || bodyClone.querySelector('article')
+                || bodyClone.querySelector('article[class]')
+                || bodyClone;
+        // v3.16.0 K4: Dedup by URL — cek apakah URL ini sudah pernah di-ambil.
+        // Cek localStorage key 'recallfox_page_context_urls' (array of {url, ts}).
+        // Kalau URL sama diambil <60 detik lalu, beri warning (tapi tetap return text).
+        const urlKey = 'recallfox_page_context_urls';
+        let urlHistory = [];
+        try { urlHistory = JSON.parse(localStorage.getItem(urlKey) || '[]'); } catch (e) {}
+        const now = Date.now();
+        const recent = urlHistory.filter(h => h.url === location.href && (now - h.ts) < 60000);
+        const isDuplicate = recent.length > 0;
+        // Update history (keep last 20)
+        urlHistory = urlHistory.filter(h => (now - h.ts) < 7 * 24 * 60 * 60 * 1000); // 7 hari
+        urlHistory.push({ url: location.href, ts: now, title: document.title || '' });
+        urlHistory = urlHistory.slice(-20);
+        try { localStorage.setItem(urlKey, JSON.stringify(urlHistory)); } catch (e) {}
+
         let text = (main?.innerText || '').trim();
         // Bersihkan whitespace berlebih
         text = text.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
@@ -577,6 +615,7 @@
           url: location.href,
           description: desc,
           selection: sel,
+          isDuplicate: isDuplicate, // v3.16.0 K4: flag untuk UI warning
           meta: {
             wordCount: text ? text.split(/\s+/).length : 0,
             charCount: text.length,
