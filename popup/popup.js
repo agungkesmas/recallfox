@@ -1536,10 +1536,16 @@ function visibleItems() {
 // Group → collapsible header (▶/▼ + nama + count). Children → indent 16px.
 // Item → render seperti biasa (via renderItemHtml) + draggable.
 function renderTreeHtml(items) {
-  // v3.17.4: Pass categoryFilter — kalau chip aktif bukan 'all'/'archive', filter tree
-  // supaya group hanya tampil kalau punya child dengan tipe tsb.
-  const categoryFilter = (currentChip && currentChip !== 'all' && currentChip !== 'archive') ? currentChip : null;
-  const nodes = buildTree(items, expandedGroupIds, categoryFilter);
+  // v3.17.6: Folder/group HANYA tampil di tab kategori spesifik (Prompt/Link/Media/dll).
+  // Di tab "Semua" → semua item flat (no group), supaya tidak campur.
+  // Di tab "Arsip" → juga flat (no group).
+  // categoryFilter = null kalau "Semua"/"Arsip" → buildTree tidak filter, TAPI kita
+  //   juga pass showGroups=false supaya group tidak dirender (flat list).
+  // categoryFilter = 'link' (mis.) → buildTree filter + tampilkan group yang berisi Link.
+  const isSpecificCategory = (currentChip && currentChip !== 'all' && currentChip !== 'archive');
+  const categoryFilter = isSpecificCategory ? currentChip : null;
+  const showGroups = isSpecificCategory;  // group hanya tampil di kategori spesifik
+  const nodes = buildTree(items, expandedGroupIds, categoryFilter, showGroups);
   const html = [];
   for (const node of nodes) {
     if (node.kind === 'group') {
