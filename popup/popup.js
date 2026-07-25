@@ -1767,6 +1767,25 @@ async function doInject(body, itemId) {
     }
   }
 
+  // v3.16.4: Framing instruction — wrap inject text dengan instruksi singkat
+  // supaya AI tahu ini konteks/instruksi, bukan pertanyaan langsung.
+  // User feedback (audit kompetitor): "serap konteks ini dulu" — AI jawab
+  // lebih akurat kalau tahu bahwa teks yang di-inject adalah konteks/referensi.
+  // Hanya untuk context/snapshot/link, dan prompt+context (K5 auto-prepend).
+  // Prompt murni (tanpa konteks) tidak di-frame — prompt IS the instruction.
+  if (settings.framingEnabled !== false && itemId) {
+    const item = currentVault.items.find(i => i.id === itemId);
+    if (item) {
+      const hasContext = body.startsWith('=== '); // K5 auto-prepend marker
+      let prefix = null;
+      if (item.type === 'context') prefix = 'Berikut adalah konteks yang perlu Anda pahami sebelum menjawab:\n\n';
+      else if (item.type === 'snapshot') prefix = 'Berikut adalah snapshot percakapan AI sebelumnya sebagai referensi:\n\n';
+      else if (item.type === 'link') prefix = 'Berikut adalah link referensi yang relevan:\n\n';
+      else if (item.type === 'prompt' && hasContext) prefix = 'Berikut adalah konteks yang perlu Anda pahami sebelum menjawab:\n\n';
+      if (prefix && !body.startsWith(prefix)) body = prefix + body;
+    }
+  }
+
   try {
     const res = await browser.runtime.sendMessage({ type: 'INJECT_TO_ACTIVE_TAB', text: body, mode });
     if (itemId) await incrementUseCount(itemId);
