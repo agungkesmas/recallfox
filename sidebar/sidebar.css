@@ -578,6 +578,13 @@ body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
   width:12px;
   height:12px;
 }
+/* v3.17.2: Tombol group (🤖 Auto, 📁 Grup) tidak punya SVG — emoji text jadi icon.
+   Override font-size:0 supaya emoji tetap terlihat di w-xxs mode. */
+.popup.w-xxs .addbtn#aiGroupBtn,
+.popup.w-xxs .addbtn#addGroupBtn{
+  font-size:13px;
+  padding:4px 6px;
+}
 
 /* ============================================================
    v3.11.14 (Issue #2): Responsive rules untuk batch bar, confirmstrip,
