@@ -1,22 +1,38 @@
-// content/tape-cs.js — RecallTape floating calculator (v3.14.9 — auto-operator newline)
+// content/tape-cs.js — RecallTape floating calculator (v3.14.12)
 //
-// BEHAVIOR BARU (per request user):
-//   1. Ketik angka (mis. 1300) → ketik operator (+ - * /) → OTOMATIS ganti baris ke bawah
-//      dengan operator di awal baris baru. User tidak perlu tekan Enter manual.
-//   2. Ketik = → OTOMATIS tampilkan baris subtotal ( "= Subtotal" ) + buat baris baru kosong
-//      untuk lanjut hitung. User bisa langsung tekan operator lain.
-//   3. Printer fitur: hidden iframe + @media print 80mm receipt. Buka dialog print browser.
-//   4. Save vault → "catatan" (note), bukan prompt. Lihat background.js SAVE_TAPE_TO_VAULT.
+// FILOSOFI BARU (per request user 2026-07-25):
+//   "hilangkan kolom kaku, hilangkan grand total. free kita kyk ngetik biasa
+//    aja di word tapi pas enter itu auto ngitung sesuai operator yang lagi
+//    diperintahkan tambah kurang bagi kali dsb operasi matematika.
+//    sama dengan = juga ga da fungsinya bodoh. enter tu udah mewakili sama
+//    dengan, ketika di entri tu udah ngitung bodoh."
 //
-// Design:
-//   - Single <textarea> for input (reliable, no contenteditable bugs)
-//   - On every input → evaluate ALL lines → update result display LIVE
-//   - On keydown operator (+ - * / =) → intercept, insert newline + operator
-//   - Result bar: block total + grand total (updates as you type)
-//   - Print via iframe to document.body
+// BEHAVIOR:
+//   1. Free typing seperti Word — textarea biasa, user ngetik bebas apa saja
+//   2. Operator inline rapat: "+1300", "/2", "*3", "-500" (TIDAK 2 kolom)
+//   3. Saat tekan Enter:
+//      - Hitung otomatis semua baris sampai baris itu
+//      - Sisipkan garis pemisah tipis "─────"
+//      - Sisipkan baris hasil (subtotal) dengan format "1.250,00  📋"
+//      - Baris baru kosong untuk lanjut ngetik
+//   4. Tidak ada footer BLOCK / GRAND TOTAL
+//   5. Tidak ada tombol "=" (Enter sudah = hitung)
+//   6. Format angka konsisten: "1.250,00" (titik ribuan, koma desimal)
+//   7. Setiap baris hasil ada 📋 untuk copy nilai
+//
+// CARA KERJA EVALUASI:
+//   - Setiap baris di-parse: cari operator awal (+ - * /) lalu angka
+//   - Running total di-maintain, diupdate per baris op
+//   - Baris "─────" + hasil = marker " subtotal" yang ditampilkan tapi TIDAK
+//     ikut dihitung ulang (skip saat re-eval)
+//   - Baris hasil (diawali "→") = display only, skip saat re-eval
+//
+// DESIGN:
+//   - Single <textarea> free-form
 //   - Dark/light theme adaptive
 //   - Draggable header, resizable
-//   - 5 buttons: Pin / Print / Copy / Save / Clear
+//   - 4 buttons: Pin / Print / Copy / Save / Clear (tetap dipertahankan)
+//   - Tidak ada result bar footer (dihapus per spec)
 
 (async function () {
   if (window.__recallfoxTapeLoaded) return;
@@ -32,9 +48,9 @@
   const { evaluate, formatNumber, toPlainText, toMarkdown, loadSession, saveSession, savePinState } = tape;
 
   let host = null, shadow = null, popover = null, textarea = null;
-  let resultBlock = null, resultGrand = null, statusAutosave = null;
+  let statusAutosave = null;
   let pinBtn = null, isVisible = false, pinned = false;
-  let saveTimer = null, evalTimer = null;
+  let saveTimer = null;
 
   // ===== Theme =====
   async function loadTheme() {
@@ -58,8 +74,6 @@
     shadow.innerHTML = TEMPLATE;
     popover = shadow.querySelector('.rft-popover');
     textarea = shadow.querySelector('.rft-editor');
-    resultBlock = shadow.querySelector('.rft-block-val');
-    resultGrand = shadow.querySelector('.rft-grand-val');
     statusAutosave = shadow.querySelector('.rft-autosave');
     pinBtn = shadow.querySelector('.rft-pin');
     wireEvents();
@@ -75,128 +89,266 @@
     const s = await loadSession();
     if (s.text) textarea.value = s.text;
     if (s.pinned) { pinned = true; pinBtn.classList.add('rft-active'); }
-    setTimeout(() => { textarea.focus(); doEval(); }, 50);
+    setTimeout(() => { textarea.focus(); }, 50);
   }
   function hide() { if (popover) { popover.classList.remove('rft-show'); isVisible = false; } }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
-  // ===== Evaluation (live — on every input) =====
-  function doEval() {
+  // ============================================================================
+  // v3.14.12: ENTER = HITUNG OTOMATIS
+  // ============================================================================
+  // Saat user tekan Enter di akhir baris yang berisi operator + angka:
+  //   1. Ambil semua baris input (skip baris hasil/separator yang sudah ada)
+  //   2. Evaluasi semua baris op → dapat running total
+  //   3. Sisipkan baris separator "─────" + baris hasil "→  1.250,00  📋"
+  //   4. Baris baru kosong untuk lanjut ngetik
+  //
+  // Format baris hasil: "→  1.250,00  📋"
+  //   - "→" prefix = marker "ini baris hasil, skip saat re-eval"
+  //   - formatNumber(running) untuk konsistensi
+  //   - 📋 icon untuk copy (click untuk copy nilai)
+  //
+  // Format baris separator: "─────" (5 em-dash)
+  //   - Marker "ini garis pemisah subtotal"
+  //   - Skip saat re-eval
+  //
+  // RE-EVAL LOGIC:
+  //   - Saat user edit baris op (bukan Enter), re-eval semua op lines
+  //   - Baris hasil lama yang sudah ada TIDAK ikut dihitung (skip "→" lines)
+  //   - Tapi TIDAK auto-sisipkan baris hasil baru (hanya Enter yang trigger)
+  //   - Live preview running total di status bar (kecil, tidak mengganggu)
+  // ============================================================================
+
+  function handleEnterKey(e) {
+    // Cek apakah cursor di akhir baris (atau di akhir text)
+    const pos = textarea.selectionStart;
+    const val = textarea.value;
+
+    // Kalau ada selection, biarkan default (Enter replace selection)
+    if (textarea.selectionStart !== textarea.selectionEnd) return;
+
+    // Cari baris saat ini
+    const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+    const lineEnd = pos;  // cursor pos = end of current line (since user about to press Enter)
+    const currentLine = val.slice(lineStart, lineEnd).trim();
+
+    // Kalau baris kosong, biarkan default Enter (insert blank line)
+    if (!currentLine) return;
+
+    // Cek apakah baris saat ini adalah baris OP (punya operator + angka)
+    // Pattern: optional operator (+ - * /) followed by number
+    // Atau angka saja (implicit add)
+    const isOpLine = /^([+\-*/]?)\s*[\d.,]+\s*(k|rb|jt|juta|ribu|m|b|bn)?%?/i.test(currentLine);
+
+    // Kalau bukan op line (mis. comment), biarkan default Enter
+    if (!isOpLine) return;
+
+    // Cek apakah baris saat ini sudah diakhiri % (percent) atau ada note
+    // Pattern op line: [+|-|*|/]<angka>[suffix][%][ note]
+    // Kita hanya trigger auto-result kalau baris adalah op murni (atau op + note)
+    const opMatch = currentLine.match(/^([+\-*/]?)\s*([\d.,]+(?:k|rb|jt|juta|ribu|m|b|bn)?%?)\s*(.*)$/i);
+    if (!opMatch) return;
+
+    // ===== ENTER = HITUNG =====
+    e.preventDefault();
+
+    // Ambil semua baris dari awal sampai baris saat ini (INCLUSIVE)
+    const allLines = val.split('\n');
+    const currentLineIdx = val.slice(0, pos).split('\n').length - 1;
+
+    // Ambil baris-baris op saja (skip separator "─────" dan hasil "→")
+    const opLinesForEval = [];
+    for (let i = 0; i <= currentLineIdx; i++) {
+      const ln = allLines[i];
+      const trimmed = ln.trim();
+      // Skip baris separator (mulai dengan "──" atau "==" karakter berulang)
+      if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) continue;
+      // Skip baris hasil (mulai dengan "→" atau "»" atau "•")
+      if (/^[→»•]/.test(trimmed)) continue;
+      opLinesForEval.push(ln);
+    }
+
+    // Evaluasi untuk dapat running total
+    const result = evaluate(opLinesForEval);
+    const running = result.grandTotal;
+
+    // Sisipkan: separator + baris hasil + baris baru kosong
+    const formatted = formatNumber(running);
+    const separator = '─────';
+    const resultLine = '→  ' + formatted + '  📋';
+    const insert = '\n' + separator + '\n' + resultLine + '\n';
+
+    // Insert di posisi cursor (yang ada di akhir baris saat ini)
+    const before = val.slice(0, pos);
+    const after = val.slice(pos);
+    textarea.value = before + insert + after;
+
+    // Pindah cursor ke baris baru kosong (setelah result line)
+    const newCursorPos = pos + insert.length;
+    textarea.setSelectionRange(newCursorPos, newCursorPos);
+
+    // Scroll ke bawah supaya cursor terlihat
+    textarea.scrollTop = textarea.scrollHeight;
+
+    // Update status + save
+    updateStatus();
+    scheduleSave();
+  }
+
+  // ============================================================================
+  // Live status update (tidak menyisipkan baris, hanya update status bar)
+  // ============================================================================
+  function updateStatus() {
     const text = textarea.value;
     const lines = text.split('\n');
-    const result = evaluate(lines);
-
-    // Update result display
-    const lastEntry = result.entries[result.entries.length - 1];
-    resultBlock.textContent = formatNumber(lastEntry ? lastEntry.running : 0);
-    resultGrand.textContent = formatNumber(result.grandTotal);
-
-    // Update status
+    // Ambil baris op saja (skip separator + hasil)
+    const opLines = [];
+    for (const ln of lines) {
+      const trimmed = ln.trim();
+      if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) continue;
+      if (/^[→»•]/.test(trimmed)) continue;
+      opLines.push(ln);
+    }
+    const result = evaluate(opLines);
     if (statusAutosave) {
       if (result.error) {
         statusAutosave.textContent = '⚠ ' + result.error;
         statusAutosave.style.color = '#FB7185';
       } else {
-        statusAutosave.textContent = '✓ Tersimpan otomatis';
+        statusAutosave.textContent = '✓ Tersimpan otomatis · Total: ' + formatNumber(result.grandTotal);
         statusAutosave.style.color = '';
       }
     }
   }
 
-  function scheduleEval() {
-    if (evalTimer) clearTimeout(evalTimer);
-    evalTimer = setTimeout(doEval, 80);
-  }
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
-    statusAutosave.textContent = '⏳ Menyimpan…';
-    statusAutosave.style.color = '#F0B64A';
+    if (statusAutosave) {
+      statusAutosave.textContent = '⏳ Menyimpan…';
+      statusAutosave.style.color = '#F0B64A';
+    }
     saveTimer = setTimeout(async () => {
       try { await saveSession(textarea.value); } catch (e) {}
-      doEval();
+      updateStatus();
     }, 400);
   }
 
-  // ===== v3.14.9: Operator key handler — auto-newline =====
-  // Saat user tekan + - * / atau = di textarea:
-  //   - Untuk + - * /: insert "\n" + operator + " " di posisi cursor, lalu pindah cursor ke akhir
-  //   - Untuk =: insert "\n= \n" di posisi cursor (baris subtotal + baris baru kosong untuk lanjut)
-  // Ini mengikuti behavior kalkulator klasik: angka di-commit, operator jadi awal baris baru.
-  function handleOperatorKey(op) {
+  // ===== Click handler untuk 📋 icon di baris hasil =====
+  // Karena textarea tidak bisa punya clickable elements, kita handle via
+  // double-click di baris hasil → copy nilai ke clipboard.
+  function handleResultLineDoubleClick() {
     const pos = textarea.selectionStart;
-    const endPos = textarea.selectionEnd;
     const val = textarea.value;
+    const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+    let lineEnd = val.indexOf('\n', pos);
+    if (lineEnd === -1) lineEnd = val.length;
+    const currentLine = val.slice(lineStart, lineEnd);
 
-    // Hapus selection kalau ada
-    const before = val.slice(0, pos);
-    const after = val.slice(endPos);
-
-    let insert, newCursorPos;
-    if (op === '=') {
-      // Untuk =: baris baru + "= " + baris baru kosong untuk lanjut
-      // User bisa langsung ketik angka + operator lagi di baris baru
-      insert = '\n= \n';
-      newCursorPos = pos + insert.length;
-    } else {
-      // Untuk + - * /: baris baru + operator + spasi
-      insert = '\n' + op + ' ';
-      newCursorPos = pos + insert.length;
+    // Kalau baris hasil (mulai dengan "→")
+    if (currentLine.trim().startsWith('→')) {
+      // Extract angka setelah "→" dan sebelum "📋"
+      const match = currentLine.match(/→\s*([\d.,-]+)\s*📋?/);
+      if (match) {
+        const numStr = match[1];
+        // Convert "1.250,00" → "1250.00" untuk clipboard (atau biarkan format ID)
+        // User minta format konsisten, jadi copy persis seperti tampilan
+        navigator.clipboard.writeText(numStr).then(() => {
+          toast('📋 ' + numStr + ' tersalin');
+        }).catch(() => {
+          // Fallback
+          const ta = document.createElement('textarea');
+          ta.value = numStr; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); toast('📋 ' + numStr + ' tersalin'); } catch (e2) {}
+          ta.remove();
+        });
+      }
     }
-
-    textarea.value = before + insert + after;
-    textarea.setSelectionRange(newCursorPos, newCursorPos);
-    // Scroll to bottom supaya cursor terlihat
-    textarea.scrollTop = textarea.scrollHeight;
-
-    doEval();
-    scheduleSave();
   }
 
   // ===== Actions =====
   async function doCopy() {
     const text = textarea.value;
-    const result = evaluate(text.split('\n'));
-    const plain = toPlainText(result);
+    // Ambil baris op saja untuk evaluasi (skip separator + hasil)
+    const lines = text.split('\n');
+    const opLines = [];
+    for (const ln of lines) {
+      const trimmed = ln.trim();
+      if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) continue;
+      if (/^[→»•]/.test(trimmed)) continue;
+      opLines.push(ln);
+    }
+    const result = evaluate(opLines);
+    // Build plain text: op lines + separator + hasil
+    const plain = buildPlainTextForCopy(opLines, result);
     try {
       await navigator.clipboard.writeText(plain);
       flashBtn('.rft-copy');
+      toast('📋 Tape tersalin');
     } catch (e) {
       const ta = document.createElement('textarea');
       ta.value = plain; document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); flashBtn('.rft-copy'); } catch (e2) {}
+      try { document.execCommand('copy'); flashBtn('.rft-copy'); toast('📋 Tape tersalin'); } catch (e2) {}
       ta.remove();
     }
   }
 
-  // v3.14.9: Print via hidden iframe + @page 80mm — fix print blank
-  // Hidden iframe di document.body (BUKAN di Shadow DOM) supaya cross-origin policy OK
+  function buildPlainTextForCopy(opLines, result) {
+    const out = [];
+    out.push('🧮 RecallTape');
+    out.push(new Date().toLocaleString('id-ID'));
+    out.push('');
+    let running = 0;
+    for (let i = 0; i < opLines.length; i++) {
+      const ln = opLines[i];
+      const trimmed = ln.trim();
+      if (!trimmed) continue;
+      out.push(trimmed);
+    }
+    out.push('─────');
+    out.push('→  ' + formatNumber(result.grandTotal) + '  📋');
+    return out.join('\n');
+  }
+
+  // v3.14.12: Print via hidden iframe + @page 80mm — sesuai format baru
   function doPrint() {
     const text = textarea.value;
-    const result = evaluate(text.split('\n'));
-    if (result.entries.length === 0) { toast('Tape kosong'); return; }
+    if (!text.trim()) { toast('Tape kosong'); return; }
 
-    // Build receipt HTML — struk pita kertas 80mm
+    // Ambil semua baris (termasuk separator + hasil) untuk display
+    const allLines = text.split('\n');
+
+    // Build receipt HTML
     const lines = [];
-    lines.push('<div class="rct-hd"><h1>🧾 RecallTape</h1><div class="rct-date">' + new Date().toLocaleString('id-ID') + '</div></div>');
-    for (const e of result.entries) {
-      if (e.kind === 'comment' || e.kind === 'note') {
-        lines.push('<div class="rct-line rct-comment">' + esc(e.note) + '</div>');
-        continue;
-      }
-      if (e.kind === 'subtotal') {
+    lines.push('<div class="rct-hd"><h1>🧮 RecallTape</h1><div class="rct-date">' + new Date().toLocaleString('id-ID') + '</div></div>');
+    for (const ln of allLines) {
+      const trimmed = ln.trim();
+      if (!trimmed) continue;
+      // Separator line
+      if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) {
         lines.push('<div class="rct-sep"></div>');
-        lines.push('<div class="rct-line rct-subtotal"><span class="rct-op">=</span><span class="rct-label">' + esc(e.note || 'Subtotal') + '</span><span class="rct-val">' + formatNumber(e.running) + '</span></div>');
         continue;
       }
-      // op row
-      const sym = e.op || '+';
-      const amtStr = e.isPercent ? formatNumber(e.amount) + '%' : formatNumber(e.amount);
-      const hint = e.isPercent && e.percentValue != null ? ' | ' + formatNumber(e.percentValue) : '';
-      const note = e.note ? '<span class="rct-note">' + esc(e.note) + '</span>' : '';
-      lines.push('<div class="rct-line"><span class="rct-op">' + sym + '</span><span class="rct-amt">' + amtStr + hint + '</span>' + note + '</div>');
+      // Result line (mulai dengan "→")
+      if (/^[→»•]/.test(trimmed)) {
+        const match = trimmed.match(/→\s*([\d.,-]+)\s*📋?/);
+        if (match) {
+          lines.push('<div class="rct-line rct-subtotal"><span class="rct-op">→</span><span class="rct-val">' + esc(match[1]) + '</span></div>');
+        }
+        continue;
+      }
+      // Op line — parse untuk display rapi
+      const opMatch = trimmed.match(/^([+\-*/]?)\s*([\d.,]+(?:k|rb|jt|juta|ribu|m|b|bn)?%?)\s*(.*)$/i);
+      if (opMatch) {
+        const sym = opMatch[1] || '+';
+        const amt = opMatch[2];
+        const note = opMatch[3] || '';
+        const noteHtml = note ? '<span class="rct-note">' + esc(note) + '</span>' : '';
+        lines.push('<div class="rct-line"><span class="rct-op">' + sym + '</span><span class="rct-amt">' + esc(amt) + '</span>' + noteHtml + '</div>');
+      } else {
+        // Comment / plain text
+        lines.push('<div class="rct-line rct-comment">' + esc(trimmed) + '</div>');
+      }
     }
-    lines.push('<div class="rct-sep rct-double"></div>');
-    lines.push('<div class="rct-grand"><span class="rct-op">=</span><span class="rct-label">GRAND TOTAL</span><span class="rct-val">' + formatNumber(result.grandTotal) + '</span></div>');
 
     const html = '<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>RecallTape Resi</title>' +
       '<style>' +
@@ -208,18 +360,13 @@
       '.rct-hd h1 { font-size: 13px; font-weight: 700; }' +
       '.rct-date { font-size: 9px; color: #666; margin-top: 1px; }' +
       '.rct-line { padding: 1px 0; display: flex; align-items: baseline; }' +
-      '.rct-line .rct-op { width: 10px; flex: none; font-weight: 700; }' +
+      '.rct-line .rct-op { width: 12px; flex: none; font-weight: 700; }' +
       '.rct-line .rct-amt { flex: 1; padding-left: 4px; font-variant-numeric: tabular-nums; }' +
       '.rct-line .rct-note { flex: none; max-width: 50%; margin-left: 6px; color: #555; font-family: Arial, sans-serif; font-size: 9px; }' +
       '.rct-comment { color: #666; font-family: Arial, sans-serif; font-style: italic; padding-left: 14px; }' +
       '.rct-sep { border-top: 1px dashed #999; margin: 3px 0; }' +
-      '.rct-sep.rct-double { border-top: 2px solid #000; margin-top: 4px; }' +
       '.rct-subtotal { font-weight: 700; padding-top: 2px; }' +
-      '.rct-subtotal .rct-label { flex: 1; padding-left: 4px; font-family: Arial, sans-serif; }' +
       '.rct-subtotal .rct-val { font-variant-numeric: tabular-nums; }' +
-      '.rct-grand { padding-top: 4px; margin-top: 2px; font-weight: 700; font-size: 12px; align-items: baseline; }' +
-      '.rct-grand .rct-label { flex: 1; padding-left: 4px; font-family: Arial, sans-serif; }' +
-      '.rct-grand .rct-val { font-variant-numeric: tabular-nums; }' +
       '.rct-foot { margin-top: 4mm; padding-top: 2mm; border-top: 1px dashed #000; text-align: center; font-size: 9px; color: #666; font-family: Arial, sans-serif; }' +
       '@media print { body { padding: 2mm; } }' +
       '</style></head><body>' +
@@ -239,7 +386,6 @@
       iframe.remove();
       return;
     }
-    // Tunggu render, lalu trigger print dialog
     setTimeout(() => {
       try {
         iframe.contentWindow.focus();
@@ -247,20 +393,27 @@
       } catch (e) {
         toast('Gagal print: ' + e.message);
       }
-      // Cleanup iframe setelah 2 detik (kasih waktu user cancel print)
       setTimeout(() => { try { iframe.remove(); } catch (e) {} }, 2000);
     }, 300);
     flashBtn('.rft-print');
   }
 
-  // v3.14.9: Save ke vault sebagai "catatan" (note) — bukan prompt
-  // Background.js handler SAVE_TAPE_TO_VAULT sudah simpan sebagai note
+  // v3.14.12: Save ke vault sebagai "catatan" (note)
   async function doSave() {
     const text = textarea.value;
-    const result = evaluate(text.split('\n'));
-    if (result.entries.length === 0) { toast('Tape kosong'); return; }
+    if (!text.trim()) { toast('Tape kosong'); return; }
     try {
-      const md = toMarkdown(result);
+      // Ambil baris op saja untuk eval
+      const lines = text.split('\n');
+      const opLines = [];
+      for (const ln of lines) {
+        const trimmed = ln.trim();
+        if (/^[─=─]{3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) continue;
+        if (/^[→»•]/.test(trimmed)) continue;
+        opLines.push(ln);
+      }
+      const result = evaluate(opLines);
+      const md = buildPlainTextForCopy(opLines, result);
       await browser.runtime.sendMessage({
         type: 'SAVE_TAPE_TO_VAULT',
         markdown: md,
@@ -276,7 +429,7 @@
     if (!textarea.value.trim()) return;
     if (!confirm('Kosongkan tape?')) return;
     textarea.value = '';
-    doEval();
+    updateStatus();
     scheduleSave();
     textarea.focus();
     flashBtn('.rft-clear');
@@ -323,11 +476,11 @@
 
   // ===== Wire events =====
   function wireEvents() {
-    // Textarea input → live eval + debounced save
-    textarea.addEventListener('input', () => { scheduleEval(); scheduleSave(); });
+    // Textarea input → live status update + debounced save
+    // TIDAK auto-sisipkan baris hasil (hanya Enter yang trigger)
+    textarea.addEventListener('input', () => { updateStatus(); scheduleSave(); });
 
-    // v3.14.9: KEYDOWN — intercept operator keys untuk auto-newline
-    // Saat user tekan + - * / atau =, jangan insert operator ke text, tapi insert newline + operator
+    // KEYDOWN — Enter = hitung otomatis
     textarea.addEventListener('keydown', (e) => {
       // Ctrl+Enter → save to vault
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -341,40 +494,18 @@
         hide();
         return;
       }
-      // v3.14.9: Operator keys → auto-newline
-      // Cek apakah cursor di akhir baris (atau di akhir text)
-      // Kalau di tengah angka, jangan intercept (biarkan user edit)
-      const key = e.key;
-      if (key === '+' || key === '-' || key === '*' || key === '/' || key === '=') {
-        // Jangan intercept kalau user lagi seleksi text (biar bisa replace selection)
-        // Tapi kalau selection ada, biarkan default — itu edit biasa
-        if (textarea.selectionStart !== textarea.selectionEnd) return;
-
-        // Cek apakah di akhir baris (cursor di posisi newline atau end of text)
-        const pos = textarea.selectionStart;
-        const val = textarea.value;
-        const atEndOfLine = (pos === val.length) || (val[pos] === '\n');
-
-        if (atEndOfLine) {
-          // Cek apakah baris sekarang sudah ada operator di awalnya
-          // Kalau baris kosong atau baris sudah ada operator, jangan double-insert
-          const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
-          const currentLine = val.slice(lineStart, pos);
-          const trimmedCurrent = currentLine.trim();
-
-          // Kalau baris kosong DAN user tekan operator, biarkan default (insert operator ke baris kosong)
-          // Tapi kalau baris ada angkanya, auto-newline
-          if (trimmedCurrent === '' && key !== '=') {
-            // Baris kosong, user tekan operator — biarkan default insert
-            return;
-          }
-
-          // v3.14.9: Auto-newline
-          e.preventDefault();
-          handleOperatorKey(key);
-        }
-        // Kalau tidak di akhir baris, biarkan default (edit angka di tengah)
+      // v3.14.12: Enter = hitung otomatis (bukan =)
+      if (e.key === 'Enter' && !e.shiftKey) {
+        handleEnterKey(e);
+        // Shift+Enter = baris baru biasa (multiline note) — biarkan default
       }
+      // = TIDAK ada fungsinya — Enter sudah = hitung
+      // (kalau user tekan =, biarkan default insert karakter "=" sebagai comment)
+    });
+
+    // Double-click di baris hasil → copy nilai
+    textarea.addEventListener('dblclick', () => {
+      handleResultLineDoubleClick();
     });
 
     // Buttons
@@ -409,7 +540,7 @@
     else if (msg.type === 'ADD_TO_TAPE') {
       show();
       textarea.value += (textarea.value ? '\n' : '') + msg.text;
-      doEval();
+      updateStatus();
       scheduleSave();
     }
     else if (msg.type === 'SHOW_TAPE') show();
@@ -419,6 +550,9 @@
   loadSession().then((s) => { pinned = s.pinned; });
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
+  // v3.14.12: HAPUS footer BLOCK + GRAND TOTAL.
+  // Hanya: header (draggable) + textarea (free typing) + status bar (live total).
+  // User tekan Enter → baris hasil otomatis muncul di textarea.
   const TEMPLATE = `
 <style>
 :host{all:initial}
@@ -471,13 +605,13 @@
 .rft-btn.rft-flash{ background:#42C6A0; color:#fff; }
 .rft-btn svg{ width:13px; height:13px }
 
-/* Textarea editor */
+/* Textarea editor — free typing seperti Word */
 .rft-editor{
-  flex:1; overflow-y:auto; min-height:180px; max-height:400px;
+  flex:1; overflow-y:auto; min-height:240px; max-height:480px;
   background:#273953; color:#E8EEF7;
   font-family:Menlo,Consolas,"Courier New",monospace;
-  font-size:13px; line-height:24px;
-  padding:8px 14px; border:none; outline:none; resize:none;
+  font-size:14px; line-height:26px;
+  padding:10px 14px; border:none; outline:none; resize:none;
   width:100%; font-variant-numeric:tabular-nums;
   white-space:pre; overflow-wrap:normal;
 }
@@ -485,45 +619,19 @@
 .rft-editor::-webkit-scrollbar{ width:6px }
 .rft-editor::-webkit-scrollbar-thumb{ background:#364C6C; border-radius:3px }
 :host([data-theme="light"]) .rft-editor::-webkit-scrollbar-thumb{ background:#CBD5E1; }
-.rft-editor::placeholder{ color:#5B7090; }
+.rft-editor::placeholder{ color:#5B7090; white-space:pre-wrap; }
 :host([data-theme="light"]) .rft-editor::placeholder{ color:#94A3B8; }
 
-/* Status bar */
+/* Status bar (live total — kecil, tidak mengganggu) */
 .rft-status{
-  flex:none; padding:4px 10px; background:#1A293D;
+  flex:none; padding:6px 12px; background:#1A293D;
   border-top:1px solid #0F1E33;
   display:flex; align-items:center; gap:8px;
   font-family:-apple-system,system-ui,sans-serif;
-  font-size:10px; color:#A3B0C2;
+  font-size:11px; color:#A3B0C2;
 }
 :host([data-theme="light"]) .rft-status{ background:#FFFFFF; border-top:1px solid #E2E8F0; color:#64748B; }
 .rft-autosave{ margin-left:auto; }
-
-/* Result bar */
-.rft-result-bar{
-  flex:none; padding:8px 14px; background:#1A293D;
-  border-top:1px solid #0F1E33;
-  display:flex; gap:14px; align-items:flex-end;
-}
-:host([data-theme="light"]) .rft-result-bar{ background:#FFFFFF; border-top:1px solid #E2E8F0; }
-.rft-block, .rft-grand{ display:flex; flex-direction:column; gap:2px; }
-.rft-grand{ margin-left:auto; text-align:right; align-items:flex-end; }
-.rft-eyebrow{
-  font-family:-apple-system,system-ui,sans-serif;
-  font-size:9px; font-weight:700; letter-spacing:.05em;
-  color:#60A5FA; text-transform:uppercase;
-}
-:host([data-theme="light"]) .rft-eyebrow{ color:#3B82F6; }
-.rft-block-val{
-  font-family:Menlo,Consolas,monospace; font-size:14px; font-weight:600;
-  color:#E8EEF7; font-variant-numeric:tabular-nums;
-}
-:host([data-theme="light"]) .rft-block-val{ color:#1E293B; }
-.rft-grand-val{
-  font-family:Menlo,Consolas,monospace; font-size:20px; font-weight:700;
-  color:#42C6A0; font-variant-numeric:tabular-nums; line-height:1;
-}
-:host([data-theme="light"]) .rft-grand-val{ color:#059669; }
 
 /* Toast */
 .rft-toast{
@@ -559,19 +667,29 @@
       </button>
     </div>
   </div>
-  <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, lalu tekan + - * / atau =&#10;Contoh:&#10;1300&#10;- 500&#10;= Subtotal&#10;+ 200&#10;= Total&#10;&#10;Suffix: k/rb/jt/juta&#10;Percent: + 19% PPN"></textarea>
+  <textarea class="rft-editor" spellcheck="false" placeholder="Ngetik bebas seperti di Word.
+
+Contoh:
+1300
++500          ← tekan Enter
+─────
+→  1.800,00  📋
+
+/2            ← tekan Enter
+─────
+→  900,00  📋
+
+*3            ← tekan Enter
+─────
+→  2.700,00  📋
+
+Suffix: k/rb/jt/juta
+Percent: +10% PPN
+
+Enter = hitung otomatis
+Double-click baris hasil (→) untuk copy nilai"></textarea>
   <div class="rft-status">
     <span class="rft-autosave">✓ Tersimpan otomatis</span>
-  </div>
-  <div class="rft-result-bar">
-    <div class="rft-block">
-      <span class="rft-eyebrow">Block</span>
-      <span class="rft-block-val">0</span>
-    </div>
-    <div class="rft-grand">
-      <span class="rft-eyebrow">Grand Total</span>
-      <span class="rft-grand-val">0</span>
-    </div>
   </div>
   <div class="rft-toast"></div>
 </div>
