@@ -33,7 +33,7 @@ import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigur
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
 // v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
 // semua pakai format yang sama persis.
-import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, buildCompositeImage } from '../lib/copy-format.js';
+import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, writeImageOnlyToClipboard, buildCompositeImage } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -2010,6 +2010,14 @@ function openImageModalViewer(item, pages) {
   // ===== Tombol 1: Salin Gambar (image only) =====
   // Single-page: copy page tersebut langsung.
   // Multi-page: composite grid bernomor via buildCompositeImage (pattern vault batch copy).
+  //
+  // v3.14.8: Pakai helper baru writeImageOnlyToClipboard (bukan writeScreenshotToClipboard
+  // dengan textHtml=''). Sebelumnya, textHtml='' menyebabkan strategi 2 di writeScreenshotToClipboard
+  // SKIP (falsy check), sehingga kalau strategi 1 gagal (gesture expired untuk multi-page,
+  // atau empty text/html Blob ditolak), hanya fallback ke strategi 3 (writeText label pendek).
+  // User lihat cuma teks "Laporan Bulanan (3 halaman)" → dianggap "tidak berfungsi".
+  // Helper baru punya 3 strategi yang fokus image-only: A) ClipboardItem image/png only,
+  // B) text/html dengan <img src="dataUrl"> embedded, C) writeText dataUrl (last resort).
   copyFooter.appendChild(makeCopyBtn(
     '🖼️ Salin Gambar',
     isMulti ? 'Salin semua halaman jadi 1 gambar (grid bernomor)' : 'Salin gambar saja ke clipboard',
@@ -2032,20 +2040,29 @@ function openImageModalViewer(item, pages) {
           }
           targetDataUrl = await blobToDataUrl(compositeResult.blob);
         } else {
-          // Single-page — pakai page aktif (atau page 0 kalai validPages hanya 1)
+          // Single-page — pakai page aktif (atau page 0 kalau validPages hanya 1)
           targetDataUrl = validPages[cur]?.dataUrl || dataUrls[0];
         }
-        // textPlain minimal supaya fallback strategi 3 (text-only) bisa jalan kalau image gagal
-        const label = (item.title || 'Gambar') + (isMulti ? ' (' + dataUrls.length + ' halaman)' : '');
-        const result = await writeScreenshotToClipboard(targetDataUrl, label, '');
+        // v3.14.8: Pakai writeImageOnlyToClipboard (image-only, 3 strategi robust).
+        const result = await writeImageOnlyToClipboard(targetDataUrl);
         if (result.ok) {
-          toast(result.fallback === 'text_only'
-            ? '✓ Tersalin teks saja (browser blokir clipboard image)'
-            : (isMulti ? '✓ ' + dataUrls.length + ' halaman tersalin (1 gambar gabungan)' : '✓ Gambar tersalin'),
-            true);
+          // Pesan berbeda per fallback:
+          // - default: '✓ Gambar tersalin ke clipboard' (strategi A berhasil — best case)
+          // - html_embedded: '✓ Gambar tersalin (embedded HTML)' (strategi B — paste ke rich text editor)
+          // - data_url_text: '✓ Data URL gambar tersalin (text-only)' (strategi C — last resort)
+          if (result.fallback === 'html_embedded') {
+            toast('✓ Gambar tersalin — paste ke Google Docs/Gmail untuk menampilkan', true);
+          } else if (result.fallback === 'data_url_text') {
+            toast('✓ Data URL tersalin (browser blokir clipboard image)', true);
+          } else {
+            toast(isMulti
+              ? '✓ ' + dataUrls.length + ' halaman tersalin (1 gambar gabungan) — paste ke WA/Telegram/Docs'
+              : '✓ Gambar tersalin — paste ke WA/Telegram/Docs',
+              true);
+          }
         } else {
           console.error('[RecallFox] Salin Gambar failed:', result);
-          toast('Gagal salin: ' + (result.error || 'unknown'), false);
+          toast('Gagal salin gambar: ' + (result.error || 'unknown'), false);
         }
       } catch (e) {
         console.error('[RecallFox] Salin Gambar exception:', e);
