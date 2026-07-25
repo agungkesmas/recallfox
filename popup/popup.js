@@ -1878,6 +1878,80 @@ async function doInject(body, itemId) {
   await refreshVault();
 }
 
+// v3.16.8 #7: Lanjutkan snapshot di AI lain — copy snapshot body + buka AI lain di tab baru
+// User bisa pindah percakapan dari satu AI ke AI lain dengan konteks yang sama.
+async function continueInOtherAI(itemId) {
+  const it = currentVault.items.find(i => i.id === itemId);
+  if (!it) { toast('Item tidak ditemukan', false); return; }
+  if (!it.body || it.body.trim().length === 0) { toast('Snapshot kosong', false); return; }
+
+  // Tentukan AI lain yang bisa dipilih (exclude AI yang sedang aktif di tab saat ini)
+  const currentOrigin = currentAiDomain?.url ? new URL(currentAiDomain.url).hostname : '';
+  const otherAIs = AI_TOOLS.filter(t => {
+    if (!t.url) return false;
+    try {
+      const toolHost = new URL(t.url).hostname;
+      return toolHost !== currentOrigin;
+    } catch { return false; }
+  });
+
+  if (otherAIs.length === 0) { toast('Tidak ada AI lain tersedia', false); return; }
+
+  // Tampilkan sheet pilih AI
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet show';
+  sheet.innerHTML = `
+    <div class="scrim" data-close></div>
+    <div class="sheet-card">
+      <div class="sheet-h">
+        <h3>🔄 Lanjutkan di AI Lain</h3>
+        <button class="x" data-close>✕</button>
+      </div>
+      <div style="padding:8px 16px 4px;font-size:11px;color:var(--text-2);line-height:1.5">
+        Snapshot akan disalin ke clipboard, lalu AI yang dipilih akan dibuka di tab baru.
+        Paste (Ctrl+V) snapshot ke chat AI tersebut.
+      </div>
+      <div class="sheet-body" style="max-height:50vh;overflow-y:auto">
+        ${otherAIs.map(ai => `
+          <button class="act" data-url="${ai.url}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left">
+            <span style="font-size:20px">${ai.emoji || '🤖'}</span>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px">${ai.name}</div>
+              <div style="font-size:11px;color:var(--text-2)">${ai.url}</div>
+            </div>
+            <span style="font-size:14px;color:var(--primary)">↗</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+
+  // Wire close
+  sheet.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => sheet.remove()));
+
+  // Wire AI selection
+  sheet.querySelectorAll('.act[data-url]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const url = btn.dataset.url;
+      try {
+        // Copy snapshot body to clipboard
+        await navigator.clipboard.writeText(it.body);
+        toast('📋 Snapshot disalin. Tab AI akan dibuka — paste (Ctrl+V) ke chat.');
+        // Open AI in new tab
+        await browser.tabs.create({ url: url });
+        sheet.remove();
+        // Close popup (sidebar tetap terbuka)
+        if (!document.body.classList.contains('rf-sidebar-body')) {
+          setTimeout(() => window.close(), 600);
+        }
+      } catch (e) {
+        toast('Gagal: ' + e.message, false);
+      }
+    });
+  });
+}
+
 // v3.16.5: Ringkas snapshot dengan AI sebelum inject — hemat token
 async function summarizeAndInject(itemId) {
   const it = currentVault.items.find(i => i.id === itemId);
@@ -2852,6 +2926,9 @@ function itemSheet(id) {
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
       // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
       + (it.type === 'snapshot' ? '<button class="act" data-a="summarize">' + ICONS.spark + '<div>🤖 Ringkas dengan AI<div class="ad">Ringkas snapshot sebelum sisipkan — hemat token</div></div></button>' : '')
+      // v3.16.8 #7: Lanjutkan snapshot di AI lain — copy snapshot body + buka AI lain di tab baru
+      // User bisa pindah percakapan dari satu AI ke AI lain dengan konteks yang sama.
+      + (it.type === 'snapshot' ? '<button class="act" data-a="continue-ai">' + ICONS.spark + '<div>🔄 Lanjutkan di AI Lain<div class="ad">Salin snapshot + buka AI lain (Claude/Gemini/dll) di tab baru</div></div></button>' : '')
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
@@ -2886,6 +2963,8 @@ function itemSheet(id) {
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
       // v3.16.5: Ringkas snapshot dengan AI
       else if (k === 'summarize') { closeSheet(); summarizeAndInject(it.id); }
+      // v3.16.8 #7: Lanjutkan snapshot di AI lain
+      else if (k === 'continue-ai') { closeSheet(); continueInOtherAI(it.id); }
       else if (k === 'editbundle') { closeSheet(); openBundleEditorSheet(it.id); }
       else if (k === 'fav') { toggleFav(it.id).then(() => { closeSheet(); toast(it.favorite ? '★ Dihapus dari favorit' : '★ Jadikan favorit'); }); }
       // v3.16.0 K5: Toggle konteks aktif (auto-prepend saat inject prompt)
