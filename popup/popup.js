@@ -1786,11 +1786,17 @@ async function doInject(body, itemId) {
     }
   }
 
+  // v3.16.6: Estimasi token sebelum inject — user tahu berapa token yang dikirim
+  const estTokens = Math.ceil(body.length / 4);
+  if (estTokens > 500) {
+    console.log('[RecallFox] Inject ~' + estTokens + ' tokens (' + body.length + ' chars)');
+  }
+
   try {
     const res = await browser.runtime.sendMessage({ type: 'INJECT_TO_ACTIVE_TAB', text: body, mode });
     if (itemId) await incrementUseCount(itemId);
     if (res?.ok) {
-      toast('⚡ Disisipkan' + (currentAiDomain ? ' ke ' + currentAiDomain.name : ''));
+      toast('⚡ Disisipkan' + (currentAiDomain ? ' ke ' + currentAiDomain.name : '') + (estTokens > 500 ? ' (~' + estTokens + ' token)' : ''));
       if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
     } else {
       // v3.7.1-FIX: Benar-benar salin ke clipboard, bukan cuma pesan toast
