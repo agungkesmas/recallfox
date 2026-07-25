@@ -2201,8 +2201,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'DOWNLOAD_SCREENSHOT') {
     // Save full image to user's Downloads folder via browser.downloads API
     // v3.13.4: Pakai getOrDownloadScreenshotBlob (cloud fallback) bukan getScreenshotBlob (local-only).
-    // Sebelumnya, screenshot yang di-capture di PWA (tidak ada di cache lokal addon) gagal
-    // download dengan "no_blob". Sekarang addon bisa download dari cloud URL.
+    // v3.14.9 FIX: Konversi dataUrl → Blob → objectURL sebelum browser.downloads.download.
+    //   Sebelumnya: url: dataUrl (data:image/png;base64,...) — Firefox MV3 sering
+    //   render dataUrl sebagai teks di tab (full screen base64 string) alih-alih
+    //   download. User report: "layar penuh teks acak yang tampak seperti encoded
+    //   string (Base64)". Pattern ini sudah dipakai 4x di file ini (clipboard
+    //   fallback) — sekarang konsisten.
     try {
       const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
       const res = await getOrDownloadScreenshotBlob(msg.id);
@@ -2211,14 +2215,22 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
       const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
       const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
+      const mimeType = msg.format === 'jpeg' ? 'image/jpeg' : 'image/png';
       try {
+        // v3.14.9: Konversi dataUrl → Blob → objectURL (pattern dari clipboard fallback line ~2361)
+        const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: mimeType });
+        const objectUrl = URL.createObjectURL(blob);
         const id = await browser.downloads.download({
-          url: dataUrl,
+          url: objectUrl,
           filename: `RecallFox/${safeName}_${ts}.${ext}`,
-          saveAs: false
+          saveAs: false,
+          conflictAction: 'uniquify'
         });
+        // Revoke objectURL setelah 30s (cukup untuk download dimulai)
+        setTimeout(() => { try { URL.revokeObjectURL(objectUrl); } catch (e) {} }, 30000);
         sendResponse({ ok: true, downloadId: id }); return;
       } catch (e) {
+        console.warn('[RecallFox] DOWNLOAD_SCREENSHOT download failed:', e.message);
         sendResponse({ ok: false, error: e.message }); return;
       }
     } catch (e) {

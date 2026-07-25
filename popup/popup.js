@@ -715,6 +715,8 @@ function updateVaultBatchBarButtons() {
   if (!bar) return;
   const copyCaptionBtn = $('#vaultBatchCopy');        // Copy + Keterangan (screenshot only)
   const copyImgBtn = $('#vaultBatchCopyImg');         // Copy Gambar Saja (screenshot only)
+  const downloadBtn = $('#vaultBatchDownload');       // v3.14.9: Download Semua (screenshot/doc only)
+  const copyUrlsBtn = $('#vaultBatchCopyUrls');       // v3.14.9: Copy URL gambar (screenshot/doc only)
   const copyMetaBtn = $('#vaultBatchCopyMeta');       // Copy Teks Saja (screenshot only, text-only)
   const copyTextBtn = $('#vaultBatchCopyText');       // Copy Teks (prompt/context/link/snapshot)
   const copyBundleBtn = $('#vaultBatchCopyBundle');   // Copy Bundle (bundle only)
@@ -722,7 +724,7 @@ function updateVaultBatchBarButtons() {
   const deleteBtn = $('#vaultBatchDelete');           // Hapus (semua)
 
   // Reset semua
-  [copyCaptionBtn, copyImgBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
+  [copyCaptionBtn, copyImgBtn, downloadBtn, copyUrlsBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
     if (b) b.style.display = 'none';
   });
 
@@ -751,9 +753,12 @@ function updateVaultBatchBarButtons() {
     if (unarchiveBtn) unarchiveBtn.style.display = '';
   }
   // v3.12.0: Tombol screenshot juga tampil untuk dokumen (copy halaman pertama + caption).
+  // v3.14.9: Tambah Download Semua + Copy URL untuk AI sites.
   if (hasScreenshot || hasDocument) {
     if (copyCaptionBtn) copyCaptionBtn.style.display = '';
     if (copyImgBtn) copyImgBtn.style.display = '';
+    if (downloadBtn) downloadBtn.style.display = '';
+    if (copyUrlsBtn) copyUrlsBtn.style.display = '';
     if (copyMetaBtn) copyMetaBtn.style.display = '';
   }
   if (hasBundle) {
@@ -840,6 +845,135 @@ async function vaultBatchCopyTextAction() {
       toast('✓ ' + items.length + ' item tersalin ke clipboard');
     } catch (e2) {
       toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.14.9: Batch download semua gambar terpilih sebagai file terpisah.
+// User request: "buatkan yang mudah dikopi terus bisa batch download hanya gambar".
+// Loop sequential (bukan Promise.all) supaya Firefox download manager tidak
+// batch jadi 1 prompt. Progress toast per item. No 9-item cap (beda dari copy
+// yang composite — di sini tiap file independent).
+async function vaultBatchDownloadAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 gambar dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  // Filter hanya screenshot/document
+  const imageItems = ids.map(id => currentVault.items.find(i => i.id === id))
+    .filter(i => i && (i.type === 'screenshot' || i.type === 'document'));
+  if (imageItems.length === 0) {
+    toast('Tidak ada gambar valid terpilih', false);
+    return;
+  }
+  const skipped = ids.length - imageItems.length;
+  toast('⬇️ Mengunduh ' + imageItems.length + ' file' + (skipped > 0 ? ' (' + skipped + ' non-gambar diabaikan)' : '') + '...');
+  let ok = 0, fail = 0;
+  for (let i = 0; i < imageItems.length; i++) {
+    const item = imageItems[i];
+    try {
+      const fmt = item.type === 'document' ? 'jpeg' : (item.screenshotFormat || 'png');
+      const res = await browser.runtime.sendMessage({
+        type: 'DOWNLOAD_SCREENSHOT', id: item.id, title: item.title, format: fmt
+      });
+      if (res?.ok) ok++; else fail++;
+    } catch (e) {
+      fail++;
+    }
+    // Update progress setiap 3 item atau item terakhir
+    if ((i + 1) % 3 === 0 || i === imageItems.length - 1) {
+      toast('⬇️ ' + (ok + fail) + '/' + imageItems.length + ' diproses...');
+    }
+    // Small delay antar download supaya Firefox tidak batch
+    if (i < imageItems.length - 1) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  if (fail === 0) {
+    toast('✓ ' + ok + ' file terunduh ke folder RecallFox/');
+  } else {
+    toast('✓ ' + ok + ' file terunduh, ' + fail + ' gagal', false);
+  }
+}
+
+// v3.14.9: Batch copy URL gambar (public Supabase Storage URL) — untuk AI sites
+// yang tidak support paste gambar langsung. User paste URL ke AI chat, AI fetch
+// gambar dari URL. Salin 1 URL per baris.
+async function vaultBatchCopyUrlsAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 gambar dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const imageItems = ids.map(id => currentVault.items.find(i => i.id === id))
+    .filter(i => i && (i.type === 'screenshot' || i.type === 'document'));
+  if (imageItems.length === 0) {
+    toast('Tidak ada gambar valid terpilih', false);
+    return;
+  }
+  toast('🔗 Mengumpulkan URL gambar...');
+  const urls = [];
+  let skipped = 0;
+  for (const item of imageItems) {
+    const url = resolveImageUrl(item);
+    if (url) {
+      urls.push(url);
+    } else {
+      skipped++;
+    }
+  }
+  if (urls.length === 0) {
+    toast('Tidak ada URL gambar valid (gambar lokal-only)', false);
+    return;
+  }
+  const text = urls.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('✓ ' + urls.length + ' URL gambar tersalin' + (skipped > 0 ? ' (' + skipped + ' lokal-only diabaikan)' : '') + ' — paste ke AI chat');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
+      toast('✓ ' + urls.length + ' URL gambar tersalin');
+    } catch (e2) {
+      toast('Gagal salin URL: ' + e2.message, false);
+    }
+  }
+}
+
+// v3.14.9: Resolve image cloud URL dari item. Prioritas:
+// 1. item.gdriveFileUrl / item.gdrive_file_url (langsung dari row)
+// 2. item.source.pages[0].url (document multi-page)
+// 3. item.source.url (legacy screenshot)
+// Return null kalau tidak ada URL (gambar lokal-only).
+function resolveImageUrl(item) {
+  if (!item) return null;
+  if (item.gdriveFileUrl) return item.gdriveFileUrl;
+  if (item.gdrive_file_url) return item.gdrive_file_url;
+  const src = item.source || {};
+  if (Array.isArray(src.pages) && src.pages[0]?.url) return src.pages[0].url;
+  if (src.url) return src.url;
+  return null;
+}
+
+// v3.14.9: Copy URL gambar single item (untuk item sheet "🔗 Salin URL Gambar").
+async function copyImageUrlToClipboard(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item) { toast('Item tidak ditemukan', false); return; }
+  const url = resolveImageUrl(item);
+  if (!url) {
+    toast('Gambar ini tidak punya URL cloud (lokal-only). Gunakan Download atau Salin Gambar.', false);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('✓ URL gambar tersalin — paste ke AI chat');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: url });
+      toast('✓ URL gambar tersalin');
+    } catch (e2) {
+      toast('Gagal salin URL: ' + e2.message, false);
     }
   }
 }
@@ -2522,6 +2656,10 @@ function itemSheet(id) {
       // Solusi: navigator.clipboard.writeText(textPlain) — text-only, paste ke mana saja.
       // v3.12.0: Juga tampil untuk dokumen — pakai buildDocumentCaption (text-only).
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-meta">' + ICONS.copy + '<div>📝 Salin Teks Metadata<div class="ad">Teks saja (judul, waktu' + (it.type === 'document' ? ', halaman' : ', URL') + ') — paste ke WA/Gemini/AI chat</div></div></button>' : '')
+      // v3.14.9: Salin URL gambar (public Supabase Storage URL) — untuk AI sites
+      // yang tidak support paste gambar langsung. User paste URL ke AI chat,
+      // AI fetch gambar dari URL.
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin URL Gambar<div class="ad">URL public — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
       // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
@@ -2543,6 +2681,8 @@ function itemSheet(id) {
       else if (k === 'copy-bundle') { closeSheet(); copyScreenshotToClipboard(it.id, true); }
       // v3.11.36: Handler Salin Teks Metadata (text-only, no image)
       else if (k === 'copy-meta') { closeSheet(); copyScreenshotMetaToClipboard(it.id); }
+      // v3.14.9: Handler Salin URL Gambar (untuk AI sites yang tidak support paste gambar)
+      else if (k === 'copy-url') { closeSheet(); copyImageUrlToClipboard(it.id); }
       // v3.11.25 (Sesi 15, Issue #3): Handler untuk catatan anotasi
       else if (k === 'annot-note') { closeSheet(); openAnnotationNoteSheet(it.id); }
       else if (k === 'del') {
@@ -7457,6 +7597,12 @@ function bindEvents() {
   if (vaultBatchCopyBtn) vaultBatchCopyBtn.addEventListener('click', () => vaultBatchCopyAction(true));
   const vaultBatchCopyImgBtn = $('#vaultBatchCopyImg');
   if (vaultBatchCopyImgBtn) vaultBatchCopyImgBtn.addEventListener('click', () => vaultBatchCopyAction(false));
+  // v3.14.9: Batch download semua gambar terpilih sebagai file terpisah
+  const vaultBatchDownloadBtn = $('#vaultBatchDownload');
+  if (vaultBatchDownloadBtn) vaultBatchDownloadBtn.addEventListener('click', vaultBatchDownloadAction);
+  // v3.14.9: Batch copy URL gambar (untuk AI sites yang tidak support paste gambar)
+  const vaultBatchCopyUrlsBtn = $('#vaultBatchCopyUrls');
+  if (vaultBatchCopyUrlsBtn) vaultBatchCopyUrlsBtn.addEventListener('click', vaultBatchCopyUrlsAction);
   // v3.11.36: Batch copy teks metadata saja (tanpa gambar)
   const vaultBatchCopyMetaBtn = $('#vaultBatchCopyMeta');
   if (vaultBatchCopyMetaBtn) vaultBatchCopyMetaBtn.addEventListener('click', vaultBatchCopyMetaAction);
