@@ -1953,9 +1953,28 @@ function openImageModalViewer(item, pages) {
   if (dotsWrap) card.appendChild(dotsWrap);
   card.appendChild(footer);
 
-  // v3.13.7: Footer kedua — tombol copy (Hal Ini / Semua / + Keterangan)
-  // Sebelumnya modal viewer tidak ada tombol copy sama sekali. User harus
-  // buka PWA untuk copy. Sekarang bisa langsung dari modal.
+  // v3.14.7: REWRITE tombol copy sesuai spec user (Sesi 1 follow-up #2).
+  // Spec:
+  //   1. Salin Gambar       — Salin gambar saja ke clipboard
+  //                          (multi-page: composite grid bernomor via buildCompositeImage)
+  //   2. Salin + Keterangan — Gambar + URL, judul, waktu, mode
+  //                          (multi-page: composite grid + caption gabungan via buildBatchCaption-style)
+  //   3. Salin Teks Metadata — Teks saja (judul, waktu, URL) - paste ke WA/Gemini/AI chat
+  //                          (multi-page: gabungan caption semua halaman, tanpa gambar)
+  //
+  // Sebelumnya (v3.13.7–v3.14.6): 3 tombol "📋 Hal Ini / 📚 Semua / 📋 + Keterangan" yang
+  // membingungkan karena "Hal Ini" hanya copy page aktif, "Semua" hanya muncul untuk multi-page,
+  // dan "Keterangan" redundant dengan "Hal Ini". User bilang masih tidak berfungsi.
+  //
+  // Logika baru:
+  //   - Single-page (screenshot atau dokumen 1 hal): 3 tombol tetap, masing-masing copy
+  //     (gambar saja / gambar+caption / teks saja).
+  //   - Multi-page (dokumen 2+ halaman): 3 tombol sama, tapi "Salin Gambar" dan "Salin + Keterangan"
+  //     otomatis composite semua halaman jadi 1 gambar grid bernomor (pattern sama dengan batch
+  //     copy di vault — pakai buildCompositeImage). "Salin Teks Metadata" gabungkan caption
+  //     semua halaman jadi 1 teks.
+  //   - Tidak ada lagi tombol "Hal Ini" yang hanya copy 1 page — semua tombol selalu operasi
+  //     seluruh dokumen (lebih intuitif).
   const copyFooter = document.createElement('div');
   copyFooter.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px;background:#1c1917;border-top:1px solid #292524;flex:none;flex-wrap:wrap';
 
@@ -1968,103 +1987,207 @@ function openImageModalViewer(item, pages) {
     return btn;
   };
 
-  // Copy halaman saat ini (image only)
-  // v3.14.6 (Sesi 1 follow-up): Bug B fix — tombol "Hal Ini" tidak berfungsi.
-  // Penyebab: untuk dokumen multi-page yang dirender sebagai single-page (akibat Bug A),
-  // dataUrl page 0 mungkin JPG dari Supabase. writeScreenshotToClipboard strategi 1
-  // butuh image/png → konversi via canvas. Kalau gagal dan textHtml kosong (kasus "Hal Ini"),
-  // strategi 2 skip, strategi 3 juga skip (textPlain kosong) → return clipboard_write_failed.
-  // Fix: (1) guard dataUrl lebih informatif. (2) kasih textPlain minimal (judul + halaman)
-  // supaya strategi 3 (text-only fallback) bisa menulis sesuatu ke clipboard sebagai last resort.
-  copyFooter.appendChild(makeCopyBtn('📋 Hal Ini', 'Salin halaman/gambar saat ini ke clipboard', async () => {
-    const page = validPages[cur];
-    const dataUrl = page?.dataUrl;
-    if (!dataUrl) {
-      console.warn('[RecallFox/Tape] Hal Ini: dataUrl null at cur=' + cur, { validPages: validPages.length, isMulti });
-      toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
-      return;
-    }
-    toast('📋 Menyalin gambar...');
-    try {
-      // v3.14.6: Beri textPlain minimal (judul + halaman) supaya strategi 3 (text-only)
-      // di writeScreenshotToClipboard bisa fallback dengan pesan yang jelas, bukan
-      // gagal total dengan clipboard_write_failed.
-      const label = (item.title || 'Gambar') + (isMulti ? ' (Hal ' + (cur + 1) + '/' + totalPages + ')' : '');
-      const result = await writeScreenshotToClipboard(dataUrl, label, '');
-      if (result.ok) {
-        toast(result.fallback === 'text_only'
-          ? '✓ Tersalin teks saja (browser blokir clipboard image)'
-          : '✓ Gambar tersalin', true);
-      } else {
-        console.error('[RecallFox] Hal Ini copy failed:', result);
-        toast('Gagal salin: ' + (result.error || 'unknown'), false);
-      }
-    } catch (e) {
-      console.error('[RecallFox] Hal Ini copy exception:', e);
-      toast('Gagal salin: ' + e.message, false);
-    }
-  }));
-
-  // Copy semua halaman (composite vertical) — hanya untuk multi-page
-  if (isMulti) {
-    copyFooter.appendChild(makeCopyBtn('📚 Semua', 'Salin semua halaman jadi 1 gambar (composite)', async () => {
-      toast('📚 Menyiapkan semua halaman...');
-      try {
-        // Composite semua halaman jadi 1 gambar (vertical stack)
-        const imgs = await Promise.all(validPages.map(p => p.dataUrl ? loadImageForComposite(p.dataUrl) : null));
-        const validImgs = imgs.filter(Boolean);
-        if (validImgs.length === 0) { toast('Tidak ada halaman termuat', false); return; }
-        const totalH = validImgs.reduce((s, img) => s + img.naturalHeight, 0);
-        const maxW = Math.max(...validImgs.map(img => img.naturalWidth));
-        const canvas = document.createElement('canvas');
-        canvas.width = maxW;
-        canvas.height = totalH;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, maxW, totalH);
-        let y = 0;
-        for (const img of validImgs) {
-          ctx.drawImage(img, 0, y);
-          y += img.naturalHeight;
-        }
-        const allDataUrl = canvas.toDataURL('image/png');
-        const result = await writeScreenshotToClipboard(allDataUrl, '', '');
-        toast(result.ok ? '✓ ' + validImgs.length + ' halaman tersalin' : 'Gagal: ' + result.error, result.ok);
-      } catch (e) {
-        toast('Gagal composite: ' + e.message, false);
-      }
-    }));
+  // Helper: blob → dataURL (untuk composite image dari buildCompositeImage)
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('filereader_failed'));
+      reader.readAsDataURL(blob);
+    });
   }
 
-  // Copy + Keterangan (current page + caption)
-  // v3.14.6: Bug B fix — guard dataUrl null lebih informatif + logging.
-  copyFooter.appendChild(makeCopyBtn('📋 + Keterangan', 'Salin gambar + keterangan (judul, waktu, halaman)', async () => {
-    const page = validPages[cur];
-    const dataUrl = page?.dataUrl;
-    if (!dataUrl) {
-      console.warn('[RecallFox] + Keterangan: dataUrl null at cur=' + cur, { validPages: validPages.length, isMulti });
-      toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
-      return;
-    }
-    toast('📋 Menyalin gambar + keterangan...');
-    try {
-      const cap = isDoc
-        ? buildDocumentCaption(item, dataUrl, { currentPage: cur + 1 })
-        : buildScreenshotCaption(item, dataUrl);
-      const result = await writeScreenshotToClipboard(dataUrl, cap.textPlain, cap.textHtml);
-      if (result.ok) {
-        toast(result.fallback === 'text_only'
-          ? '✓ Keterangan tersalin (text-only — gambar tidak ikut)'
-          : '✓ Gambar + keterangan tersalin', true);
-      } else {
-        console.error('[RecallFox] + Keterangan copy failed:', result, { cap });
-        toast('Gagal salin: ' + (result.error || 'unknown'), false);
+  // Helper: validasi semua page punya dataUrl (komposit butuh semua termuat)
+  function getAllPageDataUrls() {
+    return validPages.map(p => p?.dataUrl).filter(Boolean);
+  }
+
+  // Helper: build screenshots array untuk buildCompositeImage / buildBatchCaption
+  function buildScreenshotsArray() {
+    return validPages.map((p, i) => ({ item, dataUrl: p?.dataUrl, pageIdx: i }));
+  }
+
+  // ===== Tombol 1: Salin Gambar (image only) =====
+  // Single-page: copy page tersebut langsung.
+  // Multi-page: composite grid bernomor via buildCompositeImage (pattern vault batch copy).
+  copyFooter.appendChild(makeCopyBtn(
+    '🖼️ Salin Gambar',
+    isMulti ? 'Salin semua halaman jadi 1 gambar (grid bernomor)' : 'Salin gambar saja ke clipboard',
+    async () => {
+      const dataUrls = getAllPageDataUrls();
+      if (dataUrls.length === 0) {
+        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        return;
       }
-    } catch (e) {
-      console.error('[RecallFox] + Keterangan copy exception:', e);
-      toast('Gagal salin: ' + e.message, false);
+      toast(isMulti ? '🖼️ Menggabungkan ' + dataUrls.length + ' halaman jadi 1 gambar...' : '📋 Menyalin gambar...');
+      try {
+        let targetDataUrl;
+        if (isMulti && dataUrls.length > 1) {
+          // Composite grid bernomor — pattern sama dengan vault batch copy
+          const screenshots = buildScreenshotsArray();
+          const compositeResult = await buildCompositeImage(screenshots);
+          if (!compositeResult.blob) {
+            toast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            return;
+          }
+          targetDataUrl = await blobToDataUrl(compositeResult.blob);
+        } else {
+          // Single-page — pakai page aktif (atau page 0 kalai validPages hanya 1)
+          targetDataUrl = validPages[cur]?.dataUrl || dataUrls[0];
+        }
+        // textPlain minimal supaya fallback strategi 3 (text-only) bisa jalan kalau image gagal
+        const label = (item.title || 'Gambar') + (isMulti ? ' (' + dataUrls.length + ' halaman)' : '');
+        const result = await writeScreenshotToClipboard(targetDataUrl, label, '');
+        if (result.ok) {
+          toast(result.fallback === 'text_only'
+            ? '✓ Tersalin teks saja (browser blokir clipboard image)'
+            : (isMulti ? '✓ ' + dataUrls.length + ' halaman tersalin (1 gambar gabungan)' : '✓ Gambar tersalin'),
+            true);
+        } else {
+          console.error('[RecallFox] Salin Gambar failed:', result);
+          toast('Gagal salin: ' + (result.error || 'unknown'), false);
+        }
+      } catch (e) {
+        console.error('[RecallFox] Salin Gambar exception:', e);
+        toast('Gagal salin: ' + e.message, false);
+      }
     }
-  }));
+  ));
+
+  // ===== Tombol 2: Salin + Keterangan (image + caption) =====
+  // Single-page: page aktif + caption (buildScreenshotCaption / buildDocumentCaption).
+  // Multi-page: composite grid bernomor + caption gabungan (buildBatchCaption-style untuk
+  // document multi-page — iterate setiap halaman dengan index).
+  copyFooter.appendChild(makeCopyBtn(
+    '📋 Salin + Keterangan',
+    isMulti ? 'Gambar gabungan + keterangan semua halaman (URL, judul, waktu)' : 'Gambar + URL, judul, waktu, mode',
+    async () => {
+      const dataUrls = getAllPageDataUrls();
+      if (dataUrls.length === 0) {
+        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        return;
+      }
+      toast(isMulti ? '📋 Menggabungkan ' + dataUrls.length + ' halaman + keterangan...' : '📋 Menyalin gambar + keterangan...');
+      try {
+        let targetDataUrl, cap;
+        if (isMulti && dataUrls.length > 1) {
+          // Composite grid bernomor
+          const screenshots = buildScreenshotsArray();
+          const compositeResult = await buildCompositeImage(screenshots);
+          if (!compositeResult.blob) {
+            toast('Gagal membuat gambar gabungan: ' + (compositeResult.error || 'unknown'), false);
+            return;
+          }
+          targetDataUrl = await blobToDataUrl(compositeResult.blob);
+          // Caption gabungan: iterate setiap halaman sebagai "page" dengan index.
+          // Pattern sama dengan buildBatchCaption (screenshots) tapi untuk pages dalam 1 dokumen.
+          // Untuk dokumen multi-page: pakai buildDocumentCaption per halaman dengan currentPage.
+          // Untuk screenshot multi-page (jarang tapi mungkin): pakai buildScreenshotCaption.
+          const parts = [];
+          const htmlParts = [];
+          for (let i = 0; i < validPages.length; i++) {
+            const pageDataUrl = validPages[i]?.dataUrl;
+            const pageIdx = i + 1;
+            const c = isDoc
+              ? buildDocumentCaption(item, pageDataUrl, { currentPage: pageIdx, index: pageIdx })
+              : buildScreenshotCaption(item, pageDataUrl, { index: pageIdx });
+            parts.push(c.textPlain + '\n\n[' + (isDoc ? '📄' : '📸') + ' Halaman ' + pageIdx + ']');
+            htmlParts.push(c.textHtml);
+          }
+          const now = new Date();
+          const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+          const headerTitle = isDoc ? '📄 Dokumen — ' + (item.title || 'Untitled') : '📷 Screenshot Bundle — RecallFox';
+          cap = {
+            textPlain: '# ' + headerTitle + '\nTanggal: ' + dateStr + ' · Total: ' + validPages.length + ' halaman\n\n'
+              + parts.join('\n\n---\n\n') + '\n\n— Ditangkap oleh RecallFox —',
+            textHtml: '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+              + '<h1 style="margin:0 0 6px">' + esc(headerTitle) + '</h1>'
+              + '<p style="margin:0 0 10px;color:#57534e"><em>Tanggal: ' + esc(dateStr) + ' · Total: ' + validPages.length + ' halaman</em></p>'
+              + htmlParts.join('<hr style="border:none;border-top:1px solid #e7e5e4;margin:16px 0">')
+              + '</div>'
+          };
+        } else {
+          // Single-page
+          targetDataUrl = validPages[cur]?.dataUrl || dataUrls[0];
+          cap = isDoc
+            ? buildDocumentCaption(item, targetDataUrl, { currentPage: cur + 1 })
+            : buildScreenshotCaption(item, targetDataUrl);
+        }
+        const result = await writeScreenshotToClipboard(targetDataUrl, cap.textPlain, cap.textHtml);
+        if (result.ok) {
+          toast(result.fallback === 'text_only'
+            ? '✓ Keterangan tersalin (text-only — gambar tidak ikut)'
+            : (isMulti ? '✓ ' + dataUrls.length + ' halaman + keterangan tersalin' : '✓ Gambar + keterangan tersalin'),
+            true);
+        } else {
+          console.error('[RecallFox] Salin + Keterangan failed:', result);
+          toast('Gagal salin: ' + (result.error || 'unknown'), false);
+        }
+      } catch (e) {
+        console.error('[RecallFox] Salin + Keterangan exception:', e);
+        toast('Gagal salin: ' + e.message, false);
+      }
+    }
+  ));
+
+  // ===== Tombol 3: Salin Teks Metadata (text only, no image) =====
+  // Single-page: caption textPlain saja.
+  // Multi-page: gabungan caption semua halaman.
+  // Pattern sama dengan vaultBatchCopyMetaAction — navigator.clipboard.writeText(textPlain).
+  copyFooter.appendChild(makeCopyBtn(
+    '📝 Salin Teks Metadata',
+    isMulti ? 'Teks saja (judul, waktu, semua halaman) - paste ke WA/Gemini/AI chat' : 'Teks saja (judul, waktu, URL) - paste ke WA/Gemini/AI chat',
+    async () => {
+      const dataUrls = getAllPageDataUrls();
+      if (dataUrls.length === 0) {
+        toast('Halaman belum termuat — tunggu sebentar lalu coba lagi', false);
+        return;
+      }
+      toast('📝 Menyalin teks metadata...');
+      try {
+        let textPlain;
+        if (isMulti && dataUrls.length > 1) {
+          // Gabungan caption semua halaman — tanpa gambar (dataUrl=null)
+          const parts = [];
+          for (let i = 0; i < validPages.length; i++) {
+            const pageIdx = i + 1;
+            const c = isDoc
+              ? buildDocumentCaption(item, null, { currentPage: pageIdx, index: pageIdx })
+              : buildScreenshotCaption(item, null, { index: pageIdx });
+            if (c.textPlain) parts.push(c.textPlain);
+          }
+          const now = new Date();
+          const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+          const headerTitle = isDoc ? '📄 Dokumen — ' + (item.title || 'Untitled') : '📷 Screenshot Bundle — RecallFox';
+          textPlain = '# ' + headerTitle + '\nTanggal: ' + dateStr + ' · Total: ' + validPages.length + ' halaman\n\n'
+            + parts.join('\n\n---\n\n') + '\n\n— Ditangkap oleh RecallFox —';
+        } else {
+          // Single-page
+          const c = isDoc
+            ? buildDocumentCaption(item, null, { currentPage: cur + 1 })
+            : buildScreenshotCaption(item, null);
+          textPlain = c.textPlain;
+        }
+        if (!textPlain) {
+          toast('Tidak ada metadata untuk disalin', false);
+          return;
+        }
+        // Text-only: langsung navigator.clipboard.writeText (tidak pakai writeScreenshotToClipboard
+        // karena tidak ada image yang perlu di-clip).
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(textPlain);
+          toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)', true);
+        } else {
+          // Fallback: delegate ke background
+          await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: textPlain });
+          toast('✓ Teks metadata tersalin', true);
+        }
+      } catch (e) {
+        console.error('[RecallFox] Salin Teks Metadata exception:', e);
+        toast('Gagal salin teks: ' + e.message, false);
+      }
+    }
+  ));
 
   card.appendChild(copyFooter);
 
