@@ -367,16 +367,51 @@ async function detectAiContext() {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
     if (!tab || !tab.url) return;
-    const matched = matchCurrentTool(tab.url);
-    if (matched) {
-      currentAiDomain = matched;
-      $('#ctxBadge').innerHTML = '<span class="dot"></span>' + matched.name + ' · siap sisip';
+    // v3.16.3: Pakai isAIPageFromOrigin + getMatchedSite dari lib/ai-detect.js
+    // (storage.aiSites sebagai single source of truth — bukan hardcoded AI_TOOLS).
+    // Sebelumnya pakai matchCurrentTool(tab.url) dari lib/ai-tools.js yang masih
+    // hardcoded list — akibatnya domain yang baru ditambahkan via "Kelola Situs AI"
+    // tidak terdeteksi → tombol Snapshot quick action tidak jalan.
+    const { isAIPageFromOrigin, getMatchedSite } = await import('../lib/ai-detect.js');
+    const isAI = await isAIPageFromOrigin(tab.url);
+    if (isAI) {
+      const matched = await getMatchedSite(tab.url);
+      // Preserve selectors dari matchCurrentTool kalau ada (untuk extraction DOM spesifik)
+      // Fallback: pakai matched site dari aiSites (tanpa selectors, pakai generic fallback)
+      const legacyMatched = matchCurrentTool(tab.url);
+      currentAiDomain = legacyMatched || (matched ? {
+        id: matched.id,
+        name: matched.name,
+        url: matched.origin,
+        region: 'generic',
+        color: '#6366f1',
+        emoji: '🤖',
+        alt: [],
+        _fromAiSites: true
+      } : null);
+      $('#ctxBadge').innerHTML = '<span class="dot"></span>' + (currentAiDomain?.name || 'AI') + ' · siap sisip';
     } else {
       currentAiDomain = null;
       const count = currentVault?.items?.length || 0;
       $('#ctxBadge').innerHTML = '<span class="dot"></span>Vault · ' + count + ' item';
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[RecallFox] detectAiContext error:', e.message);
+    // Fallback ke matchCurrentTool kalau ai-detect.js gagal load
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
+      if (tab && tab.url) {
+        const matched = matchCurrentTool(tab.url);
+        if (matched) {
+          currentAiDomain = matched;
+          $('#ctxBadge').innerHTML = '<span class="dot"></span>' + matched.name + ' · siap sisip';
+          return;
+        }
+      }
+    } catch (e2) {}
+    currentAiDomain = null;
+  }
 }
 
 // ============ Status strip ============
