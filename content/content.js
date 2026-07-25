@@ -351,8 +351,10 @@
   }
 
   // ===== Snapshot Modal =====
-  function openSnapshotModal() {
-    if (!window.__RecallFoxIsAIDomain__) {
+  async function openSnapshotModal() {
+    // v3.16.2: Pakai async isAIPage() dari storage.aiSites (single source of truth)
+    const isAI = window.__recallfoxIsAIPage__ ? await window.__recallfoxIsAIPage__() : !!window.__RecallFoxIsAIDomain__;
+    if (!isAI) {
       showToast('errNotAIDomain');
       return;
     }
@@ -487,24 +489,29 @@
       // Popup yang handle modal preview (lebih reliable — user pasti lihat di sidebar).
       // Sebelumnya: QUICK_SNAPSHOT → OPEN_SNAPSHOT_MODAL di tab, tapi popup close terlalu cepat
       // → user tidak lihat modal → kira snapshot gagal.
-      try {
-        if (!window.__RecallFoxIsAIDomain__) {
-          sendResponse({ ok: false, error: 'not_ai_domain' });
-          return;
+      // v3.16.2: Pakai async isAIPage() dari storage.aiSites (single source of truth)
+      (async () => {
+        try {
+          const isAI = window.__recallfoxIsAIPage__ ? await window.__recallfoxIsAIPage__() : !!window.__RecallFoxIsAIDomain__;
+          if (!isAI) {
+            sendResponse({ ok: false, error: 'not_ai_domain' });
+            return;
+          }
+          const conv = extractConversation();
+          sendResponse({
+            ok: true,
+            body: conv?.body || '',
+            pageTitle: conv?.pageTitle || document.title || '',
+            url: conv?.url || location.href,
+            snapshotDomain: conv?.snapshotDomain || location.hostname,
+            snapshotMessageCount: conv?.snapshotMessageCount || conv?.messageCount || 0,
+            debug: conv?.debug || ''
+          });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
         }
-        const conv = extractConversation();
-        sendResponse({
-          ok: true,
-          body: conv?.body || '',
-          pageTitle: conv?.pageTitle || document.title || '',
-          url: conv?.url || location.href,
-          snapshotDomain: conv?.snapshotDomain || location.hostname,
-          snapshotMessageCount: conv?.snapshotMessageCount || conv?.messageCount || 0,
-          debug: conv?.debug || ''
-        });
-      } catch (e) {
-        sendResponse({ ok: false, error: e.message });
-      }
+      })();
+      return true;  // async response
     } else if (msg.type === 'PING') {
       sendResponse({
         ok: true,

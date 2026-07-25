@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.16.1",
+  "version": "3.16.2",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -85,36 +85,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://chat.z.ai/*",
-        "https://chatgpt.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*",
-        "https://chat.deepseek.com/*",
-        "https://tongyi.aliyun.com/*",
-        "https://chat.qwen.ai/*",
-        "https://kimi.moonshot.cn/*",
-        "https://kimi.com/*",
-        "https://grok.com/*",
-        "https://copilot.microsoft.com/*",
-        "https://www.perplexity.ai/*",
-        "https://perplexity.ai/*",
-        "https://chat.mistral.ai/*",
-        "https://huggingface.co/*",
-        "https://pi.ai/*",
-        "https://you.com/*",
-        "https://arena.ai/*",
-        "https://chat.lmsys.org/*",
-        "https://lmsys.org/*",
-        "https://www.doubao.com/*",
-        "https://doubao.com/*",
-        "https://chatglm.cn/*",
-        "https://yiyan.baidu.com/*",
-        "https://yuanbao.tencent.com/*",
-        "https://www.baichuan-ai.com/*",
-        "https://baichuan-ai.com/*",
-        "https://chat.minimaxi.com/*",
-        "https://hailuoai.com/*",
-        "https://chat.sensetime.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "content/ai-resolvers.js",
@@ -220,7 +192,8 @@
         "popup/viewer.html",
         "popup/viewer.js",
         "popup/viewer.css",
-        "lib/tape.js"
+        "lib/tape.js",
+        "lib/ai-detect.js"
       ],
       "matches": [
         "<all_urls>"

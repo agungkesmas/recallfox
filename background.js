@@ -284,18 +284,9 @@ async function setupContextMenu() {
   browser.menus.create({
     id: 'rf-snapshot',
     title: browser.i18n.getMessage('ctxMenuSnapshot'),
-    contexts: ['page'],
-    documentUrlPatterns: [
-      'https://chat.z.ai/*',
-      'https://chatgpt.com/*',
-      'https://claude.ai/*',
-      'https://gemini.google.com/*',
-      'https://chat.deepseek.com/*',
-      'https://tongyi.aliyun.com/*',
-      'https://chat.qwen.ai/*',
-      'https://kimi.moonshot.cn/*',
-      'https://kimi.com/*'
-    ]
+    contexts: ['page']
+    // v3.16.2: Hapus documentUrlPatterns hardcoded — pakai dynamic isAIPageFromOrigin di handler.
+    // Menu muncul di semua halaman, tapi handler cek aiSites sebelum eksekusi snapshot.
   });
 
   // Screenshot single entry (FireShot-style — opens modal with PDF/JPG/PNG/Copy/Vault options)
@@ -498,7 +489,17 @@ browser.menus.onClicked.addListener(async (info, tab) => {
       await browser.tabs.sendMessage(tab.id, { type: 'SHOW_TOAST', message: 'toastSaved' });
     } catch (e) {}
   } else if (info.menuItemId === 'rf-snapshot') {
+    // v3.16.2: Cek via isAIPageFromOrigin (dynamic dari storage.aiSites)
     try {
+      const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+      const isAI = await isAIPageFromOrigin(tab.url || info.pageUrl);
+      if (!isAI) {
+        console.log('[RecallFox] Snapshot dibatalkan — halaman bukan AI site (cek aiSites)');
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'SHOW_TOAST', message: 'Snapshot hanya bisa di halaman AI chat. Tambahkan situs ini ke Kelola Situs AI kalau perlu.' });
+        } catch (e) {}
+        return;
+      }
       await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
     } catch (e) {
       console.warn('[RecallFox] Cannot open snapshot modal:', e);
@@ -3484,8 +3485,15 @@ async function checkExerciseReminder() {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const activeUrl = tabs?.[0]?.url || '';
-      const aiPatterns = ['chat.z.ai', 'chatgpt.com', 'claude.ai', 'gemini.google.com'];
-      const isOnAI = aiPatterns.some(p => activeUrl.includes(p));
+      // v3.16.2: Cek AI page via isAIPageFromOrigin (dynamic dari storage.aiSites)
+      let isOnAI = false;
+      try {
+        const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+        isOnAI = await isAIPageFromOrigin(activeUrl);
+      } catch (e) {
+        // Fallback: kalau ai-detect.js gagal load, anggap bukan AI
+        isOnAI = false;
+      }
       // Don't fully skip on AI tool (user might benefit from stretch break),
       // but lower priority notification (priority 0 instead of 1) so it's less intrusive
       const priority = isOnAI ? 0 : 1;
