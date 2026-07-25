@@ -1,11 +1,19 @@
-// content/tape-cs.js — RecallTape floating calculator (v3.14.3 — REBUILT FROM SCRATCH)
-// Simple textarea + live evaluation. No contenteditable per-line complexity.
+// content/tape-cs.js — RecallTape floating calculator (v3.14.9 — auto-operator newline)
 //
-// Key design:
-//   - Single <textarea> for all input (reliable, no focus bugs)
+// BEHAVIOR BARU (per request user):
+//   1. Ketik angka (mis. 1300) → ketik operator (+ - * /) → OTOMATIS ganti baris ke bawah
+//      dengan operator di awal baris baru. User tidak perlu tekan Enter manual.
+//   2. Ketik = → OTOMATIS tampilkan baris subtotal ( "= Subtotal" ) + buat baris baru kosong
+//      untuk lanjut hitung. User bisa langsung tekan operator lain.
+//   3. Printer fitur: hidden iframe + @media print 80mm receipt. Buka dialog print browser.
+//   4. Save vault → "catatan" (note), bukan prompt. Lihat background.js SAVE_TAPE_TO_VAULT.
+//
+// Design:
+//   - Single <textarea> for input (reliable, no contenteditable bugs)
 //   - On every input → evaluate ALL lines → update result display LIVE
+//   - On keydown operator (+ - * / =) → intercept, insert newline + operator
 //   - Result bar: block total + grand total (updates as you type)
-//   - Print via iframe to document.body (not Shadow DOM)
+//   - Print via iframe to document.body
 //   - Dark/light theme adaptive
 //   - Draggable header, resizable
 //   - 5 buttons: Pin / Print / Copy / Save / Clear
@@ -109,6 +117,41 @@
     }, 400);
   }
 
+  // ===== v3.14.9: Operator key handler — auto-newline =====
+  // Saat user tekan + - * / atau = di textarea:
+  //   - Untuk + - * /: insert "\n" + operator + " " di posisi cursor, lalu pindah cursor ke akhir
+  //   - Untuk =: insert "\n= \n" di posisi cursor (baris subtotal + baris baru kosong untuk lanjut)
+  // Ini mengikuti behavior kalkulator klasik: angka di-commit, operator jadi awal baris baru.
+  function handleOperatorKey(op) {
+    const pos = textarea.selectionStart;
+    const endPos = textarea.selectionEnd;
+    const val = textarea.value;
+
+    // Hapus selection kalau ada
+    const before = val.slice(0, pos);
+    const after = val.slice(endPos);
+
+    let insert, newCursorPos;
+    if (op === '=') {
+      // Untuk =: baris baru + "= " + baris baru kosong untuk lanjut
+      // User bisa langsung ketik angka + operator lagi di baris baru
+      insert = '\n= \n';
+      newCursorPos = pos + insert.length;
+    } else {
+      // Untuk + - * /: baris baru + operator + spasi
+      insert = '\n' + op + ' ';
+      newCursorPos = pos + insert.length;
+    }
+
+    textarea.value = before + insert + after;
+    textarea.setSelectionRange(newCursorPos, newCursorPos);
+    // Scroll to bottom supaya cursor terlihat
+    textarea.scrollTop = textarea.scrollHeight;
+
+    doEval();
+    scheduleSave();
+  }
+
   // ===== Actions =====
   async function doCopy() {
     const text = textarea.value;
@@ -125,55 +168,106 @@
     }
   }
 
+  // v3.14.9: Print via hidden iframe + @page 80mm — fix print blank
+  // Hidden iframe di document.body (BUKAN di Shadow DOM) supaya cross-origin policy OK
   function doPrint() {
     const text = textarea.value;
     const result = evaluate(text.split('\n'));
     if (result.entries.length === 0) { toast('Tape kosong'); return; }
-    let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>RecallTape</title>';
-    html += '<style>body{font-family:Menlo,Consolas,monospace;font-size:11px;max-width:300px;margin:0 auto;padding:16px}';
-    html += 'h1{font-size:14px;text-align:center;margin-bottom:4px}';
-    html += '.date{font-size:9px;color:#999;text-align:center;margin-bottom:12px}';
-    html += '.line{padding:2px 0;display:flex;justify-content:space-between}';
-    html += '.op{font-weight:bold;margin-right:4px}.amt{flex:1;text-align:right}.note{margin-left:8px;color:#666}';
-    html += '.sep{border-top:1px dashed #ccc;margin:6px 0}.subtotal{font-weight:bold;color:#059669}';
-    html += '.grand{border-top:2px solid #333;margin-top:8px;padding-top:6px;font-weight:bold;font-size:14px;text-align:right}';
-    html += '</style></head><body>';
-    html += '<h1>🧾 RecallTape</h1><div class="date">' + new Date().toLocaleString('id-ID') + '</div>';
+
+    // Build receipt HTML — struk pita kertas 80mm
+    const lines = [];
+    lines.push('<div class="rct-hd"><h1>🧾 RecallTape</h1><div class="rct-date">' + new Date().toLocaleString('id-ID') + '</div></div>');
     for (const e of result.entries) {
-      if (e.kind === 'comment' || e.kind === 'note') { html += '<div class="line">' + esc(e.note) + '</div>'; continue; }
-      if (e.kind === 'subtotal') {
-        html += '<div class="sep"></div><div class="line subtotal"><span>= ' + esc(e.note || 'Subtotal') + '</span><span>' + formatNumber(e.running) + '</span></div>';
+      if (e.kind === 'comment' || e.kind === 'note') {
+        lines.push('<div class="rct-line rct-comment">' + esc(e.note) + '</div>');
         continue;
       }
+      if (e.kind === 'subtotal') {
+        lines.push('<div class="rct-sep"></div>');
+        lines.push('<div class="rct-line rct-subtotal"><span class="rct-op">=</span><span class="rct-label">' + esc(e.note || 'Subtotal') + '</span><span class="rct-val">' + formatNumber(e.running) + '</span></div>');
+        continue;
+      }
+      // op row
       const sym = e.op || '+';
       const amtStr = e.isPercent ? formatNumber(e.amount) + '%' : formatNumber(e.amount);
-      html += '<div class="line"><span class="op">' + sym + '</span><span class="amt">' + amtStr + '</span><span class="note">' + esc(e.note || '') + '</span></div>';
+      const hint = e.isPercent && e.percentValue != null ? ' | ' + formatNumber(e.percentValue) : '';
+      const note = e.note ? '<span class="rct-note">' + esc(e.note) + '</span>' : '';
+      lines.push('<div class="rct-line"><span class="rct-op">' + sym + '</span><span class="rct-amt">' + amtStr + hint + '</span>' + note + '</div>');
     }
-    html += '<div class="grand">Total: ' + formatNumber(result.grandTotal) + '</div>';
-    html += '</body></html>';
+    lines.push('<div class="rct-sep rct-double"></div>');
+    lines.push('<div class="rct-grand"><span class="rct-op">=</span><span class="rct-label">GRAND TOTAL</span><span class="rct-val">' + formatNumber(result.grandTotal) + '</span></div>');
 
+    const html = '<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>RecallTape Resi</title>' +
+      '<style>' +
+      '@page { size: 80mm auto; margin: 2mm; }' +
+      '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+      'html, body { background: #fff; color: #000; font-family: "Courier New", Menlo, Consolas, monospace; font-size: 10px; line-height: 1.55; }' +
+      'body { padding: 4mm; max-width: 72mm; margin: 0 auto; }' +
+      '.rct-hd { text-align: center; padding-bottom: 3mm; border-bottom: 1px dashed #000; margin-bottom: 3mm; }' +
+      '.rct-hd h1 { font-size: 13px; font-weight: 700; }' +
+      '.rct-date { font-size: 9px; color: #666; margin-top: 1px; }' +
+      '.rct-line { padding: 1px 0; display: flex; align-items: baseline; }' +
+      '.rct-line .rct-op { width: 10px; flex: none; font-weight: 700; }' +
+      '.rct-line .rct-amt { flex: 1; padding-left: 4px; font-variant-numeric: tabular-nums; }' +
+      '.rct-line .rct-note { flex: none; max-width: 50%; margin-left: 6px; color: #555; font-family: Arial, sans-serif; font-size: 9px; }' +
+      '.rct-comment { color: #666; font-family: Arial, sans-serif; font-style: italic; padding-left: 14px; }' +
+      '.rct-sep { border-top: 1px dashed #999; margin: 3px 0; }' +
+      '.rct-sep.rct-double { border-top: 2px solid #000; margin-top: 4px; }' +
+      '.rct-subtotal { font-weight: 700; padding-top: 2px; }' +
+      '.rct-subtotal .rct-label { flex: 1; padding-left: 4px; font-family: Arial, sans-serif; }' +
+      '.rct-subtotal .rct-val { font-variant-numeric: tabular-nums; }' +
+      '.rct-grand { padding-top: 4px; margin-top: 2px; font-weight: 700; font-size: 12px; align-items: baseline; }' +
+      '.rct-grand .rct-label { flex: 1; padding-left: 4px; font-family: Arial, sans-serif; }' +
+      '.rct-grand .rct-val { font-variant-numeric: tabular-nums; }' +
+      '.rct-foot { margin-top: 4mm; padding-top: 2mm; border-top: 1px dashed #000; text-align: center; font-size: 9px; color: #666; font-family: Arial, sans-serif; }' +
+      '@media print { body { padding: 2mm; } }' +
+      '</style></head><body>' +
+      lines.join('\n') +
+      '<div class="rct-foot">RecallFox · dicetak ' + new Date().toISOString().slice(0,10) + '</div>' +
+      '</body></html>';
+
+    // Hidden iframe di document.body (BUKAN shadow) supaya print dialog OK
     const iframe = document.createElement('iframe');
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;z-index:-1;';
     document.body.appendChild(iframe);
     try {
       const doc = iframe.contentWindow.document;
       doc.open(); doc.write(html); doc.close();
-    } catch (e) { toast('Gagal mencetak: ' + e.message); iframe.remove(); return; }
+    } catch (e) {
+      toast('Gagal mencetak: ' + e.message);
+      iframe.remove();
+      return;
+    }
+    // Tunggu render, lalu trigger print dialog
     setTimeout(() => {
-      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) { toast('Gagal print: ' + e.message); }
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        toast('Gagal print: ' + e.message);
+      }
+      // Cleanup iframe setelah 2 detik (kasih waktu user cancel print)
       setTimeout(() => { try { iframe.remove(); } catch (e) {} }, 2000);
     }, 300);
     flashBtn('.rft-print');
   }
 
+  // v3.14.9: Save ke vault sebagai "catatan" (note) — bukan prompt
+  // Background.js handler SAVE_TAPE_TO_VAULT sudah simpan sebagai note
   async function doSave() {
     const text = textarea.value;
     const result = evaluate(text.split('\n'));
     if (result.entries.length === 0) { toast('Tape kosong'); return; }
     try {
       const md = toMarkdown(result);
-      await browser.runtime.sendMessage({ type: 'SAVE_TAPE_TO_VAULT', markdown: md, text: text, grandTotal: result.grandTotal });
-      toast('✓ Tersimpan ke Vault');
+      await browser.runtime.sendMessage({
+        type: 'SAVE_TAPE_TO_VAULT',
+        markdown: md,
+        text: text,
+        grandTotal: result.grandTotal
+      });
+      toast('✓ Tersimpan ke Catatan');
       flashBtn('.rft-save');
     } catch (e) { toast('Gagal simpan: ' + e.message); }
   }
@@ -189,7 +283,7 @@
   }
 
   // ===== Helpers =====
-  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function flashBtn(sel) {
     const btn = shadow.querySelector(sel);
     if (!btn) return;
@@ -232,10 +326,55 @@
     // Textarea input → live eval + debounced save
     textarea.addEventListener('input', () => { scheduleEval(); scheduleSave(); });
 
-    // Ctrl+Enter → save
+    // v3.14.9: KEYDOWN — intercept operator keys untuk auto-newline
+    // Saat user tekan + - * / atau =, jangan insert operator ke text, tapi insert newline + operator
     textarea.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doSave(); }
-      if (e.key === 'Escape' && !pinned) { e.preventDefault(); hide(); }
+      // Ctrl+Enter → save to vault
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        doSave();
+        return;
+      }
+      // Esc → hide (unless pinned)
+      if (e.key === 'Escape' && !pinned) {
+        e.preventDefault();
+        hide();
+        return;
+      }
+      // v3.14.9: Operator keys → auto-newline
+      // Cek apakah cursor di akhir baris (atau di akhir text)
+      // Kalau di tengah angka, jangan intercept (biarkan user edit)
+      const key = e.key;
+      if (key === '+' || key === '-' || key === '*' || key === '/' || key === '=') {
+        // Jangan intercept kalau user lagi seleksi text (biar bisa replace selection)
+        // Tapi kalau selection ada, biarkan default — itu edit biasa
+        if (textarea.selectionStart !== textarea.selectionEnd) return;
+
+        // Cek apakah di akhir baris (cursor di posisi newline atau end of text)
+        const pos = textarea.selectionStart;
+        const val = textarea.value;
+        const atEndOfLine = (pos === val.length) || (val[pos] === '\n');
+
+        if (atEndOfLine) {
+          // Cek apakah baris sekarang sudah ada operator di awalnya
+          // Kalau baris kosong atau baris sudah ada operator, jangan double-insert
+          const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+          const currentLine = val.slice(lineStart, pos);
+          const trimmedCurrent = currentLine.trim();
+
+          // Kalau baris kosong DAN user tekan operator, biarkan default (insert operator ke baris kosong)
+          // Tapi kalau baris ada angkanya, auto-newline
+          if (trimmedCurrent === '' && key !== '=') {
+            // Baris kosong, user tekan operator — biarkan default insert
+            return;
+          }
+
+          // v3.14.9: Auto-newline
+          e.preventDefault();
+          handleOperatorKey(key);
+        }
+        // Kalau tidak di akhir baris, biarkan default (edit angka di tengah)
+      }
     });
 
     // Buttons
@@ -267,7 +406,12 @@
   // ===== Message listener =====
   browser.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'OPEN_TAPE') toggle();
-    else if (msg.type === 'ADD_TO_TAPE') { show(); textarea.value += (textarea.value ? '\n' : '') + msg.text; doEval(); scheduleSave(); }
+    else if (msg.type === 'ADD_TO_TAPE') {
+      show();
+      textarea.value += (textarea.value ? '\n' : '') + msg.text;
+      doEval();
+      scheduleSave();
+    }
     else if (msg.type === 'SHOW_TAPE') show();
     else if (msg.type === 'HIDE_TAPE') hide();
   });
@@ -407,7 +551,7 @@
       <button class="rft-btn rft-copy" title="Salin sebagai teks">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       </button>
-      <button class="rft-btn rft-save" title="Simpan ke Vault (Ctrl+Enter)">
+      <button class="rft-btn rft-save" title="Simpan ke Catatan (Ctrl+Enter)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
       <button class="rft-btn rft-clear" title="Kosongkan">
@@ -415,7 +559,7 @@
       </button>
     </div>
   </div>
-  <textarea class="rft-editor" spellcheck="false" placeholder="250000 Gaji&#10;+ 50k Bonus&#10;- 20rb Makan&#10;= Subtotal&#10;&#10;Format: angka + catatan&#10;Suffix: k/rb/jt/juta&#10;Op: + - * / = (subtotal)"></textarea>
+  <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, lalu tekan + - * / atau =&#10;Contoh:&#10;1300&#10;- 500&#10;= Subtotal&#10;+ 200&#10;= Total&#10;&#10;Suffix: k/rb/jt/juta&#10;Percent: + 19% PPN"></textarea>
   <div class="rft-status">
     <span class="rft-autosave">✓ Tersimpan otomatis</span>
   </div>
