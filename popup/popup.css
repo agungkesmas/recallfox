@@ -219,6 +219,15 @@ body.rf-sidebar-body .popup{
 .item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-md);cursor:pointer;border:1px solid transparent;transition:background .12s,border-color .12s;outline:none}
 .item:hover,.item.kb{background:var(--surface);border-color:var(--border)}
 .item:active{transform:scale(.99)}
+/* v3.17.1: Group header style — sedikit lebih tebal + background tint */
+.item.item-group{background:var(--surface-2);font-weight:600;border-color:var(--border)}
+.item.item-group:hover{background:var(--surface);border-color:var(--border-strong)}
+.item.item-group .item-title{font-weight:700}
+.item.item-group .group-chevron{display:inline-block;width:14px;text-align:center;transition:transform .12s}
+/* v3.17.1: DnD visual feedback */
+.item[draggable="true"]{cursor:grab}
+.item[draggable="true"]:active{cursor:grabbing}
+.item.drag-over{border:2px dashed var(--primary) !important;background:var(--primary-soft) !important}
 .item-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none;font-size:13px;background:var(--surface-2);color:var(--text-2)}
 .item-ic svg{width:15px;height:15px}
 .item-ic.t-prompt{background:var(--primary-soft);color:var(--primary)}
