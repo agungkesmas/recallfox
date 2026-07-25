@@ -1536,8 +1536,10 @@ function visibleItems() {
 // Group → collapsible header (▶/▼ + nama + count). Children → indent 16px.
 // Item → render seperti biasa (via renderItemHtml) + draggable.
 function renderTreeHtml(items) {
-  // Build tree nodes
-  const nodes = buildTree(items, expandedGroupIds);
+  // v3.17.4: Pass categoryFilter — kalau chip aktif bukan 'all'/'archive', filter tree
+  // supaya group hanya tampil kalau punya child dengan tipe tsb.
+  const categoryFilter = (currentChip && currentChip !== 'all' && currentChip !== 'archive') ? currentChip : null;
+  const nodes = buildTree(items, expandedGroupIds, categoryFilter);
   const html = [];
   for (const node of nodes) {
     if (node.kind === 'group') {
@@ -1651,6 +1653,46 @@ function renderItemHtml(it, indent) {
 
 // Wire tree events: expand/collapse group + DnD
 function wireTreeEvents() {
+  // v3.17.4: Unparenting drop zone — element reference
+  const dropzoneEl = $('#vaultRootDropzone');
+
+  // Helper: cek apakah item yang di-drag punya parentId (berada di dalam folder)
+  // Kalau ya, tampilkan drop zone untuk unparenting
+  function showDropzoneIfApplicable() {
+    if (!dropzoneEl || !draggedItemId || !currentVault) return;
+    const item = currentVault.items.find(i => i.id === draggedItemId);
+    if (item && getParentId(item)) {
+      // Item ada di dalam folder → tampilkan drop zone
+      dropzoneEl.style.display = 'block';
+    } else {
+      dropzoneEl.style.display = 'none';
+    }
+  }
+  function hideDropzone() {
+    if (dropzoneEl) dropzoneEl.style.display = 'none';
+  }
+
+  // v3.17.4: Drop zone event handlers
+  if (dropzoneEl) {
+    dropzoneEl.addEventListener('dragover', (e) => {
+      if (!draggedItemId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      dropzoneEl.classList.add('drag-over');
+    });
+    dropzoneEl.addEventListener('dragleave', () => {
+      dropzoneEl.classList.remove('drag-over');
+    });
+    dropzoneEl.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropzoneEl.classList.remove('drag-over');
+      if (!draggedItemId) return;
+      await moveItemToGroup(draggedItemId, null);  // null = top-level (unparent)
+      draggedItemId = null;
+      hideDropzone();
+    });
+  }
+
   // Expand/collapse: klik group header (atau chevron)
   $$('#list .item-group').forEach(el => {
     el.addEventListener('click', (e) => {
@@ -1687,6 +1729,7 @@ function wireTreeEvents() {
       if (groupId === draggedItemId) return;  // tidak bisa drop ke diri sendiri
       await moveItemToGroup(draggedItemId, groupId);
       draggedItemId = null;
+      hideDropzone();
     });
   });
 
@@ -1699,21 +1742,26 @@ function wireTreeEvents() {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', id);
       el.style.opacity = '0.5';
+      // v3.17.4: Tampilkan drop zone kalau item ada di dalam folder
+      setTimeout(showDropzoneIfApplicable, 50);
     });
     el.addEventListener('dragend', () => {
       el.style.opacity = '';
       draggedItemId = null;
+      hideDropzone();
     });
   });
 
   // DnD: drop ke list area (top-level) = pindahkan keluar dari group
+  // (fallback kalau user drop di area kosong, bukan di drop zone)
   const listEl = $('#list');
   if (listEl) {
     listEl.addEventListener('dragover', (e) => {
       if (!draggedItemId) return;
-      // Hanya allow drop kalau cursor di area kosong (bukan di atas item/group)
+      // Hanya allow drop kalau cursor di area kosong (bukan di atas item/group/dropzone)
       const overItem = e.target.closest('.item');
-      if (!overItem) {
+      const overDropzone = e.target.closest('#vaultRootDropzone');
+      if (!overItem && !overDropzone) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
       }
@@ -1721,10 +1769,12 @@ function wireTreeEvents() {
     listEl.addEventListener('drop', async (e) => {
       if (!draggedItemId) return;
       const overItem = e.target.closest('.item');
-      if (overItem) return;  // drop di item ditangani oleh item handler
+      const overDropzone = e.target.closest('#vaultRootDropzone');
+      if (overItem || overDropzone) return;  // drop di item/dropzone ditangani oleh handler masing-masing
       e.preventDefault();
       await moveItemToGroup(draggedItemId, null);  // null = top-level
       draggedItemId = null;
+      hideDropzone();
     });
   }
 }
