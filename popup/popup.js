@@ -1545,12 +1545,16 @@ function renderTreeHtml(items) {
     if (node.kind === 'group') {
       html.push(renderGroupHeaderHtml(node));
       if (node.isExpanded) {
-        for (const child of node.children) {
-          html.push(renderItemHtml(child.item, 16));  // indent 16px
+        // v3.17.5: Tree connector lines — ├── untuk middle, └── untuk last child
+        const children = node.children;
+        for (let i = 0; i < children.length; i++) {
+          const isLast = (i === children.length - 1);
+          const connector = isLast ? '└──' : '├──';
+          html.push(renderItemHtml(children[i].item, 16, connector));
         }
       }
     } else {
-      html.push(renderItemHtml(node.item, 0));
+      html.push(renderItemHtml(node.item, 0, null));
     }
   }
   return html.join('');
@@ -1572,7 +1576,7 @@ function renderGroupHeaderHtml(groupNode) {
 }
 
 // Render item biasa (extract dari kode lama). indent = padding-left dalam px.
-function renderItemHtml(it, indent) {
+function renderItemHtml(it, indent, connector) {
   const T = TYPE[it.type] || { label: it.type, icon: '' };
   const tagsStr = Array.isArray(it.tags) ? it.tags.join(', ') : (it.tags || '');
   const vars = it.body ? extractVariables(it.body).length : 0;
@@ -1634,9 +1638,14 @@ function renderItemHtml(it, indent) {
       activeContextBadge = ' <span title="Konteks aktif — auto-prepend saat inject prompt" style="font-size:10px;color:#10b981">🟢</span>';
     }
   }
-  const indentStyle = indent > 0 ? ' style="padding-left:' + (8 + indent) + 'px"' : '';
+  // v3.17.5: Tree connector lines — tampilkan ├── atau └── di depan item child
+  const connectorHtml = connector
+    ? '<span class="tree-connector" style="flex:none;color:var(--muted);font-family:monospace;font-size:11px;margin-right:2px;user-select:none">' + connector + '</span>'
+    : '';
+  const indentStyle = indent > 0 ? ' style="padding-left:' + (8 + indent - 16) + 'px"' : '';
   return '<div class="item" data-id="' + it.id + '" tabindex="0" draggable="true"' + indentStyle + '>'
     + batchCheckboxHtml
+    + connectorHtml
     + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
     + '<div class="item-main">'
     + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">⚙️</span>' : '') + '</div>'

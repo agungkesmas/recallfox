@@ -77,15 +77,11 @@
   <div class="view" id="vaultView">
         <div class="vault-hd">
       <span class="t">Vault</span><span class="meta" id="vaultMeta"></span>
-      <button class="addbtn" id="batchModeBtn" title="Mode batch: pilih multiple item untuk aksi sekaligus" style="display:none;margin-right:2px">☑️</button>
+      <button class="addbtn" id="batchModeBtn" title="Mode batch: pilih multiple item untuk aksi sekaligus" style="display:none;margin-right:2px">☑️ Batch</button>
       <button class="vault-icon-btn" id="aiGroupBtn" title="Auto Group AI — kelompokkan item otomatis pakai AI" style="margin-right:2px">🪄</button>
       <button class="vault-icon-btn" id="addGroupBtn" title="Buat Folder/Grup Baru" style="margin-right:2px">📁+</button>
       <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Baru</button>
         </div>
-    <!-- v3.17.4: Unparenting drop zone — muncul saat drag item dari folder -->
-    <div id="vaultRootDropzone" class="vault-root-dropzone" style="display:none">
-      📥 Lepaskan di sini untuk mengeluarkan dari Folder
-    </div>
     <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
     <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
       <span id="vaultBatchCount">0 dipilih</span>
@@ -101,6 +97,10 @@
       <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="chips" id="chips"></div>
+    <!-- v3.17.5: Unparenting drop zone — muncul saat drag item dari folder. Posisi: antara chips dan list. -->
+    <div id="vaultRootDropzone" class="vault-root-dropzone" style="display:none">
+      📥 Lepaskan di sini untuk mengeluarkan dari Folder
+    </div>
     <div class="list" id="list"></div>
     <div class="cmdres" id="cmdres"></div>
   </div>
