@@ -1943,6 +1943,13 @@ function bindItemClicks() {
         }
         // Kalau klik tombol aksi, biar handler di bawah yang handle
       }
+      // v3.19.4 FIX: Kalau klik group/folder header, JANGAN trigger primaryAction.
+      // wireVaultEvents sudah handle expand/collapse. Sebelumnya: tidak ada guard
+      // → klik folder juga trigger primaryAction → openScreenshotViewer →
+      // "Gagal memuat gambar: file_not_found_in_cloud" (folder tidak punya image file).
+      if (el.dataset.isGroup === '1') {
+        return;
+      }
       // v3.6: Cek apakah user klik tombol aksi Link khusus (data-link-action)
       const linkBtn = e.target.closest('[data-link-action]');
       if (linkBtn) {
@@ -3088,6 +3095,13 @@ function loadImageForComposite(dataUrl) {
 function openScreenshotViewer(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) { toast('Item tidak ditemukan', false); return; }
+  // v3.19.4: Guard — jangan buka viewer untuk group/folder items.
+  // Folder items punya type=screenshot tapi source.isGroup=true — mereka
+  // container virtual, bukan image. Buka viewer → "file_not_found_in_cloud".
+  if (isGroupItem(item)) {
+    console.warn('[RecallFox] openScreenshotViewer: skip group item:', id);
+    return;
+  }
   toast('📸 Memuat gambar...');
   browser.runtime.sendMessage({ type: 'GET_SCREENSHOT_BLOB', id }).then(res => {
     if (res?.ok && res.dataUrl) {
@@ -3124,6 +3138,11 @@ function openScreenshotViewer(id) {
 async function openDocumentViewer(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item) { toast('Item tidak ditemukan', false); return; }
+  // v3.19.4: Guard — jangan buka viewer untuk group/folder items.
+  if (isGroupItem(item)) {
+    console.warn('[RecallFox] openDocumentViewer: skip group item:', id);
+    return;
+  }
   if (item.type !== 'document') { toast('Item ini bukan dokumen', false); return; }
   const pages = item.source?.pages || [];
   if (pages.length === 0) { toast('Dokumen tidak punya halaman', false); return; }
