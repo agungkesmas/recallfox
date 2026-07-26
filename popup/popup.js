@@ -1646,10 +1646,7 @@ function renderItemHtml(it, indent, connector) {
   // Schema: { lat, lng, accuracy, address, capturedAt } — kompatibel dengan PWA v1.8.0.
   const loc = it.source?.location;
   const locationBadge = loc ? ' \u00B7 <span title="' + esc(loc.address || (loc.lat + ', ' + loc.lng)) + '" style="font-size:10px;color:var(--green)">\uD83D\uDCCD ' + esc((loc.address || (loc.lat?.toFixed(4) + ', ' + loc.lng?.toFixed(4))).slice(0, 30)) + '</span>' : '';
-  // v3.19.1: Display voice note badge untuk notes dengan source.kind='voice'.
-  // Note: vault items tidak include voice notes (notes table terpisah), tapi kalau
-  // nanti notes di-merge ke vault, badge ini akan aktif.
-  const voiceBadge = (it.source?.kind === 'voice' || it.color === 'voice') ? ' \u00B7 <span style="font-size:10px;color:var(--violet)">\uD83C\uDFA4 Voice</span>' : '';
+  // v1.8.1: Voice notes DIHAPUS — user bilang "batasan mb, tidak terpakai".
   return '<div class="item" data-id="' + it.id + '" tabindex="0" draggable="true"' + indentStyle + '>'
     + batchCheckboxHtml
     + connectorSpan
@@ -1660,7 +1657,6 @@ function renderItemHtml(it, indent, connector) {
     + (snapshotBadge ? ' \u00B7 ' + snapshotBadge : '')
     + (contextPurposeBadge ? ' \u00B7 ' + contextPurposeBadge : '')
     + locationBadge
-    + voiceBadge
     + ' \u00B7 ' + esc(tagsStr) + (uses ? ' \u00B7 <span class="uses">' + uses + '\u00D7 dipakai</span>' : '') + '</div>'
     + '</div>'
     + '<div class="item-cta">'
@@ -5282,17 +5278,7 @@ async function renderNotes() {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
       batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer"></div>';
     }
-    // v3.19.1: Voice note player — jika note.source.kind='voice', tampilkan <audio controls>.
-    // Kompatibel dengan PWA v1.8.0 yang rekam voice + upload ke bucket voice-notes.
-    const isVoice = n.source?.kind === 'voice' || n.color === 'voice';
-    const audioUrl = n.source?.audioUrl;
-    const voiceDuration = n.source?.duration || 0;
-    const voicePlayerHtml = (isVoice && audioUrl)
-      ? '<div class="note-voice-player" style="margin:6px 0">'
-        + '<audio controls preload="metadata" src="' + esc(audioUrl) + '" style="width:100%;height:32px"></audio>'
-        + (voiceDuration ? '<div style="font-size:10px;color:var(--muted);margin-top:2px">\uD83C\uDFA4 ' + Math.round(voiceDuration) + 's</div>' : '')
-        + '</div>'
-      : '';
+    // v1.8.1: Voice note player DIHAPUS — user bilang "batasan mb, tidak terpakai".
     // v3.19.1: GPS location display di note card (jika note punya source.location).
     const noteLoc = n.source?.location;
     const noteLocHtml = noteLoc
@@ -5303,9 +5289,8 @@ async function renderNotes() {
       + '<div class="note-card-main">'
       + titleHtml
       + '<div class="note-body-txt">' + previewHtml + '</div>'
-      + voicePlayerHtml
       + noteLocHtml
-      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + (isVoice ? '<span style="color:var(--violet)">\uD83C\uDFA4 Voice</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
+      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
