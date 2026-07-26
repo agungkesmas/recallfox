@@ -5117,7 +5117,12 @@ function renderSearch() {
     console.log('[RecallFox/Search] query:', JSON.stringify(q), '| total items:', allItems.length, '| currentChip:', currentChip);
   }
   $('#list').style.display = has ? 'none' : '';
-  const cr = $('#cmdres'); cr.style.display = has ? '' : 'none';
+  // v3.19.7 FIX BUG KRITIS: cmdres CSS default = display:none. Sebelumnya:
+  // has ? '' : 'none' → saat has=true, display='' menghapus inline style →
+  // fallback ke CSS default (display:none) → hasil search TIDAK TAMPIL!
+  // User report: "fitur search vault addon nya masih belum menemukan apapun"
+  // Fix: pakai 'block' explicit (bukan '') supaya override CSS default.
+  const cr = $('#cmdres'); cr.style.display = has ? 'block' : 'none';
   if (!has) { renderList(); return; }
   const cmdMode = q.startsWith('>');
   if (cmdMode) {
