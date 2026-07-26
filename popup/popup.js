@@ -1536,8 +1536,25 @@ function visibleItems() {
 function renderFlatList(items) {
   const isSpecificCategory = currentChip !== 'all' && currentChip !== 'archive';
   if (!isSpecificCategory) {
-    // Flat mode — "Semua"/"Arsip". Group items TIDAK tampil.
-    return items.filter(it => !isGroupItem(it)).map(it => renderItemHtml(it, 0, '')).join('');
+    // v3.18.2: Flat mode — "Semua"/"Arsip". Group items TETAP tampil sebagai folder.
+    // Sebelumnya group di-filter → user tidak lihat folder di "Semua"
+    const nodes = buildTree(items, expandedGroupIds, null, true);
+    let html = '';
+    for (const node of nodes) {
+      if (node.kind === 'group') {
+        html += renderGroupHtml(node);
+        if (node.isExpanded) {
+          node.children.forEach((child, i) => {
+            const isLast = i === node.children.length - 1;
+            const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ';
+            html += renderItemHtml(child.item, 1, connector);
+          });
+        }
+      } else {
+        html += renderItemHtml(node.item, 0, '');
+      }
+    }
+    return html;
   }
   // Tree mode — kategori spesifik
   const categoryFilter = currentChip === 'screenshot' ? 'screenshot' : currentChip;
