@@ -1764,16 +1764,25 @@ async function moveItemToGroup(itemId, groupId) {
 
 // ===== handleAddGroup: buat grup baru =====
 async function handleAddGroup() {
+  // v3.18.1: Kalau di "Semua"/"Arsip", default ke 'prompt' + beri tahu user
+  let groupType = currentChip;
+  if (currentChip === 'all' || currentChip === 'archive') {
+    groupType = 'prompt';
+    toast('📁 Grup dibuat di kategori Prompt. Ganti tab untuk lihat.');
+  }
   const name = prompt('Nama grup baru:');
   if (!name || !name.trim()) return;
-  // Type group = type chip aktif (prompt/link/screenshot/dll)
-  const groupType = (currentChip === 'screenshot') ? 'screenshot' : currentChip;
   const group = createGroup(name.trim(), groupType);
   try {
     await addItem(group);
     expandedGroupIds.push(group.id);
+    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat grup
+    if (currentChip === 'all' || currentChip === 'archive') {
+      currentChip = groupType;
+    }
     await refreshVault();
-    toast('\uD83D\uDCC1 Grup \u201C' + name.trim() + '\u201D dibuat');
+    renderChips();
+    toast('📁 Grup "' + name.trim() + '" dibuat');
   } catch (e) {
     toast('Gagal buat grup: ' + e.message, false);
   }
@@ -1792,7 +1801,7 @@ async function handleAiAutoGroup() {
       toast('Gagal: ' + result.error, false);
       return;
     }
-    const groupType = (currentChip === 'screenshot') ? 'screenshot' : currentChip;
+    const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
     for (const g of result.groups) {
       const group = createGroup(g.name, groupType);
       await addItem(group);
@@ -1802,8 +1811,13 @@ async function handleAiAutoGroup() {
         if (item) setParentId(item, group.id);
       }
     }
+    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat grup
+    if (currentChip === 'all' || currentChip === 'archive') {
+      currentChip = groupType;
+    }
     await refreshVault();
-    toast('\uD83E\uDD16 ' + result.groups.length + ' grup dibuat');
+    renderChips();
+    toast('🤖 ' + result.groups.length + ' grup dibuat');
   } catch (e) {
     toast('Gagal: ' + e.message, false);
   }
