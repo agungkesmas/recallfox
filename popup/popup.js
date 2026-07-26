@@ -1535,54 +1535,36 @@ function visibleItems() {
 // Kategori spesifik → tree dengan groups + connectors
 function renderFlatList(items) {
   const isSpecificCategory = currentChip !== 'all' && currentChip !== 'archive';
-  if (!isSpecificCategory) {
-    // v3.18.2: Flat mode — "Semua"/"Arsip". Group items TETAP tampil sebagai folder.
-    // Sebelumnya group di-filter → user tidak lihat folder di "Semua"
-    const nodes = buildTree(items, expandedGroupIds, null, true);
-    let html = '';
-    for (const node of nodes) {
-      if (node.kind === 'group') {
-        html += renderGroupHtml(node);
-        if (node.isExpanded) {
-          node.children.forEach((child, i) => {
-            const isLast = i === node.children.length - 1;
-            const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ';
-            html += renderItemHtml(child.item, 1, connector);
-          });
-        }
-      } else {
-        html += renderItemHtml(node.item, 0, '');
-      }
-    }
-    return html;
-  }
-  // Tree mode — kategori spesifik
-  const categoryFilter = currentChip === 'screenshot' ? 'screenshot' : currentChip;
+  const categoryFilter = isSpecificCategory ? (currentChip === 'screenshot' ? 'screenshot' : currentChip) : null;
   const nodes = buildTree(items, expandedGroupIds, categoryFilter, true);
+  return renderNodes(nodes, 0);
+}
+
+// v3.18.4: Recursive render — folder bisa berisi folder lagi
+function renderNodes(nodes, depth) {
   let html = '';
   for (const node of nodes) {
     if (node.kind === 'group') {
-      html += renderGroupHtml(node);
-      if (node.isExpanded) {
-        node.children.forEach((child, i) => {
-          const isLast = i === node.children.length - 1;
-          const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ';
-          html += renderItemHtml(child.item, 1, connector);
-        });
+      html += renderGroupHtml(node, depth);
+      if (node.isExpanded && node.children.length > 0) {
+        html += renderNodes(node.children, depth + 1);
       }
     } else {
-      html += renderItemHtml(node.item, 0, '');
+      const connector = depth > 0 ? (depth === 1 ? '\u251c\u2500\u2500 ' : '\u2502  \u251c\u2500\u2500 ') : '';
+      html += renderItemHtml(node.item, depth, connector);
     }
   }
   return html;
 }
 
 // ===== renderGroupHtml: group header dengan chevron + count =====
-function renderGroupHtml(node) {
+// v3.18.4: Tambah parameter depth untuk nested folder indent
+function renderGroupHtml(node, depth) {
   const g = node.item;
   const chevron = node.isExpanded ? '\u25BC' : '\u25B6';
   const count = node.children.length;
-  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0">'
+  const padLeft = depth > 0 ? ';padding-left:' + (10 + depth * 16) + 'px' : '';
+  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0' + padLeft + '">'
     + '<span style="font-size:12px;margin-right:4px;flex-shrink:0">' + chevron + '</span>'
     + '<span style="font-size:16px;margin-right:6px">\uD83D\uDCC1</span>'
     + '<span style="flex:1;font-weight:600;font-size:13px">' + esc(g.title) + '</span>'
@@ -1688,11 +1670,12 @@ function wireVaultEvents() {
     renderList();
   });
 
-  // Drag start
+  // Drag start — v3.18.4: group items JUGA bisa di-drag (untuk nested folder)
   listEl.addEventListener('dragstart', (e) => {
     const itemEl = e.target.closest('.item');
-    if (!itemEl || itemEl.dataset.isGroup === '1') return;
+    if (!itemEl) return;
     draggedItemId = itemEl.dataset.id;
+    if (!draggedItemId) return;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', draggedItemId);
     itemEl.style.opacity = '0.4';
@@ -1764,16 +1747,35 @@ async function moveItemToGroup(itemId, groupId) {
   if (!item) return;
   const oldParent = getParentId(item);
   if (oldParent === groupId) return; // tidak berubah
+
+  // v3.18.4: Cek circular reference — kalau item adalah group, pastikan
+  // groupId bukan descendant dari item (tidak bisa pindah folder ke dalam dirinya sendiri)
+  if (groupId && isGroupItem(item)) {
+    let current = groupId;
+    while (current) {
+      if (current === itemId) {
+        toast('\u26A0 Tidak bisa pindah folder ke dalam dirinya sendiri', false);
+        return;
+      }
+      const parent = currentVault.items.find(i => i.id === current);
+      current = parent ? getParentId(parent) : null;
+    }
+  }
+
   setParentId(item, groupId);
   item.updatedAt = new Date().toISOString();
   try {
     await updateItem(itemId, { source: item.source, updatedAt: item.updatedAt });
+    // v3.18.4: Auto-expand target folder supaya user langsung lihat item yang dipindah
+    if (groupId && !expandedGroupIds.includes(groupId)) {
+      expandedGroupIds.push(groupId);
+    }
     await refreshVault();
     if (groupId) {
       const grp = currentVault.items.find(i => i.id === groupId);
       toast('\uD83D\uDCC1 Dipindahkan ke \u201C' + (grp?.title || 'grup') + '\u201D');
     } else {
-      toast('\uD83D\uDCE5 Dikeluarkan dari grup');
+      toast('\uD83D\uDCE5 Dikeluarkan dari folder');
     }
   } catch (e) {
     toast('Gagal pindah: ' + e.message, false);
