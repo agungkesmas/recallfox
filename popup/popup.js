@@ -756,6 +756,21 @@ function searchableTextFor(it) {
     if (it.source.url) parts.push(it.source.url);
     if (it.source.title) parts.push(it.source.title);
     if (it.source.domain) parts.push(it.source.domain);
+    // v3.19.6: Folder/group metadata — supaya search bisa temukan folder by name
+    if (it.source.isGroup) parts.push('folder grup group');
+    if (it.source.folderColor) parts.push(it.source.folderColor);
+    // v3.19.6: GPS location — supaya search bisa temukan item by lokasi
+    if (it.source.location) {
+      if (it.source.location.address) parts.push(it.source.location.address);
+      if (it.source.location.lat) parts.push(String(it.source.location.lat));
+      if (it.source.location.lng) parts.push(String(it.source.location.lng));
+    }
+  }
+  // v3.19.6: Cari nama folder induk (parent) — supaya search "youtube favorit" bisa
+  // temukan item yang ada di dalam folder bernama "youtube favorit"
+  if (it.source?.parentId && currentVault?.items) {
+    const parent = currentVault.items.find(i => i.id === it.source.parentId);
+    if (parent) parts.push(parent.title || '');
   }
   // v3.10.2 (Issue 4 fix): Field tambahan untuk screenshot — mode, gdrive link
   if (it.screenshotMode) parts.push(it.screenshotMode);
@@ -5096,6 +5111,11 @@ function renderSearch() {
   const searchEl = $('#search');
   if (!searchEl) return;
   const q = currentQuery.trim(); const has = q.length > 0;
+  // v3.19.6: Debug log — track search query + data source
+  if (has) {
+    const allItems = getVaultItems();
+    console.log('[RecallFox/Search] query:', JSON.stringify(q), '| total items:', allItems.length, '| currentChip:', currentChip);
+  }
   $('#list').style.display = has ? 'none' : '';
   const cr = $('#cmdres'); cr.style.display = has ? '' : 'none';
   if (!has) { renderList(); return; }
@@ -5112,7 +5132,15 @@ function renderSearch() {
     const cs2 = COMMANDS.filter(c => c.k.indexOf(nq) >= 0 || c.t.toLowerCase().indexOf(nq) >= 0).slice(0, 3);
     // v3.7.2 (Issue 4): Cari di SEMUA tipe item (prompt, konteks, link, bundle, snapshot, screenshot)
     // termasuk body, tags, linkUrl, source.url, source.title, dan bundle member titles.
+    // v3.19.6: Search TIDAK terhalang chip filter — getVaultItems() returns SEMUA item
     const its = getVaultItems().filter(i => searchableTextFor(i).indexOf(nq) >= 0);
+    // v3.19.6: Debug log — track search results
+    console.log('[RecallFox/Search] results:', its.length, 'items found for "' + nq + '"');
+    if (its.length === 0) {
+      // Debug: log first 3 items' searchable text untuk troubleshooting
+      const sample = getVaultItems().slice(0, 3).map(i => ({ id: i.id, title: i.title, searchText: searchableTextFor(i).slice(0, 100) }));
+      console.log('[RecallFox/Search] sample items (no match):', sample);
+    }
     // v3.7.2 (Issue 4): Cari juga di catatan (title + body + group).
     // v3.13.0 (Issue #4): Body sekarang HTML — strip ke plain text dulu supaya search
     // tidak ketemu tag HTML seperti "table" atau "div".
