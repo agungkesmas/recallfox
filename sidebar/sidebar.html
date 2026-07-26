@@ -79,7 +79,19 @@
       <button class="addbtn" id="batchModeBtn" title="Mode batch" style="display:none">☑️<span class="btn-text"> Batch</span></button>
       <button class="addbtn" id="aiGroupBtn" title="Auto Group AI">🪄<span class="btn-text"> Auto</span></button>
       <button class="addbtn" id="addGroupBtn" title="Buat Folder/Grup Baru">📁+<span class="btn-text"> Grup</span></button>
+      <select id="vaultSortSelect" title="Urutkan" style="font-size:11px;padding:4px 8px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;outline:none">
+        <option value="recent">Terbaru</option>
+        <option value="name">Nama A-Z</option>
+        <option value="oldest">Terlama</option>
+        <option value="uses">Paling dipakai</option>
+        <option value="fav">Favorit dulu</option>
+      </select>
+      <button class="addbtn" id="collapseAllBtn" title="Collapse/Expand semua folder" style="padding:4px 8px">📂</button>
+      <button class="addbtn" id="tagFilterBtn" title="Filter by tag" style="padding:4px 8px">🏷️</button>
+      <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-text"> Baru</span></button>
         </div>
+    <div id="vaultBreadcrumb" style="padding:0 13px;font-size:11px;color:var(--muted);display:none"></div>
+    <div id="tagFilterBar" style="padding:0 13px;font-size:11px;display:none;gap:4px;flex-wrap:wrap"></div>
     <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
     <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
       <span id="vaultBatchCount">0 dipilih</span>

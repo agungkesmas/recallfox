@@ -90,6 +90,10 @@ let editorToppings = [];
 // v3.17.1: Tree/grouping state
 let expandedGroupIds = [];  // v3.18.0: group IDs yang expanded (persisted ke vault.settings)
 let draggedItemId = null;   // v3.18.0: item ID yang sedang di-drag
+// v3.19.0: File manager features
+let vaultSortMode = localStorage.getItem('rf_vault_sort') || 'recent';
+let activeTagFilter = null;
+let showRecentOnly = false;
 let allToppingsCache = [];
 let prayerPendingLocation = null;
 let prayerGeocodeTimer = null;
@@ -698,18 +702,19 @@ function getVaultItems() {
 }
 
 // v3.7.2 (Issue 1): tambah chip "Arsip" untuk lihat item yang diarsipkan.
-const CHIPS = [['all', 'Semua'], ['prompt', 'Prompt'], ['context', 'Konteks'], ['snapshot', 'Snapshot'], ['screenshot', 'Media'], ['link', 'Link'], ['bundle', 'Bundle'], ['archive', 'Arsip']];
+const CHIPS = [['all', 'Semua'], ['recent', '🕑 Terbaru'], ['prompt', 'Prompt'], ['context', 'Konteks'], ['snapshot', 'Snapshot'], ['screenshot', 'Media'], ['link', 'Link'], ['bundle', 'Bundle'], ['archive', 'Arsip']];
 function chipCount(c) {
   const items = getVaultItems();
   if (c === 'all') {
-    // Hitung item non-archived + bundle non-archived
     return items.filter(i => !i.archived && !(i._bundle && i._bundle.archived)).length;
+  }
+  if (c === 'recent') {
+    // v3.19.0: Chip "Terbaru" — tampilkan angka 15 (max recent items)
+    return Math.min(15, items.filter(i => !i.archived && !isGroupItem(i)).length);
   }
   if (c === 'archive') {
     return items.filter(i => i.archived || (i._bundle && i._bundle.archived)).length;
   }
-  // v3.12.0 (Fase 7): Chip 'screenshot' (label "Media") dimerge dengan 'document'
-  // supaya dokumen tampil di Media bersama screenshot (konsisten dengan PWA media.js).
   if (c === 'screenshot') {
     return items.filter(i => (i.type === 'screenshot' || i.type === 'document') && !i.archived).length;
   }
@@ -1495,30 +1500,34 @@ async function vaultBatchDeleteAction() {
 
 function visibleItems() {
   const items = getVaultItems();
-  // v3.7.2 (Issue 1): chip 'archive' menampilkan hanya item yang diarsipkan.
-  // Chip 'all' dan tipe lain menyembunyikan item yang diarsipkan.
   let vi;
   if (currentChip === 'archive') {
     vi = items.filter(i => i.archived || (i._bundle && i._bundle.archived));
   } else if (currentChip === 'all') {
     vi = items.filter(i => !i.archived && !(i._bundle && i._bundle.archived));
+  } else if (currentChip === 'recent') {
+    // v3.19.0: Chip "Terbaru" — 15 item terbaru by createdAt, cross-folder, cross-type
+    vi = items.filter(i => !i.archived && !(i._bundle && i._bundle.archived) && !isGroupItem(i));
+    vi.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    vi = vi.slice(0, 15);
+    return vi;
   } else if (currentChip === 'screenshot') {
-    // v3.12.0 (Fase 7): Chip "Media" tampilkan screenshot + document bersama.
     vi = items.filter(i => (i.type === 'screenshot' || i.type === 'document') && !i.archived);
   } else {
     vi = items.filter(i => i.type === currentChip && !i.archived);
   }
-  // v3.16.7 #5: Bundle scope — filter hanya item yang jadi anggota bundle terpilih
-  // Ini mengubah Bundle menjadi "workspace proyek" — user bisa lihat vault scoped ke proyek tertentu.
   if (currentBundleScope) {
     const bundle = currentVault?.bundles?.find(b => b.id === currentBundleScope);
     if (bundle) {
       const memberIds = new Set(bundle.itemIds || []);
       vi = vi.filter(i => memberIds.has(i.id));
     } else {
-      // Bundle sudah tidak ada — reset scope
       currentBundleScope = null;
     }
+  }
+  // v3.19.0: Tag filter — filter item by active tag
+  if (activeTagFilter) {
+    vi = vi.filter(i => Array.isArray(i.tags) && i.tags.includes(activeTagFilter));
   }
   if (currentQuery && !currentQuery.startsWith('>')) {
     const q = currentQuery.toLowerCase();
@@ -1534,9 +1543,9 @@ function visibleItems() {
 // "Semua"/"Arsip" → flat, group items SKIP
 // Kategori spesifik → tree dengan groups + connectors
 function renderFlatList(items) {
-  const isSpecificCategory = currentChip !== 'all' && currentChip !== 'archive';
+  const isSpecificCategory = currentChip !== 'all' && currentChip !== 'archive' && currentChip !== 'recent';
   const categoryFilter = isSpecificCategory ? (currentChip === 'screenshot' ? 'screenshot' : currentChip) : null;
-  const nodes = buildTree(items, expandedGroupIds, categoryFilter, true);
+  const nodes = buildTree(items, expandedGroupIds, categoryFilter, true, vaultSortMode);
   return renderNodes(nodes, 0);
 }
 
@@ -1564,9 +1573,12 @@ function renderGroupHtml(node, depth) {
   const chevron = node.isExpanded ? '\u25BC' : '\u25B6';
   const count = node.children.length;
   const padLeft = depth > 0 ? ';padding-left:' + (10 + depth * 16) + 'px' : '';
-  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0' + padLeft + '">'
+  // v3.19.0: Folder color — border-left berwarna kalau source.folderColor diset
+  const folderColor = g.source?.folderColor;
+  const borderLeft = folderColor ? ';border-left:3px solid ' + folderColor : '';
+  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0' + padLeft + borderLeft + '">'
     + '<span style="font-size:12px;margin-right:4px;flex-shrink:0">' + chevron + '</span>'
-    + '<span style="font-size:16px;margin-right:6px">\uD83D\uDCC1</span>'
+    + '<span style="font-size:16px;margin-right:6px">' + (folderColor ? '\uD83D\uDCC1' : '\uD83D\uDCC1') + '</span>'
     + '<span style="flex:1;font-weight:600;font-size:13px">' + esc(g.title) + '</span>'
     + '<span style="font-size:10px;color:var(--muted);background:var(--surface);padding:1px 6px;border-radius:8px;margin-right:4px">' + count + '</span>'
     + '<button class="morebtn" data-more="' + g.id + '" title="Kelola folder" style="flex-shrink:0">' + ICONS.dots + '</button>'
@@ -3219,7 +3231,186 @@ function openAnnotationNoteSheet(id) {
     });
   });
 }
-function renderVault() { renderChips(); renderList(); }
+function renderVault() { renderChips(); updateBreadcrumb(); updateTagFilterBar(); renderList(); }
+
+// v3.19.0: Breadcrumb — tampilkan path folder yang sedang expanded
+function updateBreadcrumb() {
+  const bc = $('#vaultBreadcrumb');
+  if (!bc) return;
+  if (expandedGroupIds.length === 0) {
+    bc.style.display = 'none';
+    return;
+  }
+  // Cari folder yang paling dalam (deepest expanded)
+  const allItems = getVaultItems();
+  let path = [];
+  for (const gid of expandedGroupIds) {
+    const g = allItems.find(i => i.id === gid);
+    if (g && isGroupItem(g)) {
+      // Build chain dari root ke gid
+      const chain = [];
+      let cur = g;
+      while (cur) {
+        chain.unshift(cur);
+        const pid = getParentId(cur);
+        cur = pid ? allItems.find(i => i.id === pid) : null;
+      }
+      if (chain.length > path.length) path = chain;
+    }
+  }
+  if (path.length === 0) { bc.style.display = 'none'; return; }
+  let html = '<span style="cursor:pointer" data-bc="">🏠</span>';
+  for (const g of path) {
+    html += ' <span style="opacity:.5">›</span> <span style="cursor:pointer;color:var(--primary)" data-bc="' + g.id + '">📁 ' + esc(g.title) + '</span>';
+  }
+  bc.innerHTML = html;
+  bc.style.display = '';
+  // Wire click — collapse folders deeper than clicked level
+  bc.querySelectorAll('[data-bc]').forEach(el => {
+    el.addEventListener('click', () => {
+      const targetId = el.dataset.bc;
+      if (!targetId) {
+        // Click 🏠 → collapse all
+        expandedGroupIds = [];
+      } else {
+        // Collapse everything deeper than targetId
+        const allItems2 = getVaultItems();
+        // Find all descendants of targetId
+        const descendants = new Set();
+        function collectDesc(id) {
+          for (const it of allItems2) {
+            if (getParentId(it) === id) {
+              descendants.add(it.id);
+              if (isGroupItem(it)) collectDesc(it.id);
+            }
+          }
+        }
+        collectDesc(targetId);
+        expandedGroupIds = expandedGroupIds.filter(id => !descendants.has(id));
+      }
+      renderVault();
+    });
+  });
+}
+
+// v3.19.0: Tag filter bar — tampilkan tags sebagai chip, klik untuk filter
+function updateTagFilterBar() {
+  const bar = $('#tagFilterBar');
+  if (!bar) return;
+  const allTags = new Set();
+  for (const it of getVaultItems()) {
+    if (it.archived || isGroupItem(it)) continue;
+    if (Array.isArray(it.tags)) it.tags.forEach(t => { if (t && t !== 'group') allTags.add(t); });
+  }
+  if (allTags.size === 0) { bar.style.display = 'none'; return; }
+  let html = '<span style="color:var(--muted)">Tag:</span> ';
+  for (const tag of [...allTags].sort()) {
+    const isActive = activeTagFilter === tag;
+    html += '<button class="chip" style="font-size:10px;padding:2px 8px;' + (isActive ? 'background:var(--primary);color:#fff;border-color:var(--primary)' : '') + '" data-tag="' + esc(tag) + '">' + esc(tag) + '</button> ';
+  }
+  if (activeTagFilter) {
+    html += '<button class="chip" style="font-size:10px;padding:2px 8px;color:var(--danger)" data-tag="">✕ Clear</button>';
+  }
+  bar.innerHTML = html;
+  bar.style.display = activeTagFilter ? 'flex' : 'none';
+  bar.querySelectorAll('[data-tag]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.tag;
+      activeTagFilter = t || null;
+      renderVault();
+    });
+  });
+}
+
+// v3.19.0: Toggle tag filter bar visibility
+function toggleTagFilter() {
+  const bar = $('#tagFilterBar');
+  if (!bar) return;
+  if (bar.style.display === 'none' || bar.style.display === '') {
+    updateTagFilterBar();
+    bar.style.display = 'flex';
+  } else {
+    activeTagFilter = null;
+    bar.style.display = 'none';
+    renderVault();
+  }
+}
+
+// v3.19.0: Collapse/Expand all folders
+function toggleCollapseAll() {
+  if (expandedGroupIds.length > 0) {
+    expandedGroupIds = [];
+    toast('📂 Semua folder ditutup');
+  } else {
+    // Expand all
+    const allItems = getVaultItems();
+    expandedGroupIds = allItems.filter(i => isGroupItem(i) && !i.archived).map(i => i.id);
+    toast('📂 Semua folder dibuka');
+  }
+  renderVault();
+}
+
+// v3.19.0: Move to folder via menu (alternatif DnD)
+function openMoveToFolderSheet(itemId) {
+  const it = findItem(itemId);
+  if (!it) return;
+  const allFolders = getVaultItems().filter(i => isGroupItem(i) && !i.archived && i.id !== itemId);
+  if (allFolders.length === 0) { toast('Belum ada folder. Buat folder dulu.', false); return; }
+  openSheet('Pindahkan ke folder', esc(it.title || 'Item'), b => {
+    let html = '<button class="act" data-fid=""><div>📤 Top-level (keluarkan dari folder)</div></button>';
+    // Build folder tree untuk display
+    const nodes = buildTree(allFolders, [], null, true);
+    function renderFolderOption(node, depth) {
+      if (node.kind === 'group') {
+        const indent = '\u00A0\u00A0'.repeat(depth);
+        const isCurrent = getParentId(it) === node.item.id;
+        html += '<button class="act' + (isCurrent ? ' on' : '') + '" data-fid="' + node.item.id + '"><div>' + indent + '📁 ' + esc(node.item.title) + (isCurrent ? ' ✓' : '') + '</div></button>';
+        if (node.children) node.children.forEach(c => renderFolderOption(c, depth + 1));
+      }
+    }
+    nodes.forEach(n => renderFolderOption(n, 0));
+    b.innerHTML = html;
+    b.querySelectorAll('[data-fid]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const fid = btn.dataset.fid || null;
+        closeSheet();
+        moveItemToGroup(itemId, fid);
+      });
+    });
+  });
+}
+
+// v3.19.0: Folder color — pilih warna untuk folder
+function openFolderColorSheet(groupId) {
+  const it = findItem(groupId);
+  if (!it) return;
+  const colors = [
+    { id: '', label: 'Default', color: 'var(--muted)' },
+    { id: '#ef4444', label: 'Merah', color: '#ef4444' },
+    { id: '#f59e0b', label: 'Oranye', color: '#f59e0b' },
+    { id: '#10b981', label: 'Hijau', color: '#10b981' },
+    { id: '#3b82f6', label: 'Biru', color: '#3b82f6' },
+    { id: '#8b5cf6', label: 'Ungu', color: '#8b5cf6' },
+    { id: '#ec4899', label: 'Pink', color: '#ec4899' }
+  ];
+  const currentColor = it.source?.folderColor || '';
+  openSheet('Warna Folder', esc(it.title || 'Folder'), b => {
+    b.innerHTML = colors.map(c =>
+      '<button class="act' + (currentColor === c.id ? ' on' : '') + '" data-color="' + c.id + '"><div style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:4px;background:' + c.color + ';display:inline-block"></span>' + c.label + (currentColor === c.id ? ' ✓' : '') + '</div></button>'
+    ).join('');
+    b.querySelectorAll('[data-color]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const color = btn.dataset.color;
+        closeSheet();
+        if (!it.source) it.source = {};
+        it.source.folderColor = color || undefined;
+        await updateItem(groupId, { source: it.source });
+        await refreshVault();
+        toast('🎨 Warna folder diubah');
+      });
+    });
+  });
+}
 
 // v3.16.7 #5: Wire exit scope button — clear bundle scope + re-render
 function wireExitScope() {
@@ -3244,6 +3435,8 @@ function itemSheet(id) {
     openSheet(esc(it.title), '📁 Folder' + (childCount > 0 ? ' · ' + childCount + ' item' : ''), b => {
       b.innerHTML =
         '<button class="act" data-a="rename-group">' + ICONS.edit + '<div>✏️ Rename Folder<div class="ad">Ubah nama folder</div></div></button>'
+        + '<button class="act" data-a="folder-color">' + ICONS.dots + '<div>🎨 Warna Folder<div class="ad">Pilih warna untuk folder</div></div></button>'
+        + '<button class="act" data-a="move-folder">' + ICONS.clipA + '<div>📂 Pindahkan Folder ke...<div class="ad">Pindahkan folder ini ke folder lain</div></div></button>'
         + '<button class="act" data-a="expand-all">' + ICONS.dots + '<div>📂 Buka semua child<div class="ad">Tampilkan semua item di dalam folder</div></div></button>'
         + (childCount > 0 ? '<button class="act" data-a="unparent-all">' + ICONS.clipA + '<div>📤 Keluarkan semua item<div class="ad">' + childCount + ' item jadi top-level, folder tetap ada</div></div></button>' : '')
         + '<button class="act danger" data-a="del-group">' + ICONS.trash + '<div>🗑️ Hapus Folder<div class="ad">' + (childCount > 0 ? childCount + ' item di dalamnya akan jadi top-level' : 'Folder kosong akan dihapus') + '</div></div></button>';
@@ -3259,6 +3452,8 @@ function itemSheet(id) {
             });
           }
         }
+        else if (k === 'folder-color') { closeSheet(); openFolderColorSheet(it.id); }
+        else if (k === 'move-folder') { closeSheet(); openMoveToFolderSheet(it.id); }
         else if (k === 'expand-all') {
           closeSheet();
           if (!expandedGroupIds.includes(it.id)) expandedGroupIds.push(it.id);
@@ -3329,6 +3524,8 @@ function itemSheet(id) {
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
       // v3.7.2 (Issue 1): Tambah/Pindah ke Bundle — assign ulang screenshot/prompt/dll ke bundle lain.
       + (it.type !== 'bundle' ? '<button class="act" data-a="bundle">' + ICONS.clipA + '<div>Tambah / pindah ke Bundle<div class="ad">Reassign item ke sesi troubleshooting lain</div></div></button>' : '<button class="act" data-a="editbundle">' + ICONS.edit + '<div>Edit bundle<div class="ad">Ubah nama, tambah / hapus anggota</div></div></button>')
+      // v3.19.0: Pindahkan ke Folder (alternatif DnD untuk sidebar sempit)
+      + (it.type !== 'bundle' ? '<button class="act" data-a="move-folder">' + ICONS.clipA + '<div>📂 Pindahkan ke Folder...<div class="ad">Pilih folder tujuan dari daftar</div></div></button>' : '')
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download ' + (it.type === 'document' ? 'halaman pertama' : 'gambar') + '</div></button>' : '')
       // v3.11.6 (Issue 1 dari Google Doc): Tombol Salin Gambar & Salin + Keterangan
       // untuk item screenshot di Vault. Sebelumnya cuma ada "Lihat" dan "Download".
@@ -3366,6 +3563,8 @@ function itemSheet(id) {
       else if (k === 'toggle-active') { closeSheet(); toggleActiveContext(it.id); }
       else if (k === 'archive') { toggleArchive(it.id).then(() => { closeSheet(); toast(it.archived ? '📦 Dikeluarkan dari arsip' : '📦 Diarsipkan'); }); }
       else if (k === 'bundle') { closeSheet(); openReassignBundleSheet(it.id); }
+      // v3.19.0: Pindahkan ke Folder via menu
+      else if (k === 'move-folder') { closeSheet(); openMoveToFolderSheet(it.id); }
       else if (k === 'dl') { closeSheet(); downloadScreenshot(it.id); }
       // v3.11.6: Handler Salin Gambar & Salin + Keterangan untuk item screenshot
       // v3.12.0 (Fase 7): Dipakai juga untuk dokumen — copyScreenshotToClipboard/Meta
@@ -8389,6 +8588,20 @@ function bindEvents() {
   const aiGroupBtnEl = $('#aiGroupBtn');
   if (addGroupBtnEl) addGroupBtnEl.addEventListener('click', handleAddGroup);
   if (aiGroupBtnEl) aiGroupBtnEl.addEventListener('click', handleAiAutoGroup);
+  // v3.19.0: Sort dropdown + Collapse All + Tag Filter
+  const vaultSortSelect = $('#vaultSortSelect');
+  if (vaultSortSelect) {
+    vaultSortSelect.value = vaultSortMode;
+    vaultSortSelect.addEventListener('change', (e) => {
+      vaultSortMode = e.target.value;
+      localStorage.setItem('rf_vault_sort', vaultSortMode);
+      renderVault();
+    });
+  }
+  const collapseAllBtn = $('#collapseAllBtn');
+  if (collapseAllBtn) collapseAllBtn.addEventListener('click', toggleCollapseAll);
+  const tagFilterBtn = $('#tagFilterBtn');
+  if (tagFilterBtn) tagFilterBtn.addEventListener('click', toggleTagFilter);
   // v3.11.11 (Issue #1): Batch mode untuk screenshot di vault
   // v3.11.14: Generalisasi — batch mode untuk SEMUA tipe (prompt, link, bundle, archive, dll)
   const vaultBatchModeBtnEl = $('#batchModeBtn');
