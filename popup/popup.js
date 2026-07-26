@@ -1582,11 +1582,12 @@ function renderGroupHtml(node) {
   const g = node.item;
   const chevron = node.isExpanded ? '\u25BC' : '\u25B6';
   const count = node.children.length;
-  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0">'
+  return '<div class="item vault-group-header" data-group-id="' + g.id + '" data-id="' + g.id + '" data-is-group="1" tabindex="0" draggable="true" style="cursor:pointer;background:var(--surface-2);border-radius:6px;margin:2px 0">'
     + '<span style="font-size:12px;margin-right:4px;flex-shrink:0">' + chevron + '</span>'
     + '<span style="font-size:16px;margin-right:6px">\uD83D\uDCC1</span>'
     + '<span style="flex:1;font-weight:600;font-size:13px">' + esc(g.title) + '</span>'
-    + '<span style="font-size:10px;color:var(--muted);background:var(--surface);padding:1px 6px;border-radius:8px">' + count + '</span>'
+    + '<span style="font-size:10px;color:var(--muted);background:var(--surface);padding:1px 6px;border-radius:8px;margin-right:4px">' + count + '</span>'
+    + '<button class="morebtn" data-more="' + g.id + '" title="Kelola folder" style="flex-shrink:0">' + ICONS.dots + '</button>'
     + '</div>';
 }
 
@@ -3234,6 +3235,70 @@ function wireExitScope() {
 function itemSheet(id) {
   const it = findItem(id);
   if (!it) return;
+
+  // v3.18.3: Group item — tampilkan menu khusus folder (rename, hapus folder, unparent all)
+  if (isGroupItem(it)) {
+    const childCount = currentVault.items.filter(i => getParentId(i) === it.id).length;
+    openSheet(esc(it.title), '📁 Folder' + (childCount > 0 ? ' · ' + childCount + ' item' : ''), b => {
+      b.innerHTML =
+        '<button class="act" data-a="rename-group">' + ICONS.edit + '<div>✏️ Rename Folder<div class="ad">Ubah nama folder</div></div></button>'
+        + '<button class="act" data-a="expand-all">' + ICONS.dots + '<div>📂 Buka semua child<div class="ad">Tampilkan semua item di dalam folder</div></div></button>'
+        + (childCount > 0 ? '<button class="act" data-a="unparent-all">' + ICONS.clipA + '<div>📤 Keluarkan semua item<div class="ad">' + childCount + ' item jadi top-level, folder tetap ada</div></div></button>' : '')
+        + '<button class="act danger" data-a="del-group">' + ICONS.trash + '<div>🗑️ Hapus Folder<div class="ad">' + (childCount > 0 ? childCount + ' item di dalamnya akan jadi top-level' : 'Folder kosong akan dihapus') + '</div></div></button>';
+      b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
+        const k = a.dataset.a;
+        if (k === 'rename-group') {
+          closeSheet();
+          const newName = prompt('Nama folder baru:', it.title);
+          if (newName && newName.trim()) {
+            updateItem(it.id, { title: newName.trim() }).then(() => {
+              refreshVault();
+              toast('✏️ Folder di-rename: ' + newName.trim());
+            });
+          }
+        }
+        else if (k === 'expand-all') {
+          closeSheet();
+          if (!expandedGroupIds.includes(it.id)) expandedGroupIds.push(it.id);
+          renderList();
+          toast('📂 Folder dibuka');
+        }
+        else if (k === 'unparent-all') {
+          closeSheet();
+          if (!confirm('Keluarkan semua ' + childCount + ' item dari folder "' + it.title + '"?')) return;
+          (async () => {
+            const children = currentVault.items.filter(i => getParentId(i) === it.id);
+            for (const child of children) {
+              setParentId(child, null);
+              await updateItem(child.id, { source: child.source });
+            }
+            await refreshVault();
+            toast('📤 ' + childCount + ' item dikeluarkan ke top-level');
+          })();
+        }
+        else if (k === 'del-group') {
+          b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus folder <b>' + esc((it.title || '').slice(0, 24)) + '</b>?</span>'
+            + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Hapus</button></div>';
+          b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
+          b.querySelector('[data-c="1"]').addEventListener('click', async () => {
+            // Unparent all children first
+            const children = currentVault.items.filter(i => getParentId(i) === it.id);
+            for (const child of children) {
+              setParentId(child, null);
+              await updateItem(child.id, { source: child.source });
+            }
+            // Delete the group item itself
+            await deleteItem(it.id);
+            closeSheet();
+            await refreshVault();
+            toast('🗑️ Folder dihapus' + (children.length > 0 ? ' · ' + children.length + ' item jadi top-level' : ''));
+          });
+        }
+      }));
+    });
+    return;
+  }
+
   const T = TYPE[it.type] || { label: it.type };
   const vars = it.body ? extractVariables(it.body).length : 0;
   openSheet(esc(it.title), T.label + (vars ? ' · ' + vars + ' variabel' : ''), b => {
