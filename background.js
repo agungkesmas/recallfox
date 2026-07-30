@@ -1977,11 +1977,17 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
+    // v3.20.2: Prefer msg.dataTypes + msg.timePeriod (sent by popup.js v3.20.2+).
+    // Fallback ke settings (untuk backward compat dengan popup lama / shortcut keyboard).
     const settings = await getSettings();
     const { clearBrowsingData } = await import('./lib/clearcache.js');
+    const dataTypes = (Array.isArray(msg.dataTypes) && msg.dataTypes.length > 0)
+      ? msg.dataTypes
+      : (settings.clearCacheDataTypes || ['cache']);
+    const timePeriod = msg.timePeriod || settings.clearCacheTimePeriod || 'all';
     const res = await clearBrowsingData({
-      dataTypes: settings.clearCacheDataTypes,
-      timePeriod: settings.clearCacheTimePeriod,
+      dataTypes,
+      timePeriod,
       currentTabOnly: settings.clearCacheCurrentTabOnly,
       reload: settings.clearCacheReload,
       notify: settings.clearCacheNotify
