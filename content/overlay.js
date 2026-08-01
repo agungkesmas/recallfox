@@ -124,19 +124,14 @@
     hint.className = 'recallfox-dock-hint';
     hint.innerHTML = 'Screenshot <b>·</b> seret untuk pindah';
 
-    // FAB button (purple gradient, rounded square)
+    // FAB button — v3.20.5: text "sc" (bukan SVG camera icon)
     fabBtn = document.createElement('button');
     fabBtn.id = 'recallfox-fab';
     fabBtn.className = 'recallfox-fab';
     fabBtn.type = 'button';
     fabBtn.title = 'Ambil screenshot (Alt+Shift+5)';
     fabBtn.setAttribute('aria-label', 'Ambil screenshot');
-    fabBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/>
-        <circle cx="12" cy="13" r="3.2"/>
-      </svg>
-    `;
+    fabBtn.textContent = 'sc';
 
     dockEl.appendChild(hint);
     dockEl.appendChild(fabBtn);
@@ -373,12 +368,7 @@
   function restoreButton() {
     if (!fabBtn) return;
     fabBtn.classList.remove('recallfox-fab-busy');
-    fabBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/>
-        <circle cx="12" cy="13" r="3.2"/>
-      </svg>
-    `;
+    fabBtn.textContent = 'sc';  // v3.20.5: restore text (bukan SVG)
   }
 
   function showError(msg) {

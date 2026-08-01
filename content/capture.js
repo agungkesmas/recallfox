@@ -601,6 +601,17 @@
     const quality = typeof opts.quality === 'number' ? opts.quality : 90;
     const maxHeight = opts.maxHeight || 16384;
 
+    // v3.20.5: Hide RecallFox floating elements during screenshot capture
+    const HIDE_SELECTORS = ['#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-fab', '.recallfox-dock'];
+    const hiddenEls = [];
+    for (const sel of HIDE_SELECTORS) {
+      document.querySelectorAll(sel).forEach(el => {
+        hiddenEls.push({ el, prev: el.style.visibility });
+        el.style.visibility = 'hidden';
+      });
+    }
+    if (hiddenEls.length > 0) await new Promise(r => setTimeout(r, 50));
+
     try {
       if (mode === 'visible') {
         return await captureVisible(format, quality);
@@ -629,6 +640,9 @@
         }
       }
       return { dataUrl: null, cancelled: false, error: e.message };
+    } finally {
+      // v3.20.5: Restore visibility
+      hiddenEls.forEach(({ el, prev }) => { el.style.visibility = prev; });
     }
   };
 
