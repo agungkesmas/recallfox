@@ -1,12 +1,13 @@
 // content/sidebar-cs.js — RecallFox Popout Sidebar (iframe approach)
 //
-// v3.20.5 (Firefox) / v3.20.10 (Chrome) — fix 6 bug dari user:
-// 1. Toggle buka/tutup jalan (pakai toggle() bukan show())
-// 2. Floating button text "rf" (bukan 🦊)
-// 3. Floating button draggable
-// 4. Default width = MIN_WIDTH (280px)
-// 5. Hide during screenshot capture
-// 6. Auto-close 15s idle + pin button
+// v3.20.6 (Firefox) — fix berdasarkan user feedback:
+// 1. Close button: JANGAN unmount floater di show() — ubah text jadi "✕" saat open
+//    User: "tombol tutup popout sidebar nya tidak berfungsi di versi firefox"
+//    Root cause: #sidebarInPageBtn di iframe kirim browser.tabs.sendMessage yang
+//    gagal di Firefox (cross-origin iframe context). Fix: floater tetap visible
+//    sebagai tombol close, text "✕" saat open, "rf" saat closed.
+// 2. "sc" button: Posisi offset dari "rf" supaya tidak overlap
+// 3. Draggable: Tambah mouse event fallback (Firefox tidak reliable dengan setPointerCapture)
 
 (async function () {
   if (window.__recallfoxSidebarLoaded) return;
@@ -16,10 +17,10 @@
   const FLOATER_ID = 'recallfox-sidebar-floater';
   const STORAGE_KEY = 'recallfox_sidebar_in_page_state';
   const FLOATER_POS_KEY = 'recallfox_popout_floater_pos';
-  const DEFAULT_WIDTH = 280;  // v3.20.5: was 340, user mau "ukuran terkecil"
+  const DEFAULT_WIDTH = 280;
   const MIN_WIDTH = 280;
   const MAX_WIDTH = 600;
-  const AUTO_CLOSE_MS = 15000;  // v3.20.5: 15 detik idle → auto-close
+  const AUTO_CLOSE_MS = 15000;
   const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart', 'input', 'wheel'];
 
   let host = null;
@@ -48,7 +49,7 @@
     try { await browser.storage.local.set({ [STORAGE_KEY]: state }); } catch (e) {}
   }
 
-  // ===== Idle timer (auto-close 15s) =====
+  // ===== Idle timer =====
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
     if (isPinned || !isVisible) return;
@@ -62,7 +63,7 @@
   }
   ACTIVITY_EVENTS.forEach(ev => document.addEventListener(ev, onActivity, { passive: true, capture: true }));
 
-  // ===== Load floater position from localStorage =====
+  // ===== Floater position persistence =====
   function loadFloaterPos() {
     try {
       const pos = JSON.parse(localStorage.getItem(FLOATER_POS_KEY) || 'null');
@@ -74,7 +75,7 @@
     try { localStorage.setItem(FLOATER_POS_KEY, JSON.stringify({ x, y })); } catch (e) {}
   }
 
-  // ===== Mount host + iframe + resize handle + pin button =====
+  // ===== Mount host + iframe + resize + pin =====
   function mount() {
     if (host) return;
     host = document.createElement('div');
@@ -109,7 +110,7 @@
     ].join(';');
     host.appendChild(iframe);
 
-    // v3.20.5: Pin button — kecil, di pojok kanan atas host
+    // Pin button
     pinBtn = document.createElement('div');
     pinBtn.id = 'recallfox-popout-pin';
     pinBtn.setAttribute('role', 'button');
@@ -139,15 +140,16 @@
     wireResize();
   }
 
-  // ===== Floating toggle button (text "rf", draggable) =====
+  // ===== Floating "rf" button — draggable, acts as open/close toggle =====
   function mountFloater() {
     if (floater) return;
     floater = document.createElement('div');
     floater.id = FLOATER_ID;
     floater.setAttribute('role', 'button');
     floater.setAttribute('tabindex', '0');
-    floater.textContent = 'rf';
-    floater.title = 'Buka RecallFox sidebar';
+    // v3.20.6: text "rf" saat closed, "✕" saat open
+    updateFloaterText();
+    floater.title = 'Buka/Tutup RecallFox sidebar';
     floater.style.cssText = [
       'all:initial', 'position:fixed',
       'width:36px', 'height:36px', 'border-radius:8px',
@@ -161,7 +163,7 @@
       'transition:transform .1s ease'
     ].join(';');
 
-    // Restore position dari localStorage
+    // Restore position
     const savedPos = loadFloaterPos();
     if (savedPos) {
       floater.style.left = Math.max(0, Math.min(window.innerWidth - 36, savedPos.x)) + 'px';
@@ -169,15 +171,18 @@
       floater.style.bottom = 'auto';
       floater.style.right = 'auto';
     } else {
+      // v3.20.6: Posisi default offset dari "sc" FAB supaya tidak overlap
+      // "sc" FAB ada di bottom:24px right:24px (48px wide)
+      // "rf" floater di bottom:24px right:76px (24+48+4 padding)
       floater.style.bottom = '24px';
-      floater.style.right = '24px';
+      floater.style.right = '76px';
     }
 
-    // v3.20.5: Drag logic (copy pattern dari overlay.js)
+    // v3.20.6: Drag logic dengan DUAL pointer + mouse events (Firefox fallback)
     let dragState = { dragging: false, startX: 0, startY: 0, origX: 0, origY: 0, moved: false };
 
-    floater.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+    function onDown(e) {
+      if (e.button !== undefined && e.button !== 0) return;
       dragState.dragging = true;
       dragState.startX = e.clientX;
       dragState.startY = e.clientY;
@@ -185,14 +190,20 @@
       dragState.origX = rect.left;
       dragState.origY = rect.top;
       dragState.moved = false;
-      try { floater.setPointerCapture(e.pointerId); } catch (err) {}
+      // Try pointer capture (Chrome) — fallback to mouse events (Firefox)
+      if (e.pointerId !== undefined) {
+        try { floater.setPointerCapture(e.pointerId); } catch (err) {}
+      }
       e.preventDefault();
-    });
+    }
 
-    floater.addEventListener('pointermove', (e) => {
+    function onMove(e) {
       if (!dragState.dragging) return;
-      const dx = e.clientX - dragState.startX;
-      const dy = e.clientY - dragState.startY;
+      const cx = e.clientX !== undefined ? e.clientX : e.touches?.[0]?.clientX;
+      const cy = e.clientY !== undefined ? e.clientY : e.touches?.[0]?.clientY;
+      if (cx === undefined) return;
+      const dx = cx - dragState.startX;
+      const dy = cy - dragState.startY;
       if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragState.moved = true;
       if (!dragState.moved) return;
       let newX = dragState.origX + dx;
@@ -203,24 +214,40 @@
       floater.style.top = newY + 'px';
       floater.style.bottom = 'auto';
       floater.style.right = 'auto';
-    });
+    }
 
-    floater.addEventListener('pointerup', (e) => {
-      if (dragState.dragging) {
-        dragState.dragging = false;
+    function onUp(e) {
+      if (!dragState.dragging) return;
+      dragState.dragging = false;
+      if (e.pointerId !== undefined) {
         try { floater.releasePointerCapture(e.pointerId); } catch (err) {}
-        if (dragState.moved) {
-          // Save position
-          const rect = floater.getBoundingClientRect();
-          saveFloaterPos(rect.left, rect.top);
-        } else {
-          // Click (not drag) → toggle popout
-          e.preventDefault();
-          e.stopPropagation();
-          toggle();
-        }
       }
-    });
+      if (dragState.moved) {
+        const rect = floater.getBoundingClientRect();
+        saveFloaterPos(rect.left, rect.top);
+      } else {
+        // Click (not drag) → toggle
+        e.preventDefault();
+        e.stopPropagation();
+        toggle();
+      }
+    }
+
+    // Pointer events (Chrome + Firefox modern)
+    floater.addEventListener('pointerdown', onDown);
+    floater.addEventListener('pointermove', onMove);
+    floater.addEventListener('pointerup', onUp);
+    floater.addEventListener('pointercancel', onUp);
+
+    // Mouse events fallback (Firefox)
+    floater.addEventListener('mousedown', onDown);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+
+    // Touch events (mobile)
+    floater.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
 
     floater.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -232,8 +259,18 @@
     document.documentElement.appendChild(floater);
   }
 
-  function unmountFloater() {
-    if (floater) { floater.remove(); floater = null; }
+  // v3.20.6: Update floater text berdasarkan state
+  function updateFloaterText() {
+    if (!floater) return;
+    if (isVisible) {
+      floater.textContent = '✕';
+      floater.title = 'Tutup popout sidebar';
+      floater.style.background = '#ef4444';
+    } else {
+      floater.textContent = 'rf';
+      floater.title = 'Buka RecallFox sidebar';
+      floater.style.background = '#6d3df5';
+    }
   }
 
   // ===== Show / Hide / Toggle =====
@@ -242,16 +279,18 @@
     host.style.width = currentWidth + 'px';
     host.style.display = 'block';
     isVisible = true;
-    unmountFloater();
-    resetIdleTimer();  // v3.20.5: start idle timer
+    // v3.20.6: JANGAN unmount floater — ubah text jadi "✕" supaya bisa close
+    updateFloaterText();
+    resetIdleTimer();
     saveState({ visible: true, width: currentWidth, pinned: isPinned });
   }
   function hide() {
     if (!host) return;
     host.style.display = 'none';
     isVisible = false;
-    if (idleTimer) clearTimeout(idleTimer);  // v3.20.5: stop idle timer
-    mountFloater();
+    // v3.20.6: Update floater text kembali ke "rf"
+    updateFloaterText();
+    if (idleTimer) clearTimeout(idleTimer);
     saveState({ visible: false, width: currentWidth, pinned: isPinned });
   }
   function toggle() {
@@ -293,7 +332,6 @@
     if (msg.type === 'OPEN_SIDEBAR_IN_PAGE') show();
     else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE') hide();
     else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') toggle();
-    // v3.20.5: Hide during screenshot capture
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE') {
       if (host && isVisible) host.style.visibility = 'hidden';
       if (floater) floater.style.visibility = 'hidden';
@@ -313,10 +351,10 @@
     const state = await loadState();
     currentWidth = state.width;
     isPinned = state.pinned;
+    // v3.20.6: Selalu mount floater (bahkan saat visible) supaya bisa close
+    mountFloater();
     if (state.visible) {
       setTimeout(() => show(), 500);
-    } else {
-      mountFloater();
     }
   })();
 
@@ -332,7 +370,7 @@
         if (host) host.style.width = currentWidth + 'px';
         saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
       },
-      version: '3.20.5-iframe'
+      version: '3.20.6-iframe'
     };
   }
 })();
