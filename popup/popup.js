@@ -8601,6 +8601,39 @@ function bindEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
+  // v3.20.4: Popout sidebar — tombol di header → kirim message ke content script di tab aktif
+  const inPageBtn = $('#sidebarInPageBtn');
+  if (inPageBtn) {
+    inPageBtn.addEventListener('click', async () => {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+          toast('⚠️ Popout sidebar hanya bisa di halaman http/https');
+          return;
+        }
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' });
+        } catch (e) {
+          // Content script mungkin belum loaded — try inject via scripting
+          try {
+            await browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['content/sidebar-cs.js']
+            });
+            // Wait a bit then send toggle
+            setTimeout(async () => {
+              try { await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }); }
+              catch (e2) { toast('⚠️ Tidak bisa buka popout di halaman ini'); }
+            }, 300);
+          } catch (e2) {
+            toast('⚠️ Tidak bisa buka popout di halaman ini');
+          }
+        }
+      } catch (e) {
+        toast('⚠️ Error: ' + e.message);
+      }
+    });
+  }
   // v3.14.0: RecallTape — tombol 🧾 di header → toggle popover di tab aktif
   const tapeBtn = $('#tapeBtn');
   if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);

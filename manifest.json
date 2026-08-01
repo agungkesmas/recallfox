@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.20.3",
+  "version": "3.20.4",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -176,6 +176,18 @@
       ],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/sidebar-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
@@ -194,7 +206,22 @@
         "popup/viewer.css",
         "lib/tape.js",
         "lib/ai-detect.js",
-        "lib/vault-tree.js"
+        "lib/vault-tree.js",
+        "sidebar/sidebar.html",
+        "sidebar/sidebar.css",
+        "sidebar/sidebar.js",
+        "popup/popup.css",
+        "popup/popup.js",
+        "popup/popup.html",
+        "settings/settings.html",
+        "settings/settings.css",
+        "settings/settings.js",
+        "lib/browser-polyfill.min.js",
+        "icons/icon-16.png",
+        "icons/icon-32.png",
+        "icons/icon-48.png",
+        "icons/icon-96.png",
+        "icons/icon-128.png"
       ],
       "matches": [
         "<all_urls>"

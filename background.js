@@ -301,6 +301,13 @@ async function setupContextMenu() {
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
+  // v3.20.4: Popout sidebar — context menu untuk toggle sidebar di halaman
+  browser.menus.create({
+    id: 'rf-sidebar-in-page',
+    title: 'Tampilkan RecallFox di halaman ini (popout)',
+    contexts: ['page'],
+    documentUrlPatterns: ['http://*/*', 'https://*/*']
+  });
 
   // Clear Cache (clearcache-style) — works on all http(s) pages
   browser.menus.create({
@@ -511,6 +518,25 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     } catch (e) {
       console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
       await triggerScreenshot(tab, 'entire');
+    }
+  } else if (info.menuItemId === 'rf-sidebar-in-page') {
+    // v3.20.4: Toggle popout sidebar di halaman aktif
+    try {
+      await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' });
+    } catch (e) {
+      // Content script belum loaded — inject lalu toggle
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/sidebar-cs.js']
+        });
+        setTimeout(async () => {
+          try { await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }); }
+          catch (e2) { console.warn('[RecallFox] Popout sidebar toggle failed:', e2.message); }
+        }, 300);
+      } catch (e2) {
+        console.warn('[RecallFox] Popout sidebar inject failed:', e2.message);
+      }
     }
   } else if (info.menuItemId === 'rf-clear-cache') {
     console.log('[RecallFox] Context menu → clear cache');
