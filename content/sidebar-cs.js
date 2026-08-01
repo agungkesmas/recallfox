@@ -351,6 +351,11 @@
       resizeHandle.style.background = 'rgba(79,70,229,.3)';
       document.body.style.cursor = 'ew-resize';
       document.body.style.userSelect = 'none';
+      // v3.20.10 FIX: Disable iframe pointer-events during drag.
+      // Root cause: iframe has pointer-events:auto → steals mousemove/mouseup
+      // → window listeners don't fire → drag stuck ("nempel").
+      // Fix: Set iframe pointer-events:none during drag, restore on end.
+      if (iframe) iframe.style.pointerEvents = 'none';
 
       dragController = new AbortController();
       const sig = dragController.signal;
@@ -367,6 +372,7 @@
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         document.documentElement.style.cursor = '';
+        if (iframe) iframe.style.pointerEvents = 'auto';  // v3.20.10: restore iframe
         if (dragController) { dragController.abort(); dragController = null; }
         saveState({ visible: isVisible, width: currentWidth, pinned: isPinned, userResized });
       };
@@ -418,8 +424,9 @@
       onActivity();
     }
     else if (e.data?.type === 'RF_OPEN_TAPE') {
-      // v3.20.8: RecallTape dari popout iframe → kirim ke content script di tab aktif
-      browser.tabs.query({ active: true, currentWindow: true }).then(tabs => { if (tabs[0]?.id) { browser.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TAPE' }).catch(() => { browser.scripting.executeScript({ target: { tabId: tabs[0].id }, files: ['content/tape-cs.js'] }).then(() => { setTimeout(() => browser.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TAPE' }).catch(() => {}), 200); }).catch(() => {}); }); } }).catch(() => {});
+      // v3.20.10 FIX: Content scripts don't have browser.tabs access in Firefox.
+      // Send message to background.js to forward OPEN_TAPE to active tab.
+      browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(() => {});
     }
   });
 

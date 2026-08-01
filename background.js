@@ -4263,6 +4263,34 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // v3.20.10: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
+  // to active tab's content script. Used by sidebar-cs.js (popout) to send
+  // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
+  if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
+    (async () => {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: msg.msgType });
+          sendResponse({ ok: true });
+        } catch (e) {
+          // Content script not loaded — inject then retry
+          if (msg.msgType === 'OPEN_TAPE') {
+            await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/tape-cs.js'] });
+            setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' }).catch(() => {}), 200);
+            sendResponse({ ok: true, injected: true });
+          } else {
+            sendResponse({ ok: false, error: e.message });
+          }
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // AD_DISCARD_NOW & AD_FORCE_DISCARD_ALL — sudah dipindahkan ke listener 1 (v0.9.7)
 });
 
