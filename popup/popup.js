@@ -8594,6 +8594,21 @@ async function init() {
 }
 
 function bindEvents() {
+  // v3.20.7: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
+  if (window !== window.top) {
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart', 'input'];
+    let lastActivitySent = 0;
+    activityEvents.forEach(ev => {
+      document.addEventListener(ev, () => {
+        const now = Date.now();
+        // Throttle — kirim max 1x per 2 detik
+        if (now - lastActivitySent > 2000) {
+          lastActivitySent = now;
+          window.parent.postMessage({ type: 'RF_ACTIVITY' }, '*');
+        }
+      }, { passive: true });
+    });
+  }
   // Theme + header
   // v3.7.1-FIX: Set ikon untuk tombol header (sebelumnya kosong/tidak terlihat)
   $('#aiBtn').innerHTML = ICONS.spark;
@@ -8601,36 +8616,40 @@ function bindEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
-  // v3.20.4: Popout sidebar — tombol di header → kirim message ke content script di tab aktif
+  // v3.20.7: Popout sidebar toggle — pakai postMessage ke parent (bukan tabs.sendMessage)
+  // Root cause: browser.tabs.sendMessage dari iframe gagal di Firefox (cross-origin context).
+  // Fix: window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }) → sidebar-cs.js listen → toggle()
   const inPageBtn = $('#sidebarInPageBtn');
   if (inPageBtn) {
-    inPageBtn.addEventListener('click', async () => {
-      try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
-          toast('⚠️ Popout sidebar hanya bisa di halaman http/https');
-          return;
-        }
-        try {
-          await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' });
-        } catch (e) {
-          // Content script mungkin belum loaded — try inject via scripting
-          try {
-            await browser.scripting.executeScript({
+    inPageBtn.addEventListener('click', () => {
+      // Cek apakah kita di iframe (popout) atau native sidebar/popup
+      if (window !== window.top) {
+        // Di iframe popout — kirim postMessage ke parent
+        window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }, '*');
+      } else {
+        // Di native sidebar/popup — kirim message ke content script di tab aktif
+        browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+          const tab = tabs[0];
+          if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+            toast('⚠️ Popout sidebar hanya bisa di halaman http/https');
+            return;
+          }
+          browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {
+            // Fallback: inject content script
+            browser.scripting.executeScript({
               target: { tabId: tab.id },
               files: ['content/sidebar-cs.js']
+            }).then(() => {
+              setTimeout(() => {
+                browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {
+                  toast('⚠️ Tidak bisa buka popout di halaman ini');
+                });
+              }, 300);
+            }).catch(() => {
+              toast('⚠️ Tidak bisa buka popout di halaman ini');
             });
-            // Wait a bit then send toggle
-            setTimeout(async () => {
-              try { await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }); }
-              catch (e2) { toast('⚠️ Tidak bisa buka popout di halaman ini'); }
-            }, 300);
-          } catch (e2) {
-            toast('⚠️ Tidak bisa buka popout di halaman ini');
-          }
-        }
-      } catch (e) {
-        toast('⚠️ Error: ' + e.message);
+          });
+        });
       }
     });
   }
