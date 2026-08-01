@@ -43,9 +43,10 @@
       return {
         visible: !!s.visible,
         width: Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, s.width || DEFAULT_WIDTH)),
-        pinned: !!s.pinned
+        pinned: !!s.pinned,
+        userResized: !!s.userResized
       };
-    } catch (e) { return { visible: false, width: DEFAULT_WIDTH, pinned: false }; }
+    } catch (e) { return { visible: false, width: DEFAULT_WIDTH, pinned: false, userResized: false }; }
   }
   async function saveState(state) {
     try { await browser.storage.local.set({ [STORAGE_KEY]: state }); } catch (e) {}
@@ -135,7 +136,7 @@
       pinBtn.title = isPinned ? 'Lepas pin (auto-close aktif)' : 'Pin (anti auto-close)';
       if (isPinned) { if (idleTimer) clearTimeout(idleTimer); }
       else resetIdleTimer();
-      saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
+      saveState({ visible: isVisible, width: currentWidth, pinned: isPinned, userResized });
     });
     host.appendChild(pinBtn);
 
@@ -317,14 +318,14 @@
     host.style.display = 'block';
     isVisible = true;
     resetIdleTimer();
-    saveState({ visible: true, width: currentWidth, pinned: isPinned });
+    saveState({ visible: true, width: currentWidth, pinned: isPinned, userResized });
   }
   function hide() {
     if (!host) return;
     host.style.display = 'none';
     isVisible = false;
     if (idleTimer) clearTimeout(idleTimer);
-    saveState({ visible: false, width: currentWidth, pinned: isPinned });
+    saveState({ visible: false, width: currentWidth, pinned: isPinned, userResized });
   }
   function toggle() {
     if (isVisible) hide();
@@ -337,47 +338,59 @@
   // dilepas di luar document (di atas iframe cross-origin). Fix: pakai
   // window.addEventListener + pointer events di resizeHandle sendiri.
   function wireResize() {
-    let dragging = false, startX = 0, startWidth = 0;
+    if (host.dataset.resizeWired === '1') return;
+    host.dataset.resizeWired = '1';
+
+    let dragController = null;
 
     function onResizeStart(e) {
-      dragging = true;
-      startX = e.clientX;
-      startWidth = host.offsetWidth;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = host.offsetWidth;
       resizeHandle.style.background = 'rgba(79,70,229,.3)';
       document.body.style.cursor = 'ew-resize';
       document.body.style.userSelect = 'none';
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    function onResizeMove(e) {
-      if (!dragging) return;
-      e.preventDefault();
-      const delta = startX - e.clientX;
-      currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-      host.style.width = currentWidth + 'px';
-    }
-    function onResizeEnd(e) {
-      if (!dragging) return;
-      dragging = false;
-      userResized = true;  // v3.20.8: user sudah resize, jangan reset ke MIN_WIDTH
-      resizeHandle.style.background = 'transparent';
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
+
+      dragController = new AbortController();
+      const sig = dragController.signal;
+
+      const onMove = (ev) => {
+        const delta = startX - ev.clientX;
+        currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+        host.style.width = currentWidth + 'px';
+      };
+
+      const onEnd = () => {
+        userResized = true;
+        resizeHandle.style.background = 'transparent';
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.documentElement.style.cursor = '';
+        if (dragController) { dragController.abort(); dragController = null; }
+        saveState({ visible: isVisible, width: currentWidth, pinned: isPinned, userResized });
+      };
+
+      window.addEventListener('mousemove', onMove, { signal: sig });
+      window.addEventListener('mouseup', onEnd, { signal: sig });
+      window.addEventListener('pointermove', onMove, { signal: sig });
+      window.addEventListener('pointerup', onEnd, { signal: sig });
+      window.addEventListener('pointercancel', onEnd, { signal: sig });
+      window.addEventListener('blur', onEnd, { signal: sig });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') onEnd();
+      }, { signal: sig });
     }
 
     resizeHandle.addEventListener('mousedown', onResizeStart);
-    // v3.20.8: Pakai window-level events supaya mouseup/mousemove tetap fire
-    // bahkan kalau mouse di atas iframe cross-origin
-    window.addEventListener('mousemove', onResizeMove);
-    window.addEventListener('mouseup', onResizeEnd);
-    // Juga pakai pointer events untuk touchpad/pen
     resizeHandle.addEventListener('pointerdown', onResizeStart);
-    window.addEventListener('pointermove', onResizeMove);
-    window.addEventListener('pointerup', onResizeEnd);
 
-    resizeHandle.addEventListener('mouseenter', () => { if (!dragging) resizeHandle.style.background = 'rgba(79,70,229,.2)'; });
-    resizeHandle.addEventListener('mouseleave', () => { if (!dragging) resizeHandle.style.background = 'transparent'; });
+    resizeHandle.addEventListener('mouseenter', () => {
+      if (!dragController) resizeHandle.style.background = 'rgba(79,70,229,.2)';
+    });
+    resizeHandle.addEventListener('mouseleave', () => {
+      if (!dragController) resizeHandle.style.background = 'transparent';
+    });
   }
 
   // ===== Message listener (from background + from iframe via postMessage) =====
@@ -406,7 +419,7 @@
     }
     else if (e.data?.type === 'RF_OPEN_TAPE') {
       // v3.20.8: RecallTape dari popout iframe → kirim ke content script di tab aktif
-      browser.runtime.sendMessage({ type: 'OPEN_TAPE' }).catch(() => {});
+      browser.tabs.query({ active: true, currentWindow: true }).then(tabs => { if (tabs[0]?.id) { browser.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TAPE' }).catch(() => { browser.scripting.executeScript({ target: { tabId: tabs[0].id }, files: ['content/tape-cs.js'] }).then(() => { setTimeout(() => browser.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TAPE' }).catch(() => {}), 200); }).catch(() => {}); }); } }).catch(() => {});
     }
   });
 
@@ -419,6 +432,7 @@
     const state = await loadState();
     currentWidth = state.width;
     isPinned = state.pinned;
+    userResized = state.userResized;  // v3.20.9: persist userResized across page reloads
     mountFloater();
     if (state.visible) {
       setTimeout(() => show(), 500);
@@ -435,7 +449,7 @@
       setWidth(w) {
         currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, w));
         if (host) host.style.width = currentWidth + 'px';
-        saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
+        saveState({ visible: isVisible, width: currentWidth, pinned: isPinned, userResized });
       },
       version: '3.20.7-iframe'
     };
