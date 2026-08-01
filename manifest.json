@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.20.7",
+  "version": "3.20.8",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -255,37 +255,6 @@
         "mac": "Alt+Shift+7"
       },
       "description": "Tangkap bagian terlihat (viewport saja)"
-    },
-    "clear-cache": {
-      "suggested_key": {
-        "default": "Alt+Shift+C",
-        "mac": "Alt+Shift+C"
-      },
-      "description": "__MSG_cmdClearCache__"
-    },
-    "volume-up": {
-      "suggested_key": {
-        "default": "Alt+Shift+Up",
-        "mac": "Alt+Shift+Up"
-      },
-      "description": "__MSG_cmdVolumeUp__"
-    },
-    "volume-down": {
-      "suggested_key": {
-        "default": "Alt+Shift+Down",
-        "mac": "Alt+Shift+Down"
-      },
-      "description": "__MSG_cmdVolumeDown__"
-    },
-    "volume-reset": {
-      "suggested_key": {
-        "default": "Alt+Shift+0",
-        "mac": "Alt+Shift+0"
-      },
-      "description": "__MSG_cmdVolumeReset__"
-    },
-    "ask-ai": {
-      "description": "Tanya Si Pandai AI tentang teks terseleksi"
     }
   },
   "browser_specific_settings": {

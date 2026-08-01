@@ -5903,6 +5903,13 @@ function toolPage(k) {
 // Untuk sidebar: kirim ke tab aktif di window utama.
 // Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
 async function openTapePopover() {
+  // v3.20.8: Jika di iframe (popout), kirim postMessage ke parent
+  // → parent kirim message ke content script di tab aktif
+  if (window !== window.top) {
+    window.parent.postMessage({ type: 'RF_OPEN_TAPE' }, '*');
+    toast('🧾 RecallTape dibuka di halaman');
+    return;
+  }
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     if (tabs && tabs[0]) {

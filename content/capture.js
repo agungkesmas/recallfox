@@ -602,7 +602,7 @@
     const maxHeight = opts.maxHeight || 16384;
 
     // v3.20.5: Hide RecallFox floating elements during screenshot capture
-    const HIDE_SELECTORS = ['#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-fab', '.recallfox-dock'];
+    const HIDE_SELECTORS = ['#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
     const hiddenEls = [];
     for (const sel of HIDE_SELECTORS) {
       document.querySelectorAll(sel).forEach(el => {

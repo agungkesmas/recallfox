@@ -33,6 +33,7 @@
   let currentWidth = DEFAULT_WIDTH;
   let isPinned = false;
   let idleTimer = null;
+  let userResized = false;  // v3.20.8: track apakah user pernah resize
 
   // ===== Storage =====
   async function loadState() {
@@ -307,6 +308,11 @@
   // ===== Show / Hide / Toggle =====
   function show() {
     mount();
+    // v3.20.8: Reset ke MIN_WIDTH setiap kali show() kalau user belum pernah resize
+    // User: "ukuran popout sidebar belum ke versi terkecil seperti sidebar aslinya"
+    if (!userResized) {
+      currentWidth = MIN_WIDTH;
+    }
     host.style.width = currentWidth + 'px';
     host.style.display = 'block';
     isVisible = true;
@@ -326,30 +332,50 @@
   }
 
   // ===== Resize handle =====
+  // v3.20.8: Fix resize nempel — pakai window-level mouseup + guard flag
+  // Root cause: document.addEventListener('mouseup') tidak fire kalau mouse
+  // dilepas di luar document (di atas iframe cross-origin). Fix: pakai
+  // window.addEventListener + pointer events di resizeHandle sendiri.
   function wireResize() {
     let dragging = false, startX = 0, startWidth = 0;
-    resizeHandle.addEventListener('mousedown', (e) => {
-      dragging = true; startX = e.clientX; startWidth = host.offsetWidth;
+
+    function onResizeStart(e) {
+      dragging = true;
+      startX = e.clientX;
+      startWidth = host.offsetWidth;
       resizeHandle.style.background = 'rgba(79,70,229,.3)';
       document.body.style.cursor = 'ew-resize';
       document.body.style.userSelect = 'none';
       e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
+      e.stopPropagation();
+    }
+    function onResizeMove(e) {
       if (!dragging) return;
+      e.preventDefault();
       const delta = startX - e.clientX;
       currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
       host.style.width = currentWidth + 'px';
-    });
-    document.addEventListener('mouseup', () => {
-      if (dragging) {
-        dragging = false;
-        resizeHandle.style.background = 'transparent';
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
-      }
-    });
+    }
+    function onResizeEnd(e) {
+      if (!dragging) return;
+      dragging = false;
+      userResized = true;  // v3.20.8: user sudah resize, jangan reset ke MIN_WIDTH
+      resizeHandle.style.background = 'transparent';
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      saveState({ visible: isVisible, width: currentWidth, pinned: isPinned });
+    }
+
+    resizeHandle.addEventListener('mousedown', onResizeStart);
+    // v3.20.8: Pakai window-level events supaya mouseup/mousemove tetap fire
+    // bahkan kalau mouse di atas iframe cross-origin
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', onResizeEnd);
+    // Juga pakai pointer events untuk touchpad/pen
+    resizeHandle.addEventListener('pointerdown', onResizeStart);
+    window.addEventListener('pointermove', onResizeMove);
+    window.addEventListener('pointerup', onResizeEnd);
+
     resizeHandle.addEventListener('mouseenter', () => { if (!dragging) resizeHandle.style.background = 'rgba(79,70,229,.2)'; });
     resizeHandle.addEventListener('mouseleave', () => { if (!dragging) resizeHandle.style.background = 'transparent'; });
   }
@@ -377,6 +403,10 @@
     else if (e.data?.type === 'RF_ACTIVITY') {
       // Activity dari inside iframe — reset idle timer
       onActivity();
+    }
+    else if (e.data?.type === 'RF_OPEN_TAPE') {
+      // v3.20.8: RecallTape dari popout iframe → kirim ke content script di tab aktif
+      browser.runtime.sendMessage({ type: 'OPEN_TAPE' }).catch(() => {});
     }
   });
 
