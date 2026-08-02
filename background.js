@@ -2183,18 +2183,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
+    // v3.20.12: Broadcast RF_HIDE_FOR_CAPTURE to all tabs before capture.
+    // sidebar-cs.js (popout) listens for this → hides host + floater.
+    try {
+      const allTabs = await browser.tabs.query({});
+      for (const t of allTabs) {
+        browser.tabs.sendMessage(t.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
+      }
+    } catch (e) {}
+    // Small delay supaya DOM update (visibility:hidden) ter-render sebelum capture
+    await new Promise(r => setTimeout(r, 100));
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
-    // Caller then shows modal with PDF/JPG/PNG/Copy/Vault save options.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     sendResponse(await captureFullPage(tab, { mode: msg.mode || 'entire' })); return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
-    // Save captured image to Downloads folder as PDF / JPG / PNG
+    // v3.20.12: Restore popout sidebar visibility after capture
+    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
     sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
-    // Save captured image to vault as screenshot item
+    // v3.20.12: Restore popout sidebar visibility after capture
+    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
     sendResponse(await saveCaptureToVault(msg)); return;
   }
   if (msg.type === 'CAPTURE_SCREENSHOT') {

@@ -295,29 +295,30 @@
 
   // ===== Trigger screenshot — kirim message ke background =====
   function triggerScreenshot() {
-    // v3.20.11: Hide popout sidebar + floater BEFORE screenshot capture.
-    // User report: "popout sidebar ikut tercapture juga. beresin agar jangan
-    // sampe ke capture, hasilnya harusnya halaman bersih."
-    // Fix: Set visibility:hidden di host + floater sebelum kirim trigger,
-    // lalu restore setelah delay (capture biasanya selesai dalam 2-5 detik).
-    if (host && isVisible) host.style.visibility = 'hidden';
+    // v3.20.12: Hide popout sidebar + floater BEFORE screenshot capture.
+    // Flow: triggerScreenshot → hide → CAPTURE_SCREENSHOT → overlay.js modal
+    // → user picks mode → overlay.js sends CAPTURE_FOR_PREVIEW → background
+    // broadcasts RF_HIDE_FOR_CAPTURE (redundant but safe) → captureVisibleTab
+    // → background broadcasts RF_RESTORE_AFTER_CAPTURE → sidebar restored.
+    //
+    // Fallback timer (30s): if user cancels capture (Esc in overlay.js),
+    // background never sends RF_RESTORE → timer restores sidebar.
+    if (host) host.style.visibility = 'hidden';
     if (floaterPair) floaterPair.style.visibility = 'hidden';
 
-    // Sama seperti tombol "Shot" di sidebar asli — buka mode picker
+    // Trigger capture via background (same as sidebar native "Shot" button)
     browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch(() => {
       // Fallback: kirim TRIGGER_CAPTURE_FROM_POPUP ke overlay.js via background
       browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'TRIGGER_CAPTURE_FROM_POPUP' }).catch(() => {});
     });
 
-    // v3.20.11: Restore visibility setelah delay.
-    // Capture modal (overlay.js) akan muncul — user pilih mode → capture.
-    // Kita restore setelah 1 detik supaya modal capture terlihat,
-    // tapi sidebar tetap hidden saat captureVisibleTab dipanggil.
-    // Restore penuh setelah 5 detik (capture biasanya selesai dalam waktu itu).
+    // v3.20.12: Fallback restore after 30 seconds.
+    // Covers: user cancels capture, closes overlay, navigates away.
+    // Normal flow: background sends RF_RESTORE_AFTER_CAPTURE after save.
     setTimeout(() => {
-      if (host && isVisible) host.style.visibility = 'visible';
+      if (host) host.style.visibility = 'visible';
       if (floaterPair) floaterPair.style.visibility = 'visible';
-    }, 5000);
+    }, 30000);
   }
 
   // ===== Show / Hide / Toggle =====
@@ -419,11 +420,13 @@
     else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE') hide();
     else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') toggle();
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE') {
-      if (host && isVisible) host.style.visibility = 'hidden';
+      // v3.20.12: Background broadcasts this before captureVisibleTab
+      if (host) host.style.visibility = 'hidden';
       if (floaterPair) floaterPair.style.visibility = 'hidden';
     }
     else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE') {
-      if (host && isVisible) host.style.visibility = 'visible';
+      // v3.20.12: Always restore — even if isVisible changed during capture
+      if (host) host.style.visibility = 'visible';
       if (floaterPair) floaterPair.style.visibility = 'visible';
     }
   });
