@@ -2192,7 +2192,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     } catch (e) {}
     // Small delay supaya DOM update (visibility:hidden) ter-render sebelum capture
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 200));
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }

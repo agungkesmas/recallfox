@@ -303,8 +303,8 @@
     //
     // Fallback timer (30s): if user cancels capture (Esc in overlay.js),
     // background never sends RF_RESTORE → timer restores sidebar.
-    if (host) host.style.visibility = 'hidden';
-    if (floaterPair) floaterPair.style.visibility = 'hidden';
+    if (host) host.style.display = 'none';
+    if (floaterPair) host.style.display = 'none';
 
     // Trigger capture via background (same as sidebar native "Shot" button)
     browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch(() => {
@@ -316,8 +316,8 @@
     // Covers: user cancels capture, closes overlay, navigates away.
     // Normal flow: background sends RF_RESTORE_AFTER_CAPTURE after save.
     setTimeout(() => {
-      if (host) host.style.visibility = 'visible';
-      if (floaterPair) floaterPair.style.visibility = 'visible';
+      if (host) host.style.display = 'block';
+      if (floaterPair) host.style.display = 'flex';
     }, 30000);
   }
 
@@ -421,13 +421,13 @@
     else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') toggle();
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE') {
       // v3.20.12: Background broadcasts this before captureVisibleTab
-      if (host) host.style.visibility = 'hidden';
-      if (floaterPair) floaterPair.style.visibility = 'hidden';
+      if (host) host.style.display = 'none';
+      if (floaterPair) floaterPair.style.display = 'none';
     }
     else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE') {
       // v3.20.12: Always restore — even if isVisible changed during capture
-      if (host) host.style.visibility = 'visible';
-      if (floaterPair) floaterPair.style.visibility = 'visible';
+      if (host && isVisible) host.style.display = 'block';
+      if (floaterPair) floaterPair.style.display = 'flex';
     }
   });
 
