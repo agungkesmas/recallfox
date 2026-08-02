@@ -602,15 +602,17 @@
     const maxHeight = opts.maxHeight || 16384;
 
     // v3.20.5: Hide RecallFox floating elements during screenshot capture
+    // v3.20.14: Use display:none (bukan visibility:hidden) — visibility:hidden
+    //   masih tercapture di Firefox captureVisibleTab. display:none remove dari render tree.
     const HIDE_SELECTORS = ['#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
     const hiddenEls = [];
     for (const sel of HIDE_SELECTORS) {
       document.querySelectorAll(sel).forEach(el => {
-        hiddenEls.push({ el, prev: el.style.visibility });
-        el.style.visibility = 'hidden';
+        hiddenEls.push({ el, prev: el.style.display });
+        el.style.display = 'none';
       });
     }
-    if (hiddenEls.length > 0) await new Promise(r => setTimeout(r, 50));
+    if (hiddenEls.length > 0) await new Promise(r => setTimeout(r, 100));
 
     try {
       if (mode === 'visible') {
@@ -641,8 +643,22 @@
       }
       return { dataUrl: null, cancelled: false, error: e.message };
     } finally {
-      // v3.20.5: Restore visibility
-      hiddenEls.forEach(({ el, prev }) => { el.style.visibility = prev; });
+      // v3.20.14: DO NOT restore here — let sidebar-cs.js handle restore via
+      // RF_RESTORE_AFTER_CAPTURE (sent by background after captureFullPage returns).
+      // Sebelumnya: finally restore langsung → untuk selection mode, popout muncul
+      // kembali saat user masih menggambar area → mengganggu.
+      // Sekarang: background.js always sends RF_RESTORE_AFTER_CAPTURE after
+      // captureFullPage returns (success OR cancel OR error).
+      // capture.js's own hide is also restored by background's restore broadcast
+      // (sidebar-cs.js receives RF_RESTORE_AFTER_CAPTURE → restore display).
+      // BUT: capture.js elements might NOT be the same as sidebar-cs.js elements
+      // (capture.js hides via HIDE_SELECTORS, sidebar-cs.js hides via its own state).
+      // So we still need to restore capture.js's hides here — BUT only for elements
+      // that sidebar-cs.js doesn't manage (like .recallfox-dock, #recallfox-fab).
+      // Actually: sidebar-cs.js manages #recallfox-sidebar-host + #recallfox-sidebar-floater-pair.
+      // capture.js hides those PLUS #recallfox-fab + .recallfox-dock (managed by overlay.js).
+      // So: restore ALL here (it's safe — sidebar-cs.js will also restore via RF_RESTORE).
+      hiddenEls.forEach(({ el, prev }) => { el.style.display = prev; });
     }
   };
 

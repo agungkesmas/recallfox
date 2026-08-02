@@ -2191,12 +2191,22 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         browser.tabs.sendMessage(t.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
       }
     } catch (e) {}
-    // Small delay supaya DOM update (visibility:hidden) ter-render sebelum capture
-    await new Promise(r => setTimeout(r, 200));
+    // v3.20.14: Reduced delay 200→100ms (display:none is instant, no render needed)
+    await new Promise(r => setTimeout(r, 100));
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
-    sendResponse(await captureFullPage(tab, { mode: msg.mode || 'entire' })); return;
+    const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
+    // v3.20.14: ALWAYS restore after capture — whether success, cancel, or error.
+    // Sebelumnya restore hanya di SAVE_CAPTURE_AS/SAVE_CAPTURE_TO_VAULT.
+    // User: "kalau batal screenshot berarti popout tidak kembali otomatis?
+    //   harusnya 5 detik aja kali ya, muncul lagi floating buttonnya juga
+    //   setelah tidak jadi screnshot misalkan. ini telat banget kadang ga muncul lagi juga"
+    try {
+      const ts = await browser.tabs.query({});
+      for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
+    } catch (e) {}
+    sendResponse(result); return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
     // v3.20.12: Restore popout sidebar visibility after capture
