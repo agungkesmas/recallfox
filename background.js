@@ -4405,107 +4405,85 @@ browser.runtime.onInstalled.addListener(async (details) => {
 //     Snapshot tetap berfungsi normal seperti sebelumnya.
 // ============================================================================
 
-const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan.
+const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan tanpa kehilangan konteks.
 
-Anda akan diberikan 3 percakapan terakhir user dengan AI (dari yang tertua ke terbaru). Tugas Anda:
+Anda akan diberikan snapshot percakapan user dengan AI (urut dari tertua ke terbaru, label "👤 User:" dan "🤖 AI:"). Tugas Anda:
 
-1. **Deteksi relevansi**: Periksa apakah ketiga percakapan ini saling berkaitan (satu topik / satu sesi kerja yang berkelanjutan).
-2. **Filter kalau perlu**: Kalau percakapan PERTAMA (tertua) tidak berkaitan dengan 2 percakapan terakhir, abaikan percakapan pertama dan hanya rangkum 2 percakapan terakhir. Kalau semua berkaitan, rangkum ketiganya.
-3. **Generate resume context** dari percakapan yang relevan dengan format:
+## Langkah 1 — Identifikasi topik utama
+Baca 3 percakapan TERAKHIR. Identifikasi topik/sesi kerja utama yang sedang aktif di situ.
+
+## Langkah 2 — Deteksi rantai relevansi backward
+Mulai dari percakapan terakhir, cek ke belakang (ke arah pesan lebih lama):
+- Apakah percakapan sebelumnya masih nyambung / memperkuat topik yang sama?
+- Kalau YA → include, lanjut cek ke belakang lagi.
+- Kalau TIDAK → berhenti. Jangan include percakapan itu atau yang lebih lama.
+
+Contoh:
+- Percakapan 1-5 semua tentang setup React → ambil semua 5.
+- Percakapan 1-2 tentang resep masakan, 3-5 tentang React → ambil 3-5 saja (3 percakapan terakhir).
+- Percakapan 1 tentang React, 2-5 tentang debugging database → ambil 2-5 saja (4 percakapan terakhir).
+
+Maksimal ambil 6 percakapan (12 pesan) untuk hindari overload konteks.
+
+## Langkah 3 — Generate resume context
+Dari rantai percakapan yang relevan (hasil langkah 2), buat resume context dengan format:
 
 ## 🎯 Tujuan Utama
 [Apa tujuan utama user di percakapan ini — 1-2 kalimat]
 
 ## ✅ Yang Sudah Dikerjakan
-- [Poin 1 — apa yang sudah dicapai/dijawab]
+- [Poin 1 — apa yang sudah dicapai/dijawab, SEBANYAK yang relevan]
 - [Poin 2]
-- [Poin 3, dst]
+- [dst — jangan ringkas terlalu agresif, konteks penting harus tetap ada]
 
 ## ⏳ Yang Belum Selesai
 - [Poin 1 — apa yang masih perlu dilanjutkan]
-- [Poin 2, dst]
+- [Poin 2]
+- [dst]
 
 ## 📌 Konteks Penting
-[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang]
+[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang. Include code snippets penting, nama file, konfigurasi, dll.]
 
 ---
-Maksimal 300 kata. Tulis dalam bahasa Indonesia. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
+Maksimal 800 kata. Tulis dalam bahasa Indonesia. Lebih baik panjang tapi lengkap daripada pendek tapi kehilangan konteks. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
 
 const RESUME_CONTEXT_MAX_BODY_CHARS = 8000; // Truncate body sebelum kirim ke AI (hemat token)
-const RESUME_CONTEXT_PAIRS_TO_USE = 3; // Ambil 3 pairs (user+AI) terakhir untuk deteksi relevansi
 
 /**
- * v3.20.17: Parse body snapshot untuk ambil N pairs terakhir (user + AI).
+ * v3.20.18: Parse body snapshot untuk ambil maksimal N pairs terakhir (user + AI).
+ *
+ * v3.20.17 fixed ambil 3 pairs — terlalu kaku. User bilang:
+ *   "utamakan chat terakhir untuk memeriksa chat pertama dan kedua nyambung tidak.
+ *    jika chat kedua nyambung dengan yang ketiga berarti saling menguatkan untuk
+ *    bahkan ngambil lebih dari 3 chat di atasnya misalkan masih ada yang nyambung."
+ *
+ * v3.20.18: Kirim full body snapshot (truncated ke 8000 char) ke AI. AI yang
+ * decide mana yang nyambung (chained relevance backward dari pair terakhir).
+ * Bisa ambil 3, 4, 5, atau 6 pairs terakhir tergantung kontinuitas topik.
  *
  * Body snapshot format (dari content.js extractConversation):
  *   "👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n..."
  *
- * Pair = 1 user message + 1 AI response. Fungsi ini ambil N pairs terakhir,
- * urut dari tertua ke terbaru (supaya AI bisa baca kronologis).
+ * Fungsi ini sekarang cuma truncate ke max chars (tidak potong pairs lagi —
+ * AI yang pilih mana yang relevan via prompt chained relevance).
  *
- * Kalau jumlah pair < N, return semua pair yang ada.
- * Kalau body tidak ter-parse (format aneh), return body utuh (fallback aman).
- *
- * @param {string} body — snapshot body
- * @param {number} numPairs — jumlah pairs yang mau diambil (default 3)
- * @returns {string} — body berisi N pairs terakhir, tertua → terbaru
+ * @param {string} body — snapshot body (full)
+ * @returns {string} — body yang sudah di-truncate ke RESUME_CONTEXT_MAX_BODY_CHARS
  */
-function extractLastNPairs(body, numPairs = RESUME_CONTEXT_PAIRS_TO_USE) {
+function truncateBodyForResume(body) {
   if (!body || typeof body !== 'string') return '';
-
-  // Split by role labels. Pattern: "👤 User:" atau "🤖 AI:" sebagai delimiter.
-  // Pakai regex dengan positive lookbehind supaya label ikut ke slice.
-  const parts = body.split(/(?=👤 User:|🤖 AI:)/g).filter(s => s.trim().length > 0);
-
-  // Kumpulkan pair: 1 user + 1 AI = 1 pair
-  const pairs = [];
-  let currentPair = [];
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith('👤 User:')) {
-      // Kalau ada user baru tapi currentPair sudah ada user tanpa AI (edge case),
-      // close pair yang incomplete
-      if (currentPair.length === 1) {
-        // User tanpa AI — save dulu sebagai incomplete pair
-        pairs.push(currentPair.join('\n\n'));
-      }
-      currentPair = [trimmed];
-    } else if (trimmed.startsWith('🤖 AI:')) {
-      if (currentPair.length === 1) {
-        currentPair.push(trimmed);
-        pairs.push(currentPair.join('\n\n'));
-        currentPair = [];
-      } else {
-        // AI tanpa user sebelumnya — skip (orphan)
-      }
-    } else {
-      // Part tanpa label (jarang) — append ke current pair kalau ada
-      if (currentPair.length > 0) {
-        currentPair[currentPair.length - 1] += '\n\n' + trimmed;
-      }
-    }
-  }
-  // Flush pair incomplete terakhir (user tanpa AI di akhir)
-  if (currentPair.length === 1) {
-    pairs.push(currentPair.join('\n\n'));
-  }
-
-  // Kalau tidak ada pair ter-parse (format aneh), return body utuh (fallback aman)
-  if (pairs.length === 0) {
-    return body.length > RESUME_CONTEXT_MAX_BODY_CHARS
-      ? body.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + body.length + ' chars total]'
-      : body;
-  }
-
-  // Ambil N pairs terakhir, join dengan separator
-  const lastPairs = pairs.slice(-numPairs);
-  const result = lastPairs.join('\n\n---\n\n');
-
-  // Truncate kalau masih terlalu panjang
-  if (result.length > RESUME_CONTEXT_MAX_BODY_CHARS) {
-    return result.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + result.length + ' chars total]';
-  }
-  return result;
+  if (body.length <= RESUME_CONTEXT_MAX_BODY_CHARS) return body;
+  // Truncate dari akhir supaya pertahankan pesan-pesan terakhir (yang paling relevan)
+  // untuk chained relevance. Tapi AI tetap butuh konteks awal untuk deteksi
+  // "apakah nyambung dari awal atau tidak". Jadi truncate dari TENGAH —
+  // keep awal (sebagian) + akhir (full).
+  //
+  // Strategi: keep 2000 char pertama (preview konteks awal) + "...[truncated, X chars middle]..." + 6000 char terakhir.
+  const headLen = 2000;
+  const tailLen = RESUME_CONTEXT_MAX_BODY_CHARS - headLen - 200; // 200 char untuk truncation marker
+  const head = body.slice(0, headLen);
+  const tail = body.slice(body.length - tailLen);
+  return head + '\n\n...[truncated, ' + (body.length - headLen - tailLen) + ' chars middle omitted — pesan terakhir tetap full di bawah]...\n\n' + tail;
 }
 
 /**
@@ -4513,9 +4491,9 @@ function extractLastNPairs(body, numPairs = RESUME_CONTEXT_PAIRS_TO_USE) {
  * Dipanggil setelah CAPTURE_SNAPSHOT save. Non-blocking.
  * Update item via updateItem() kalau berhasil.
  *
- * v3.20.17: Sekarang ambil 3 pairs (user+AI) terakhir dari body snapshot,
- * bukan body utuh. AI deteksi relevansi antar 3 percakapan — kalau yang pertama
- * tidak berkaitan dengan 2 terakhir, AI hanya rangkum 2 terakhir.
+ * v3.20.18: Kirim full body snapshot (truncated) ke AI. AI deteksi rantai
+ * relevansi backward dari pair terakhir — bisa ambil 3-6 pairs terakhir
+ * tergantung kontinuitas topik. Word limit 800 kata (sebelumnya 300).
  *
  * @param {string} itemId — ID snapshot item
  * @param {string} body — snapshot body (percakapan AI, full 50 msgs)
@@ -4552,28 +4530,26 @@ async function generateResumeContext(itemId, body, title) {
  * Generate resume context sync (untuk manual trigger).
  * Dipanggil oleh GENERATE_RESUME_CONTEXT message handler.
  *
- * v3.20.17: Pakai extractLastNPairs() untuk ambil 3 pairs terakhir dari body
- * snapshot (bukan body utuh). AI deteksi relevansi antar 3 percakapan — kalau
- * yang pertama tidak berkaitan dengan 2 terakhir, AI hanya rangkum 2 terakhir.
+ * v3.20.18: Kirim full body snapshot (truncated 8000 char) ke AI. AI deteksi
+ * rantai relevansi backward — ambil 3-6 pairs terakhir yang nyambung topik.
+ * Word limit 800 kata (sebelumnya 300 — user bilang terlalu terbatas).
  *
  * @param {string} body — snapshot body (full 50 msgs)
  * @param {string} title — snapshot title
  * @returns {Promise<string|null>} — resume context text, atau null kalau gagal
  */
 async function generateResumeContextSync(body, title) {
-  // v3.20.17: Ambil 3 pairs (user+AI) terakhir dari body snapshot.
-  // Body snapshot biasanya 50 msgs (dari content.js extractConversation) — terlalu
-  // panjang + percakapan awal biasanya sudah melebar dan tidak relevan lagi.
-  // 3 pairs terakhir = status kerja terakhir yang user mau lanjutkan.
-  const lastThreePairs = extractLastNPairs(body, RESUME_CONTEXT_PAIRS_TO_USE);
-  if (!lastThreePairs) {
-    console.log('[RecallFox/RelayPoint] Body kosong setelah extractLastNPairs — skip');
+  // v3.20.18: Kirim full body (truncated). AI yang decide mana yang nyambung
+  // via chained relevance backward logic di system prompt.
+  const truncatedBody = truncateBodyForResume(body);
+  if (!truncatedBody) {
+    console.log('[RecallFox/RelayPoint] Body kosong — skip');
     return null;
   }
 
   const messages = [
     { role: 'system', content: RESUME_CONTEXT_SYSTEM_PROMPT },
-    { role: 'user', content: 'Judul snapshot: ' + title + '\n\n3 percakapan terakhir user dengan AI (dari tertua ke terbaru):\n\n' + lastThreePairs }
+    { role: 'user', content: 'Judul snapshot: ' + title + '\n\nSnapshot percakapan user dengan AI (urut dari tertua ke terbaru):\n\n' + truncatedBody }
   ];
 
   const result = await chatWithFallback(messages);
