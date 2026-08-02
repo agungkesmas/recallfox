@@ -4407,42 +4407,53 @@ browser.runtime.onInstalled.addListener(async (details) => {
 
 const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan tanpa kehilangan konteks.
 
-Anda akan diberikan snapshot percakapan user dengan AI (urut dari tertua ke terbaru, label "👤 User:" dan "🤖 AI:"). Tugas Anda:
+Anda akan diberikan snapshot percakapan user dengan AI (urut dari tertua ke terbaru, label "👤 User:" dan "🤖 AI:").
 
-## Langkah 1 — Identifikasi topik utama
-Baca 3 percakapan TERAKHIR. Identifikasi topik/sesi kerja utama yang sedang aktif di situ.
+## Langkah 1 — Identifikasi ANCHOR: jawaban AI terakhir
+Cari pesan "🤖 AI:" yang PALING BAWAH (paling baru). Itu adalah **ANCHOR** — status kerja terakhir yang user mau lanjutkan.
 
-## Langkah 2 — Deteksi rantai relevansi backward
-Mulai dari percakapan terakhir, cek ke belakang (ke arah pesan lebih lama):
-- Apakah percakapan sebelumnya masih nyambung / memperkuat topik yang sama?
-- Kalau YA → include, lanjut cek ke belakang lagi.
+Baca DENGAN TELITI seluruh isi jawaban AI terakhir tersebut. Bukan cuma user question di atasnya, tapi **JAWABAN AI-nya** yang menjadi acuan utama. Jawaban AI berisi: apa yang sudah dikerjakan, kode yang sudah ditulis, solusi yang sudah diberikan, langkah selanjutnya yang disarankan.
+
+## Langkah 2 — Deteksi rantai relevansi backward dari ANCHOR
+Mulai dari jawaban AI terakhir (anchor), cek ke belakang (ke pesan lebih lama):
+- Apakah PERCAKAPAN sebelumnya (user question + AI answer) nyambung / memperkuat konteks di jawaban AI terakhir?
+- Kalau YA → include percakapan itu, lanjut cek ke belakang lagi.
 - Kalau TIDAK → berhenti. Jangan include percakapan itu atau yang lebih lama.
 
-Contoh:
-- Percakapan 1-5 semua tentang setup React → ambil semua 5.
-- Percakapan 1-2 tentang resep masakan, 3-5 tentang React → ambil 3-5 saja (3 percakapan terakhir).
-- Percakapan 1 tentang React, 2-5 tentang debugging database → ambil 2-5 saja (4 percakapan terakhir).
+**PENTING — ACUAN UTAMA ADALAH JAWABAN AI, BUKAN PERTANYAAN USER:**
+- Pertanyaan user cuma trigger/pemicu — biasanya pendek dan tidak berisi konteks kerja.
+- Jawaban AI berisi konteks kerja sebenarnya: kode, solusi, penjelasan, langkah selanjutnya.
+- Saat cek "nyambung atau tidak", bandingkan konteks di **jawaban AI terakhir** dengan konteks di **jawaban AI sebelumnya**. Jangan bandingkan pertanyaan user saja.
 
-Maksimal ambil 6 percakapan (12 pesan) untuk hindari overload konteks.
+Contoh benar:
+- Jawaban AI terakhir: "Untuk testing React, pakai Vitest. Sudah setup di \`src/test/setup.ts\`..."
+  - Percakapan sebelumnya: user tanya state management, AI jawab "Pakai Zustand, sudah install di \`package.json\`" → NYAMBUNG (sama-sama React dev, saling memperkuat konteks proyek)
+  - Percakapan sebelum itu: user tanya resep nasi goreng → TIDAK NYAMBUNG → berhenti
+
+Contoh salah (HINDARI):
+- ❌ Bandingkan pertanyaan user terakhir ("gimana test React?") dengan pertanyaan user sebelumnya ("gimana routing?") → terlihat tidak nyambung padahal sebenarnya nyambung (sama-sama React).
+- ✅ Bandingkan jawaban AI terakhir dengan jawaban AI sebelumnya → kedua jawaban tentang React dev → nyambung.
+
+Maksimal ambil 6 percakapan (12 pesan) yang nyambung dengan jawaban AI terakhir.
 
 ## Langkah 3 — Generate resume context
 Dari rantai percakapan yang relevan (hasil langkah 2), buat resume context dengan format:
 
 ## 🎯 Tujuan Utama
-[Apa tujuan utama user di percakapan ini — 1-2 kalimat]
+[Apa tujuan utama user di percakapan ini — 1-2 kalimat, berdasarkan jawaban AI terakhir]
 
 ## ✅ Yang Sudah Dikerjakan
-- [Poin 1 — apa yang sudah dicapai/dijawab, SEBANYAK yang relevan]
+- [Poin 1 — apa yang sudah dicapai/dijawab AI, SEBANYAK yang relevan. Ambil dari JAWABAN AI, bukan pertanyaan user.]
 - [Poin 2]
-- [dst — jangan ringkas terlalu agresif, konteks penting harus tetap ada]
+- [dst — jangan ringkas terlalu agresif, konteks penting dari jawaban AI harus tetap ada]
 
 ## ⏳ Yang Belum Selesai
-- [Poin 1 — apa yang masih perlu dilanjutkan]
+- [Poin 1 — apa yang masih perlu dilanjutkan, berdasarkan saran AI terakhir atau pertanyaan user yang belum terjawab]
 - [Poin 2]
 - [dst]
 
 ## 📌 Konteks Penting
-[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang. Include code snippets penting, nama file, konfigurasi, dll.]
+[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang. Include code snippets penting dari JAWABAN AI, nama file, konfigurasi, dll.]
 
 ---
 Maksimal 800 kata. Tulis dalam bahasa Indonesia. Lebih baik panjang tapi lengkap daripada pendek tapi kehilangan konteks. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
