@@ -19,6 +19,7 @@ import {
   getSettings,
   saveSettings,
   addItem,
+  updateItem,
   getVault,
   markBypass,
   isBypassed,
@@ -28,6 +29,8 @@ import {
   clearUserBlocklist,
   exportAllScreenshotBlobs
 } from './lib/storage.js';
+// v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async, lokal saja)
+import { chatWithFallback, isAssistantConfigured } from './lib/assistant.js';
 // v3.7: Import untuk backup handlers
 import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js';
 import {
@@ -2907,7 +2910,53 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       snapshotDomain: msg.snapshotDomain || (msg.url ? new URL(msg.url).hostname : (tab?.url ? new URL(tab.url).hostname : '')),
       snapshotMessageCount: msg.snapshotMessageCount || msg.messageCount || 0
     });
-    sendResponse(result); return;
+    sendResponse(result);
+
+    // v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async).
+    // Strategi AMAN: fire-and-forget setelah snapshot tersimpan. Tidak block save.
+    // Body >= 100 char → trigger background generate. Kalau gagal/belum configured,
+    // resumeContext = null — snapshot tetap berfungsi normal seperti sebelumnya.
+    // Resume context hanya disimpan di LOCAL storage (tidak sync ke Supabase —
+    // supaya TIDAK merusak cloud sync yang sudah jalan untuk schema lama).
+    if (result?.ok !== false && result?.id && msg.body && msg.body.trim().length >= 100) {
+      generateResumeContext(result.id, msg.body, msg.title || 'Snapshot').catch(err => {
+        console.warn('[RecallFox/RelayPoint] generateResumeContext failed:', err.message);
+      });
+    }
+    return;
+  }
+  if (msg.type === 'GENERATE_RESUME_CONTEXT') {
+    // v3.20.16: Manual trigger dari popup — user klik "Generate Resume Context"
+    // di action sheet snapshot. Berguna kalau auto-generate saat capture gagal
+    // (mis. OmniRouter belum dikonfigurasi saat itu), atau user mau retry.
+    const itemId = msg.itemId;
+    if (!itemId) { sendResponse({ ok: false, error: 'no_item_id' }); return; }
+    const vault = await getVault();
+    const item = vault.items.find(i => i.id === itemId);
+    if (!item || item.type !== 'snapshot') {
+      sendResponse({ ok: false, error: 'item_not_found_or_not_snapshot' });
+      return;
+    }
+    if (!item.body || item.body.trim().length < 100) {
+      sendResponse({ ok: false, error: 'snapshot_body_too_short' });
+      return;
+    }
+    try {
+      const resumeContext = await generateResumeContextSync(item.body, item.title || 'Snapshot');
+      if (resumeContext) {
+        await updateItem(itemId, {
+          resumeContext,
+          resumeContextAt: new Date().toISOString()
+        });
+        sendResponse({ ok: true, resumeContext });
+      } else {
+        sendResponse({ ok: false, error: 'generate_failed' });
+      }
+    } catch (e) {
+      console.error('[RecallFox/RelayPoint] manual generate failed:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return;
   }
   if (msg.type === 'AI_ASK_QUERY') {
     // From selection-ai.js floating button. Delegate to shared orchestrator.
@@ -4332,3 +4381,117 @@ browser.runtime.onInstalled.addListener(async (details) => {
     }
   } catch (e) { /* ignore */ }
 });
+
+// ============================================================================
+// v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async)
+// ============================================================================
+// Tujuan: Saat Snapshot diambil di domain AI, generate "resume context" —
+// ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk
+// melanjutkan pekerjaan. Disimpan menyatu di metadata snapshot (bukan item baru).
+//
+// Deteksi AI domain: snapshotDomain sudah di-set oleh content.js extractConversation()
+// (hanya di-set kalau isAIPage() true). Jadi tidak perlu cek ulang di sini —
+// kalau msg.body ada dan cukup panjang, asumsikan ini snapshot dari AI domain.
+//
+// STRATEGI AMAN (pelajaran dari v3.20.16 broken sebelumnya):
+//   - Resume context HANYA disimpan di local storage (lib/storage.js addItem).
+//   - TIDAK sync ke Supabase (lib/supabase-sync.js TIDAK diubah) → cloud sync
+//     tetap pakai schema lama, tidak akan PGRST204 error.
+//   - Auto-generate: fire-and-forget setelah CAPTURE_SNAPSHOT save.
+//     Non-blocking — snapshot sudah tersimpan, resume context update via updateItem().
+//   - Manual-generate: user klik "Generate Resume Context" di action sheet.
+//     Sync lewat GENERATE_RESUME_CONTEXT message.
+//   - Kalau OmniRouter belum dikonfigurasi atau gagal, resumeContext = null.
+//     Snapshot tetap berfungsi normal seperti sebelumnya.
+// ============================================================================
+
+const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan.
+
+Format output (wajib ikuti):
+
+## 🎯 Tujuan Utama
+[Apa tujuan utama user di percakapan ini — 1-2 kalimat]
+
+## ✅ Yang Sudah Dikerjakan
+- [Poin 1 — apa yang sudah dicapai/dijawab]
+- [Poin 2]
+- [Poin 3, dst]
+
+## ⏳ Yang Belum Selesai
+- [Poin 1 — apa yang masih perlu dilanjutkan]
+- [Poin 2, dst]
+
+## 📌 Konteks Penting
+[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang]
+
+---
+Maksimal 300 kata. Tulis dalam bahasa Indonesia. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
+
+const RESUME_CONTEXT_MAX_BODY_CHARS = 8000; // Truncate body sebelum kirim ke AI (hemat token)
+
+/**
+ * Generate resume context async (fire-and-forget).
+ * Dipanggil setelah CAPTURE_SNAPSHOT save. Non-blocking.
+ * Update item via updateItem() kalau berhasil.
+ *
+ * @param {string} itemId — ID snapshot item
+ * @param {string} body — snapshot body (percakapan AI)
+ * @param {string} title — snapshot title (untuk konteks)
+ */
+async function generateResumeContext(itemId, body, title) {
+  try {
+    // Cek apakah AI assistant dikonfigurasi
+    const configured = await isAssistantConfigured();
+    if (!configured) {
+      console.log('[RecallFox/RelayPoint] AI not configured — skip resume context generation');
+      return;
+    }
+
+    const resumeContext = await generateResumeContextSync(body, title);
+    if (!resumeContext) {
+      console.log('[RecallFox/RelayPoint] Resume context empty — skip save');
+      return;
+    }
+
+    // Update item dengan resume context (LOKAL saja — tidak sync ke cloud)
+    await updateItem(itemId, {
+      resumeContext,
+      resumeContextAt: new Date().toISOString()
+    });
+    console.log('[RecallFox/RelayPoint] Resume context saved for item', itemId, '(' + resumeContext.length + ' chars)');
+  } catch (err) {
+    console.warn('[RecallFox/RelayPoint] generateResumeContext error:', err.message);
+    // Jangan throw — ini fire-and-forget. Snapshot tetap tersimpan tanpa resume context.
+  }
+}
+
+/**
+ * Generate resume context sync (untuk manual trigger).
+ * Dipanggil oleh GENERATE_RESUME_CONTEXT message handler.
+ *
+ * @param {string} body — snapshot body
+ * @param {string} title — snapshot title
+ * @returns {Promise<string|null>} — resume context text, atau null kalau gagal
+ */
+async function generateResumeContextSync(body, title) {
+  // Truncate body kalau terlalu panjang (hemat token)
+  const truncatedBody = body.length > RESUME_CONTEXT_MAX_BODY_CHARS
+    ? body.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + body.length + ' chars total]'
+    : body;
+
+  const messages = [
+    { role: 'system', content: RESUME_CONTEXT_SYSTEM_PROMPT },
+    { role: 'user', content: 'Judul snapshot: ' + title + '\n\nPercakapan AI:\n\n' + truncatedBody }
+  ];
+
+  const result = await chatWithFallback(messages);
+  const content = result?.content?.trim();
+  if (!content || content.length < 20) {
+    return null;
+  }
+  // Filter: kalau AI bilang "terlalu pendek", return null
+  if (content.toLowerCase().includes('terlalu pendek untuk resume context')) {
+    return null;
+  }
+  return content;
+}
