@@ -4407,7 +4407,11 @@ browser.runtime.onInstalled.addListener(async (details) => {
 
 const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan.
 
-Format output (wajib ikuti):
+Anda akan diberikan 3 percakapan terakhir user dengan AI (dari yang tertua ke terbaru). Tugas Anda:
+
+1. **Deteksi relevansi**: Periksa apakah ketiga percakapan ini saling berkaitan (satu topik / satu sesi kerja yang berkelanjutan).
+2. **Filter kalau perlu**: Kalau percakapan PERTAMA (tertua) tidak berkaitan dengan 2 percakapan terakhir, abaikan percakapan pertama dan hanya rangkum 2 percakapan terakhir. Kalau semua berkaitan, rangkum ketiganya.
+3. **Generate resume context** dari percakapan yang relevan dengan format:
 
 ## 🎯 Tujuan Utama
 [Apa tujuan utama user di percakapan ini — 1-2 kalimat]
@@ -4428,14 +4432,93 @@ Format output (wajib ikuti):
 Maksimal 300 kata. Tulis dalam bahasa Indonesia. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
 
 const RESUME_CONTEXT_MAX_BODY_CHARS = 8000; // Truncate body sebelum kirim ke AI (hemat token)
+const RESUME_CONTEXT_PAIRS_TO_USE = 3; // Ambil 3 pairs (user+AI) terakhir untuk deteksi relevansi
+
+/**
+ * v3.20.17: Parse body snapshot untuk ambil N pairs terakhir (user + AI).
+ *
+ * Body snapshot format (dari content.js extractConversation):
+ *   "👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n..."
+ *
+ * Pair = 1 user message + 1 AI response. Fungsi ini ambil N pairs terakhir,
+ * urut dari tertua ke terbaru (supaya AI bisa baca kronologis).
+ *
+ * Kalau jumlah pair < N, return semua pair yang ada.
+ * Kalau body tidak ter-parse (format aneh), return body utuh (fallback aman).
+ *
+ * @param {string} body — snapshot body
+ * @param {number} numPairs — jumlah pairs yang mau diambil (default 3)
+ * @returns {string} — body berisi N pairs terakhir, tertua → terbaru
+ */
+function extractLastNPairs(body, numPairs = RESUME_CONTEXT_PAIRS_TO_USE) {
+  if (!body || typeof body !== 'string') return '';
+
+  // Split by role labels. Pattern: "👤 User:" atau "🤖 AI:" sebagai delimiter.
+  // Pakai regex dengan positive lookbehind supaya label ikut ke slice.
+  const parts = body.split(/(?=👤 User:|🤖 AI:)/g).filter(s => s.trim().length > 0);
+
+  // Kumpulkan pair: 1 user + 1 AI = 1 pair
+  const pairs = [];
+  let currentPair = [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith('👤 User:')) {
+      // Kalau ada user baru tapi currentPair sudah ada user tanpa AI (edge case),
+      // close pair yang incomplete
+      if (currentPair.length === 1) {
+        // User tanpa AI — save dulu sebagai incomplete pair
+        pairs.push(currentPair.join('\n\n'));
+      }
+      currentPair = [trimmed];
+    } else if (trimmed.startsWith('🤖 AI:')) {
+      if (currentPair.length === 1) {
+        currentPair.push(trimmed);
+        pairs.push(currentPair.join('\n\n'));
+        currentPair = [];
+      } else {
+        // AI tanpa user sebelumnya — skip (orphan)
+      }
+    } else {
+      // Part tanpa label (jarang) — append ke current pair kalau ada
+      if (currentPair.length > 0) {
+        currentPair[currentPair.length - 1] += '\n\n' + trimmed;
+      }
+    }
+  }
+  // Flush pair incomplete terakhir (user tanpa AI di akhir)
+  if (currentPair.length === 1) {
+    pairs.push(currentPair.join('\n\n'));
+  }
+
+  // Kalau tidak ada pair ter-parse (format aneh), return body utuh (fallback aman)
+  if (pairs.length === 0) {
+    return body.length > RESUME_CONTEXT_MAX_BODY_CHARS
+      ? body.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + body.length + ' chars total]'
+      : body;
+  }
+
+  // Ambil N pairs terakhir, join dengan separator
+  const lastPairs = pairs.slice(-numPairs);
+  const result = lastPairs.join('\n\n---\n\n');
+
+  // Truncate kalau masih terlalu panjang
+  if (result.length > RESUME_CONTEXT_MAX_BODY_CHARS) {
+    return result.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + result.length + ' chars total]';
+  }
+  return result;
+}
 
 /**
  * Generate resume context async (fire-and-forget).
  * Dipanggil setelah CAPTURE_SNAPSHOT save. Non-blocking.
  * Update item via updateItem() kalau berhasil.
  *
+ * v3.20.17: Sekarang ambil 3 pairs (user+AI) terakhir dari body snapshot,
+ * bukan body utuh. AI deteksi relevansi antar 3 percakapan — kalau yang pertama
+ * tidak berkaitan dengan 2 terakhir, AI hanya rangkum 2 terakhir.
+ *
  * @param {string} itemId — ID snapshot item
- * @param {string} body — snapshot body (percakapan AI)
+ * @param {string} body — snapshot body (percakapan AI, full 50 msgs)
  * @param {string} title — snapshot title (untuk konteks)
  */
 async function generateResumeContext(itemId, body, title) {
@@ -4469,19 +4552,28 @@ async function generateResumeContext(itemId, body, title) {
  * Generate resume context sync (untuk manual trigger).
  * Dipanggil oleh GENERATE_RESUME_CONTEXT message handler.
  *
- * @param {string} body — snapshot body
+ * v3.20.17: Pakai extractLastNPairs() untuk ambil 3 pairs terakhir dari body
+ * snapshot (bukan body utuh). AI deteksi relevansi antar 3 percakapan — kalau
+ * yang pertama tidak berkaitan dengan 2 terakhir, AI hanya rangkum 2 terakhir.
+ *
+ * @param {string} body — snapshot body (full 50 msgs)
  * @param {string} title — snapshot title
  * @returns {Promise<string|null>} — resume context text, atau null kalau gagal
  */
 async function generateResumeContextSync(body, title) {
-  // Truncate body kalau terlalu panjang (hemat token)
-  const truncatedBody = body.length > RESUME_CONTEXT_MAX_BODY_CHARS
-    ? body.slice(0, RESUME_CONTEXT_MAX_BODY_CHARS) + '\n\n...[truncated, ' + body.length + ' chars total]'
-    : body;
+  // v3.20.17: Ambil 3 pairs (user+AI) terakhir dari body snapshot.
+  // Body snapshot biasanya 50 msgs (dari content.js extractConversation) — terlalu
+  // panjang + percakapan awal biasanya sudah melebar dan tidak relevan lagi.
+  // 3 pairs terakhir = status kerja terakhir yang user mau lanjutkan.
+  const lastThreePairs = extractLastNPairs(body, RESUME_CONTEXT_PAIRS_TO_USE);
+  if (!lastThreePairs) {
+    console.log('[RecallFox/RelayPoint] Body kosong setelah extractLastNPairs — skip');
+    return null;
+  }
 
   const messages = [
     { role: 'system', content: RESUME_CONTEXT_SYSTEM_PROMPT },
-    { role: 'user', content: 'Judul snapshot: ' + title + '\n\nPercakapan AI:\n\n' + truncatedBody }
+    { role: 'user', content: 'Judul snapshot: ' + title + '\n\n3 percakapan terakhir user dengan AI (dari tertua ke terbaru):\n\n' + lastThreePairs }
   ];
 
   const result = await chatWithFallback(messages);
