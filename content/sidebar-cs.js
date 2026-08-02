@@ -295,15 +295,29 @@
 
   // ===== Trigger screenshot — kirim message ke background =====
   function triggerScreenshot() {
+    // v3.20.11: Hide popout sidebar + floater BEFORE screenshot capture.
+    // User report: "popout sidebar ikut tercapture juga. beresin agar jangan
+    // sampe ke capture, hasilnya harusnya halaman bersih."
+    // Fix: Set visibility:hidden di host + floater sebelum kirim trigger,
+    // lalu restore setelah delay (capture biasanya selesai dalam 2-5 detik).
+    if (host && isVisible) host.style.visibility = 'hidden';
+    if (floaterPair) floaterPair.style.visibility = 'hidden';
+
     // Sama seperti tombol "Shot" di sidebar asli — buka mode picker
     browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch(() => {
-      // Fallback: kirim TRIGGER_CAPTURE_FROM_POPUP ke overlay.js
-      browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
-        if (tabs[0]?.id) {
-          browser.tabs.sendMessage(tabs[0].id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode: undefined }).catch(() => {});
-        }
-      });
+      // Fallback: kirim TRIGGER_CAPTURE_FROM_POPUP ke overlay.js via background
+      browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'TRIGGER_CAPTURE_FROM_POPUP' }).catch(() => {});
     });
+
+    // v3.20.11: Restore visibility setelah delay.
+    // Capture modal (overlay.js) akan muncul — user pilih mode → capture.
+    // Kita restore setelah 1 detik supaya modal capture terlihat,
+    // tapi sidebar tetap hidden saat captureVisibleTab dipanggil.
+    // Restore penuh setelah 5 detik (capture biasanya selesai dalam waktu itu).
+    setTimeout(() => {
+      if (host && isVisible) host.style.visibility = 'visible';
+      if (floaterPair) floaterPair.style.visibility = 'visible';
+    }, 5000);
   }
 
   // ===== Show / Hide / Toggle =====
