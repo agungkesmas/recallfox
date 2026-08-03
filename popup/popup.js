@@ -2088,23 +2088,79 @@ async function primaryAction(id) {
 }
 
 // v3.6: Helper untuk salin URL Link ke clipboard (bukan buka link)
+// v3.20.21: Port multi-level fallback dari Chrome v3.21.6 (commit 7b8eef1) +
+// tambah fallback COPY_TEXT ke content script tab aktif.
+// Root cause popout sidebar: navigator.clipboard.writeText di iframe sidebar.html
+// bisa gagal karena iframe tidak focused atau Permissions Policy clipboard-write
+// disallow. Fallback chain:
+//   1. navigator.clipboard.writeText (modern API, paling cepat)
+//   2. background COPY_TO_CLIPBOARD (background service worker)
+//   3. RF_FORWARD_TO_ACTIVE_TAB COPY_TEXT (content script di top-level page)
+//   4. textarea + execCommand('copy') di popup context (last resort)
 async function copyLinkToClipboard(it) {
   if (!it) return;
   const url = it.linkUrl || it.body || '';
   if (!url) { toast('Link ini tidak punya URL', false); return; }
-  try {
-    await navigator.clipboard.writeText(url);
+  const ok = await _copyTextWithFallback(url);
+  if (ok) {
     await incrementUseCount(it.id);
     toast('📋 URL disalin: ' + url.slice(0, 40) + (url.length > 40 ? '…' : ''));
-  } catch (e) {
-    // Fallback: pakai background script
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: url });
-      await incrementUseCount(it.id);
-      toast('📋 URL disalin');
-    } catch (e2) {
-      toast('⚠ Gagal salin: ' + e2.message, false);
-    }
+  }
+}
+
+// v3.20.21: Helper internal untuk copy text dengan 4-level fallback chain.
+// Dipakai oleh copyLinkToClipboard (dan bisa dipakai fungsi copy lain juga).
+// Return true kalau berhasil, false kalau gagal semua.
+async function _copyTextWithFallback(text) {
+  if (!text) return false;
+
+  // Level 1: navigator.clipboard.writeText (modern API)
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e1) {
+    console.warn('[RecallFox] Clipboard L1 fail:', e1.message);
+  }
+
+  // Level 2: background COPY_TO_CLIPBOARD
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
+    if (res?.ok) return true;
+    console.warn('[RecallFox] Clipboard L2 fail:', res?.error || 'unknown');
+  } catch (e2) {
+    console.warn('[RecallFox] Clipboard L2 exception:', e2.message);
+  }
+
+  // Level 3: RF_FORWARD_TO_ACTIVE_TAB COPY_TEXT (content script di top-level page)
+  // Content script di top-level document selalu punya focus → clipboard API reliable.
+  // Penting untuk popout sidebar yang jalan di iframe (cross-origin ke parent page).
+  try {
+    const res = await browser.runtime.sendMessage({
+      type: 'RF_FORWARD_TO_ACTIVE_TAB',
+      msgType: 'COPY_TEXT',
+      text
+    });
+    if (res?.ok) return true;
+    console.warn('[RecallFox] Clipboard L3 fail:', res?.error || 'unknown');
+  } catch (e3) {
+    console.warn('[RecallFox] Clipboard L3 exception:', e3.message);
+  }
+
+  // Level 4: textarea + execCommand('copy') di popup context (last resort)
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return true;
+  } catch (e4) {
+    console.warn('[RecallFox] Clipboard L4 fail:', e4.message);
+    toast('⚠ Gagal salin: ' + (e4.message || 'clipboard tidak tersedia'), false);
+    return false;
   }
 }
 
@@ -5692,10 +5748,12 @@ function openNoteEditor(noteId) {
   $('#nCopy').addEventListener('click', async () => {
     // v3.13.0 (Issue #4): Salin innerText dari contenteditable — preserve format
     // (bold/list/heading → newline + bullet di plain text). Sebelumnya: n.body (HTML mentah).
+    // v3.20.21: Pakai _copyTextWithFallback supaya copy jalan di popout sidebar iframe
+    // (navigator.clipboard.writeText bisa gagal di iframe yang tidak focused).
     try {
       const textToCopy = ta.innerText || stripHtmlForPreview(n.body || '');
-      await navigator.clipboard.writeText(textToCopy);
-      toast('📋 Catatan disalin');
+      const ok = await _copyTextWithFallback(textToCopy);
+      if (ok) toast('📋 Catatan disalin');
     } catch (e) { toast('Gagal salin', false); }
   });
   $('#nDone').addEventListener('click', async () => {

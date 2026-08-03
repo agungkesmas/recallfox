@@ -2186,39 +2186,50 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
-    // v3.20.12: Broadcast RF_HIDE_FOR_CAPTURE to all tabs before capture.
-    // sidebar-cs.js (popout) listens for this → hides host + floater.
-    try {
-      const allTabs = await browser.tabs.query({});
-      for (const t of allTabs) {
-        browser.tabs.sendMessage(t.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
-      }
-    } catch (e) {}
-    // v3.20.14: Reduced delay 200→100ms (display:none is instant, no render needed)
-    await new Promise(r => setTimeout(r, 100));
-    // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
+// v3.20.14: Optimasi hide/restore — hanya ke tab aktif (bukan broadcast).
+    // v3.20.13: hide/restore di-drive dari sini dengan try/finally.
+    // Sebelumnya (v3.20.12): RF_RESTORE_AFTER_CAPTURE hanya dikirim di
+    // SAVE_CAPTURE_AS / SAVE_CAPTURE_TO_VAULT. Kalau user batal di
+    // mode-picker atau close result modal tanpa save → restore tidak
+    // pernah dikirim → sidebar tetap hidden sampai fallback timer 30s
+    // (di sidebar-cs.js v3.20.12).
+    //
+    // Fix: pindahkan restore ke finally block di sini. Restore SELALU
+    // dikirim tidak peduli outcome capture (sukses / gagal / cancel).
+    // Hapus juga timer 30s fallback di sidebar-cs.js (sudah dilakukan).
+    //
+    // v3.20.14: Broadcast ke semua tabs → lambat kalau user punya banyak
+    // tab. Fix: hide/restore hanya ke tab aktif. Sidebar di tab lain
+    // tidak ikut tercapture anyway.
+    // Delay 200ms → 100ms (cukup untuk DOM update display:none).
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
-    const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
-    // v3.20.14: ALWAYS restore after capture — whether success, cancel, or error.
-    // Sebelumnya restore hanya di SAVE_CAPTURE_AS/SAVE_CAPTURE_TO_VAULT.
-    // User: "kalau batal screenshot berarti popout tidak kembali otomatis?
-    //   harusnya 5 detik aja kali ya, muncul lagi floating buttonnya juga
-    //   setelah tidak jadi screnshot misalkan. ini telat banget kadang ga muncul lagi juga"
+
+    // v3.20.13: Hide sidebar + floater di tab aktif sebelum capture
+    browser.tabs.sendMessage(tab.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
+
+    // Delay supaya DOM update (display:none) ter-render sebelum capture
+    await new Promise(r => setTimeout(r, 100));
+
     try {
-      const ts = await browser.tabs.query({});
-      for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
-    } catch (e) {}
-    sendResponse(result); return;
+      const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
+      sendResponse(result);
+    } finally {
+      // v3.20.13/14: Restore SELALU — sukses, gagal, atau cancel.
+      // v3.20.14: Hanya ke tab aktif (bukan broadcast) supaya cepat.
+      // sidebar-cs.js punya fallback timer 5s kalau message ini gagal sampai.
+      browser.tabs.sendMessage(tab.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
+    }
+    return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
-    // v3.20.12: Restore popout sidebar visibility after capture
-    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
+    // v3.20.13: Restore dipindah ke finally block di CAPTURE_FOR_PREVIEW.
+    // Tidak perlu kirim RF_RESTORE_AFTER_CAPTURE di sini lagi.
     sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
-    // v3.20.12: Restore popout sidebar visibility after capture
-    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
+    // v3.20.13: Restore dipindah ke finally block di CAPTURE_FOR_PREVIEW.
+    // Tidak perlu kirim RF_RESTORE_AFTER_CAPTURE di sini lagi.
     sendResponse(await saveCaptureToVault(msg)); return;
   }
   if (msg.type === 'CAPTURE_SCREENSHOT') {
@@ -4336,16 +4347,23 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.20.10: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
   // to active tab's content script. Used by sidebar-cs.js (popout) to send
   // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
+  // v3.20.21: Forward extra fields (text, mode, dst.) supaya bisa dipakai untuk
+  // COPY_TEXT (clipboard fallback di popout sidebar).
   if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
     (async () => {
       try {
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+        // v3.20.21: Build message payload dengan forward extra fields
+        const payload = { type: msg.msgType };
+        if (msg.text !== undefined) payload.text = msg.text;
+        if (msg.mode !== undefined) payload.mode = msg.mode;
+        if (msg.data !== undefined) payload.data = msg.data;
         try {
-          await browser.tabs.sendMessage(tab.id, { type: msg.msgType });
-          sendResponse({ ok: true });
+          const res = await browser.tabs.sendMessage(tab.id, payload);
+          sendResponse(res || { ok: true });
         } catch (e) {
-          // Content script not loaded — inject then retry
+          // Content script not loaded — inject then retry (hanya untuk OPEN_TAPE)
           if (msg.msgType === 'OPEN_TAPE') {
             await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/tape-cs.js'] });
             setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' }).catch(() => {}), 200);

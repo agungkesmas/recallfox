@@ -480,6 +480,34 @@
   }
 
 
+  // v3.20.21: Helper to copy text to clipboard in content script context.
+  // Port dari Chrome v3.21.6 (commit 7b8eef1) supaya parity antara Firefox & Chrome.
+  // Uses a hidden textarea + execCommand('copy') as fallback to navigator.clipboard.
+  // Penting untuk popout sidebar (iframe ke sidebar.html) — navigator.clipboard
+  // bisa gagal di iframe yang tidak focused atau cross-origin.
+  async function copyTextToClipboard(text) {
+    if (!text) return;
+    try {
+      // Try modern clipboard API first
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // Fallback: textarea + execCommand('copy')
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';  // Avoid scrolling to bottom
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } catch (e2) {
+        throw new Error('Gagal salin: ' + e2.message);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+  }
+
   // ===== Message handlers =====
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'SHOW_TOAST') {
@@ -525,6 +553,21 @@
         isAIDomain: window.__RecallFoxIsAIDomain__,
         domainId: window.__RecallFoxDomainConfig__?.id
       });
+    } else if (msg.type === 'COPY_TEXT') {
+      // v3.20.21: Fallback copy to clipboard via content script (document has focus)
+      // Port dari Chrome v3.21.6. Used when popup/sidebar (iframe) clipboard APIs fail.
+      // Root cause: navigator.clipboard.writeText di iframe popout sidebar bisa gagal
+      // karena iframe tidak focused atau Permissions Policy clipboard-write disallow.
+      // Content script di top-level page selalu punya focus → lebih reliable.
+      (async () => {
+        try {
+          await copyTextToClipboard(msg.text || '');
+          sendResponse({ ok: true });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
+      return true;  // async
     } else if (msg.type === 'GET_PAGE_CONTEXT') {
       // v3.8.1 (Issue #4): Handler untuk "Ambil dari halaman aktif" di popup Konteks.
       // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/style/
