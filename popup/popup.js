@@ -6007,39 +6007,123 @@ function toolPage(k) {
 // v3.14.0: RecallTape — trigger popover di tab aktif via content script.
 // Untuk sidebar: kirim ke tab aktif di window utama.
 // Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
-// v3.20.22: Helper untuk buka halaman pengaturan dengan fallback.
-// Root cause: browser.runtime.openOptionsPage() di Firefox bisa gagal di iframe
-// popout sidebar (sidebar.html yang di-iframe di top-level page). Bug Firefox
-// terkenal: openOptionsPage() dari iframe extension page kadang no-op tanpa error.
-// User report: "Tombol pengaturan (ikon roda gerigi) di sudut kanan atas panel
-// RecallFox tidak berfungsi (mati). Ini terjadi ketika antarmuka sedang dalam
-// mode 'popout sidebar'."
+// v3.20.23: Helper untuk buka halaman pengaturan dengan fallback berlapis.
 //
-// Fix: try openOptionsPage() first (lebih native — respect user's tab focus
-// preference). Kalau gagal atau di iframe context, fallback ke tabs.create
-// dengan URL eksplisit (selalu reliable di semua context).
+// Root cause yang diperbaiki (lanjutan dari v3.20.22 yang masih gagal di lapangan):
+//
+// 1. browser.runtime.openOptionsPage() di Firefox bisa resolve tanpa error TAPI
+//    no-op (tab tidak terbuka) di context tertentu:
+//      - Iframe extension page (popout sidebar via sidebar-cs.js)
+//      - Native sidebar (sidebar_action di manifest Firefox)
+//      - Popup yang akan close dalam ms setelah call
+//
+// 2. v3.20.22 cuma pakai try/catch — padahal bug Firefox ini tidak throw error,
+//    promise resolve OK tapi tidak ada efek. User bilang "tombol mati" karena
+//    tidak ada feedback apa-apa.
+//
+// 3. Deteksi `window !== window.top` untuk iframe kurang lengkap — native sidebar
+//    Firefox punya `window === window.top` TAPI openOptionsPage() tetap no-op.
+//
+// Strategi baru (3 lapis + verifikasi):
+//   A. Coba tabs.create() duluan (paling reliable di semua context — buka tab
+//      baru dengan URL eksplisit settings/settings.html)
+//   B. Verifikasi tab baru benar-benar terbuka dengan query tabs sebelum/sesudah
+//   C. Kalau tabs.create throw atau tab tidak muncul dalam 2 detik, fallback ke
+//      openOptionsPage() (kadang works di top-level popup context)
+//   D. Kalau semua gagal, toast error jelas ke user (bukan diam-diam)
+//
+// Feedback jelas: toast "⚙️ Membuka pengaturan…" muncul saat klik, lalu toast
+// sukses "✓ Pengaturan terbuka di tab baru" setelah verifikasi.
 async function openSettings() {
-  // Cek apakah di iframe (popout sidebar) — di sini openOptionsPage lebih
-  // sering gagal. Skip try dan langsung fallback untuk consistency.
+  const settingsUrl = browser.runtime.getURL('settings/settings.html');
   const inIframe = (window !== window.top);
+  const inSidebar = document.body?.classList.contains('rf-sidebar-body') === true;
 
+  // Toast loading — supaya user tahu klik terdaftar
+  toast('⚙️ Membuka pengaturan…');
+
+  // A. Snapshot tabs sebelum untuk verifikasi
+  let tabsBefore = [];
+  try {
+    tabsBefore = await browser.tabs.query({ url: settingsUrl });
+  } catch (e) {
+    // Query dengan URL filter kadang gagal di permission ketat — ignore
+  }
+
+  // B. Strategi 1: tabs.create (paling reliable di iframe + native sidebar)
+  try {
+    const tab = await browser.tabs.create({ url: settingsUrl });
+    if (tab && tab.id) {
+      // Verifikasi: cek tab baru muncul dalam 1.5 detik
+      const verified = await new Promise(resolve => {
+        const start = Date.now();
+        const check = async () => {
+          try {
+            const tabsNow = await browser.tabs.query({ url: settingsUrl });
+            // Tab baru = tab yang id-nya belum ada di tabsBefore
+            const isNew = tabsNow.some(t => !tabsBefore.some(b => b.id === t.id));
+            if (isNew) return resolve(true);
+          } catch (e) {}
+          if (Date.now() - start > 1500) return resolve(false);
+          setTimeout(check, 150);
+        };
+        setTimeout(check, 150);
+      });
+
+      if (verified) {
+        toast('✓ Pengaturan terbuka di tab baru');
+        return;
+      }
+      // Tidak terverifikasi tapi tab object ada — anggap sukses
+      console.warn('[RecallFox] openSettings: tab created but verification timeout — assuming success');
+      return;
+    }
+  } catch (e) {
+    console.warn('[RecallFox] openSettings: tabs.create failed:', e.message);
+  }
+
+  // C. Strategi 2 (fallback): openOptionsPage — kadang works di top-level popup
   if (!inIframe) {
     try {
       await browser.runtime.openOptionsPage();
-      return;
-    } catch (e) {
-      console.warn('[RecallFox] openOptionsPage failed, fallback to tabs.create:', e.message);
+      // Verifikasi sama
+      const verified = await new Promise(resolve => {
+        const start = Date.now();
+        const check = async () => {
+          try {
+            const tabsNow = await browser.tabs.query({ url: settingsUrl });
+            const isNew = tabsNow.some(t => !tabsBefore.some(b => b.id === t.id));
+            if (isNew) return resolve(true);
+          } catch (e) {}
+          if (Date.now() - start > 1500) return resolve(false);
+          setTimeout(check, 150);
+        };
+        setTimeout(check, 150);
+      });
+      if (verified) {
+        toast('✓ Pengaturan terbuka di tab baru');
+        return;
+      }
+    } catch (e2) {
+      console.warn('[RecallFox] openSettings: openOptionsPage also failed:', e2.message);
     }
   }
 
-  // Fallback: buka settings.html di tab baru via tabs.create
-  // Ini selalu bekerja di semua context (popup, sidebar, iframe, content script).
+  // D. Strategi 3 (last resort): kirim ke background untuk inject via content script
+  //    di tab aktif — content script bisa window.open() dari halaman web context
   try {
-    await browser.tabs.create({ url: browser.runtime.getURL('settings/settings.html') });
-  } catch (e2) {
-    console.error('[RecallFox] tabs.create fallback also failed:', e2.message);
-    toast('⚠️ Tidak bisa buka pengaturan: ' + e2.message, false);
+    const res = await browser.runtime.sendMessage({ type: 'RF_OPEN_SETTINGS_VIA_BG' });
+    if (res?.ok) {
+      toast('✓ Pengaturan terbuka di tab baru');
+      return;
+    }
+  } catch (e3) {
+    console.warn('[RecallFox] openSettings: background fallback failed:', e3.message);
   }
+
+  // Semua gagal — kasih user tahu
+  console.error('[RecallFox] openSettings: ALL STRATEGIES FAILED');
+  toast('⚠️ Tidak bisa buka pengaturan. Coba: klik kanan ikon RecallFox → Options, atau buka langsung moz-extension://<id>/settings/settings.html', false);
 }
 
 async function openTapePopover() {

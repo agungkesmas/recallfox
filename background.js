@@ -4379,6 +4379,37 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // v3.20.23: RF_OPEN_SETTINGS_VIA_BG — last resort fallback untuk buka settings.
+  // Dipanggil dari popup/sidebar kalau tabs.create() DAN openOptionsPage() keduanya
+  // no-op (bug Firefox terkenal di sidebar/iframe context).
+  // Background SW punya akses penuh ke browser.tabs — panggil langsung dari sini.
+  if (msg.type === 'RF_OPEN_SETTINGS_VIA_BG') {
+    (async () => {
+      try {
+        const settingsUrl = browser.runtime.getURL('settings/settings.html');
+        // Cek apakah tab settings sudah terbuka — fokus ke sana kalau ya
+        const existing = await browser.tabs.query({ url: settingsUrl });
+        if (existing.length > 0) {
+          await browser.tabs.update(existing[0].id, { active: true });
+          await browser.windows.update(existing[0].windowId, { focused: true });
+          sendResponse({ ok: true, reused: true });
+          return;
+        }
+        // Buat tab baru
+        const tab = await browser.tabs.create({ url: settingsUrl });
+        if (tab && tab.id) {
+          sendResponse({ ok: true, tabId: tab.id });
+        } else {
+          sendResponse({ ok: false, error: 'tab_create_returned_no_id' });
+        }
+      } catch (e) {
+        console.error('[RecallFox/bg] RF_OPEN_SETTINGS_VIA_BG failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // AD_DISCARD_NOW & AD_FORCE_DISCARD_ALL — sudah dipindahkan ke listener 1 (v0.9.7)
 });
 
