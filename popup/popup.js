@@ -6007,6 +6007,41 @@ function toolPage(k) {
 // v3.14.0: RecallTape — trigger popover di tab aktif via content script.
 // Untuk sidebar: kirim ke tab aktif di window utama.
 // Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
+// v3.20.22: Helper untuk buka halaman pengaturan dengan fallback.
+// Root cause: browser.runtime.openOptionsPage() di Firefox bisa gagal di iframe
+// popout sidebar (sidebar.html yang di-iframe di top-level page). Bug Firefox
+// terkenal: openOptionsPage() dari iframe extension page kadang no-op tanpa error.
+// User report: "Tombol pengaturan (ikon roda gerigi) di sudut kanan atas panel
+// RecallFox tidak berfungsi (mati). Ini terjadi ketika antarmuka sedang dalam
+// mode 'popout sidebar'."
+//
+// Fix: try openOptionsPage() first (lebih native — respect user's tab focus
+// preference). Kalau gagal atau di iframe context, fallback ke tabs.create
+// dengan URL eksplisit (selalu reliable di semua context).
+async function openSettings() {
+  // Cek apakah di iframe (popout sidebar) — di sini openOptionsPage lebih
+  // sering gagal. Skip try dan langsung fallback untuk consistency.
+  const inIframe = (window !== window.top);
+
+  if (!inIframe) {
+    try {
+      await browser.runtime.openOptionsPage();
+      return;
+    } catch (e) {
+      console.warn('[RecallFox] openOptionsPage failed, fallback to tabs.create:', e.message);
+    }
+  }
+
+  // Fallback: buka settings.html di tab baru via tabs.create
+  // Ini selalu bekerja di semua context (popup, sidebar, iframe, content script).
+  try {
+    await browser.tabs.create({ url: browser.runtime.getURL('settings/settings.html') });
+  } catch (e2) {
+    console.error('[RecallFox] tabs.create fallback also failed:', e2.message);
+    toast('⚠️ Tidak bisa buka pengaturan: ' + e2.message, false);
+  }
+}
+
 async function openTapePopover() {
   // v3.20.8: Jika di iframe (popout), kirim postMessage ke parent
   // → parent kirim message ke content script di tab aktif
@@ -6589,7 +6624,8 @@ function renderToolStubPage(B, k, name) {
   B.innerHTML = '<div class="card" style="text-align:center;padding:26px 16px"><div style="font-size:30px;margin-bottom:8px">' + (name || '🛠').split(' ')[0] + '</div>'
     + '<div style="font-size:12.5px;color:var(--text-2);line-height:1.55;max-width:250px;margin:0 auto 14px">' + (desc[k] || '') + '</div>'
     + '<button class="btn btn-p" id="goSettings">Buka di Pengaturan</button></div>';
-  $('#goSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#goSettings').addEventListener('click', () => openSettings());
 }
 
 // v3.11.1 (Issue 4): Halaman "Kelola Situs AI"
@@ -7762,7 +7798,8 @@ async function renderBackupPage(B) {
   });
 
   // Buka settings
-  $('#rfGoSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#rfGoSettings').addEventListener('click', () => openSettings());
 }
 
 // v3.7: Halaman Tanya AI — UI lengkap dengan quick prompts + chat
@@ -7836,7 +7873,8 @@ async function renderAskAiPage(B) {
 
   // === Bind events ===
   if (!aiConfigured) {
-    $('#askAiSetup').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#askAiSetup').addEventListener('click', () => openSettings());
   }
 
   // Quick prompt click → isi textarea
@@ -7856,7 +7894,8 @@ async function renderAskAiPage(B) {
   // Send question
   $('#askAiSend').addEventListener('click', async () => {
     if (!aiConfigured) {
-      browser.runtime.openOptionsPage();
+      // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+      openSettings();
       return;
     }
     const q = $('#askAiInput').value.trim();
@@ -7912,7 +7951,8 @@ async function renderAskAiPage(B) {
   // Tanya tentang tab aktif
   $('#askAiSendTab').addEventListener('click', async () => {
     if (!aiConfigured) {
-      browser.runtime.openOptionsPage();
+      // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+      openSettings();
       return;
     }
     try {
@@ -8726,7 +8766,8 @@ function bindEvents() {
   $('#aiBtn').innerHTML = ICONS.spark;
   $('#settingsBtn').innerHTML = ICONS.gear;
   $('#themeBtn').addEventListener('click', toggleTheme);
-  $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#settingsBtn').addEventListener('click', () => openSettings());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
   // v3.20.7: Popout sidebar toggle — pakai postMessage ke parent (bukan tabs.sendMessage)
   // Root cause: browser.tabs.sendMessage dari iframe gagal di Firefox (cross-origin context).
