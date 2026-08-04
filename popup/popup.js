@@ -1911,8 +1911,9 @@ async function handleAiAutoGroup() {
 
     // v3.20.28: Tampilkan preview modal dengan struktur yang diusulkan AI.
     // User bisa confirm atau cancel. Sebelumnya: langsung apply tanpa preview.
+    // v3.20.29: Pass stats juga untuk info subfolder di summary.
     closeMagicFolderModal();
-    showMagicFolderPreviewModal(result.groups, items);
+    showMagicFolderPreviewModal(result.groups, items, result.stats);
   } catch (e) {
     closeMagicFolderModal();
     toast('⚠ Gagal: ' + e.message, false);
@@ -1931,42 +1932,85 @@ function showMagicFolderProgressModal(itemCount) {
       <div class="rf-magicfolder-progress">
         <div class="rf-magicfolder-spinner"></div>
         <h3>🪄 Magic Folder sedang berpikir...</h3>
-        <p>AI menganalisis ${itemCount} item di Vault Anda untuk menentukan struktur folder optimal.</p>
-        <p class="rf-magicfolder-hint">AI bebas menentukan jumlah folder, nama, dan kriteria pengelompokan yang paling masuk akal.</p>
+        <p>AI menganalisis ${itemCount} item di Vault Anda untuk menentukan struktur folder optimal (boleh dengan subfolder).</p>
+        <p class="rf-magicfolder-hint">AI membaca konteks setiap item secara teliti, lalu mengelompokkan berdasarkan pola yang paling kuat.</p>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
 }
 
-// v3.20.28: Preview modal — tampilkan struktur folder yang diusulkan AI
-function showMagicFolderPreviewModal(groups, allItems) {
+// v3.20.29: Preview modal — checkbox per folder + nested subfolder display + reasoning.
+// User bisa pilih folder mana yang mau dibuat (centang/uncentang).
+// Folder yang di-uncheck tidak dibuat, item-nya tetap di tempat asal.
+function showMagicFolderPreviewModal(groups, allItems, stats) {
   closeMagicFolderModal();
 
-  // Hitung item yang tidak ke-assign (untuk info)
+  // v3.20.29: Flatten groups untuk display — setiap folder dapat ID unik (path-based).
+  // Mis. "0" = top folder index 0, "0.1" = subfolder index 1 di top folder 0.
+  const flatFolders = [];
+  function flatten(fs, parentPath) {
+    fs.forEach((f, i) => {
+      const path = parentPath ? `${parentPath}.${i}` : `${i}`;
+      flatFolders.push({
+        path,
+        name: f.name,
+        reasoning: f.reasoning || '',
+        itemIds: f.itemIds,
+        children: f.children || [],
+        depth: parentPath ? parentPath.split('.').length : 0,
+        parentPath: parentPath || null
+      });
+      if (f.children && f.children.length > 0) {
+        flatten(f.children, path);
+      }
+    });
+  }
+  flatten(groups, null);
+
+  // v3.20.29: Item yang tidak ke-assign (untuk info).
   const assignedIds = new Set();
-  groups.forEach(g => g.itemIds.forEach(id => assignedIds.add(id)));
+  flatFolders.forEach(f => f.itemIds.forEach(id => assignedIds.add(id)));
   const unassignedCount = allItems.filter(it => !assignedIds.has(it.id)).length;
 
-  const groupsHtml = groups.map((g, i) => {
-    const itemCount = g.itemIds.length;
+  // v3.20.29: Render folder tree dengan checkbox + reasoning + item pills.
+  function renderFolderRow(f) {
+    const isSub = f.depth > 0;
+    const indent = isSub ? 'margin-left:' + (f.depth * 20) + 'px;' : '';
+    const icon = isSub ? '📂' : '📁';
+    const itemCount = f.itemIds.length;
+    const itemPills = f.itemIds.slice(0, 5).map(id => {
+      const it = allItems.find(x => x.id === id);
+      return it ? `<span class="rf-magicfolder-item-pill">${esc((it.title || 'Untitled').slice(0, 25))}</span>` : '';
+    }).join('');
+    const morePill = itemCount > 5 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${itemCount - 5}</span>` : '';
+    const reasoningHtml = f.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(f.reasoning)}</div>` : '';
+    const subfolderHint = f.children.length > 0 ? `<span class="rf-magicfolder-sub-hint">${f.children.length} subfolder</span>` : '';
+
     return `
-      <div class="rf-magicfolder-group">
+      <div class="rf-magicfolder-group ${isSub ? 'rf-magicfolder-sub' : ''}" data-folder-path="${f.path}" style="${indent}">
         <div class="rf-magicfolder-group-hd">
-          <span class="rf-magicfolder-folder-icon">📁</span>
-          <span class="rf-magicfolder-folder-name">${esc(g.name)}</span>
+          <label class="rf-magicfolder-check-wrap">
+            <input type="checkbox" class="rf-magicfolder-check" data-folder-path="${f.path}" checked />
+            <span class="rf-magicfolder-check-mark"></span>
+          </label>
+          <span class="rf-magicfolder-folder-icon">${icon}</span>
+          <span class="rf-magicfolder-folder-name">${esc(f.name)}</span>
           <span class="rf-magicfolder-folder-count">${itemCount} item</span>
+          ${subfolderHint}
         </div>
-        <div class="rf-magicfolder-folder-items">
-          ${g.itemIds.slice(0, 5).map(id => {
-            const it = allItems.find(x => x.id === id);
-            return it ? `<span class="rf-magicfolder-item-pill">${esc((it.title || 'Untitled').slice(0, 30))}</span>` : '';
-          }).join('')}
-          ${itemCount > 5 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${itemCount - 5} lainnya</span>` : ''}
-        </div>
+        ${reasoningHtml}
+        ${itemPills || morePill ? `<div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>` : ''}
       </div>
     `;
-  }).join('');
+  }
+
+  const foldersHtml = flatFolders.map(renderFolderRow).join('');
+
+  // v3.20.29: Summary dengan info subfolder.
+  const subfolderInfo = stats?.hasSubfolders ? ` · ${stats.totalFolders} folder total (${stats.totalTopLevel} top-level + subfolder)` : '';
+  const summaryText = `AI mengusulkan <b>${stats?.totalTopLevel || groups.length} top-level folder</b>${subfolderInfo} untuk <b>${assignedIds.size} item</b>` +
+    (unassignedCount > 0 ? `<span class="rf-magicfolder-unassigned">(${unassignedCount} item tidak masuk folder mana pun)</span>` : '');
 
   const modal = document.createElement('div');
   modal.id = 'rf-magicfolder-modal';
@@ -1978,19 +2022,60 @@ function showMagicFolderPreviewModal(groups, allItems) {
         <button class="rf-magicfolder-close" id="rfMagicFolderCancel" title="Batal">×</button>
       </div>
       <div class="rf-magicfolder-body">
-        <p class="rf-magicfolder-summary">
-          AI mengusulkan <b>${groups.length} folder</b> untuk <b>${assignedIds.size} item</b>
-          ${unassignedCount > 0 ? `<span class="rf-magicfolder-unassigned">(${unassignedCount} item tidak masuk folder mana pun)</span>` : ''}
-        </p>
-        <div class="rf-magicfolder-groups">${groupsHtml}</div>
+        <p class="rf-magicfolder-summary">${summaryText}</p>
+        <div class="rf-magicfolder-select-all-row">
+          <label class="rf-magicfolder-check-wrap rf-magicfolder-select-all">
+            <input type="checkbox" id="rfMagicFolderSelectAll" checked />
+            <span class="rf-magicfolder-check-mark"></span>
+            <span>Pilih semua</span>
+          </label>
+          <span class="rf-magicfolder-hint-inline">Centang folder yang ingin dibuat. Yang tidak diceklis tidak akan dibuat.</span>
+        </div>
+        <div class="rf-magicfolder-groups">${foldersHtml}</div>
       </div>
       <div class="rf-magicfolder-ft">
         <button class="btn btn-g" id="rfMagicFolderCancelBtn">Batal</button>
-        <button class="btn btn-p" id="rfMagicFolderConfirm">✓ Terapkan Struktur</button>
+        <button class="btn btn-p" id="rfMagicFolderConfirm">✓ Buat Folder Terpilih</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
+
+  // v3.20.29: Wire "Select all" checkbox.
+  const selectAll = document.getElementById('rfMagicFolderSelectAll');
+  selectAll.addEventListener('change', (e) => {
+    document.querySelectorAll('.rf-magicfolder-check').forEach(cb => {
+      cb.checked = e.target.checked;
+    });
+  });
+
+  // v3.20.29: Wire individual checkbox — update "select all" state.
+  document.querySelectorAll('.rf-magicfolder-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const allCbs = document.querySelectorAll('.rf-magicfolder-check');
+      const allChecked = Array.from(allCbs).every(c => c.checked);
+      selectAll.checked = allChecked;
+      // v3.20.29: Kalau parent di-uncheck, uncheck semua subfolder juga.
+      const path = cb.dataset.folderPath;
+      if (!cb.checked) {
+        document.querySelectorAll('.rf-magicfolder-check').forEach(otherCb => {
+          if (otherCb.dataset.folderPath.startsWith(path + '.')) {
+            otherCb.checked = false;
+          }
+        });
+      } else {
+        // v3.20.29: Kalau subfolder di-check, check parent juga.
+        const parts = path.split('.');
+        for (let i = parts.length - 1; i > 0; i--) {
+          const parentPath = parts.slice(0, i).join('.');
+          const parentCb = document.querySelector(`.rf-magicfolder-check[data-folder-path="${parentPath}"]`);
+          if (parentCb && !parentCb.checked) {
+            parentCb.checked = true;
+          }
+        }
+      }
+    });
+  });
 
   // Wire cancel buttons
   const cancel = () => closeMagicFolderModal();
@@ -2004,25 +2089,56 @@ function showMagicFolderPreviewModal(groups, allItems) {
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Menerapkan...'; }
     if (cancelBtn) cancelBtn.disabled = true;
 
-    const applyResult = await applyMagicFolderGroups(groups);
+    // v3.20.29: Kumpulkan folder yang di-check (path set).
+    const checkedPaths = new Set();
+    document.querySelectorAll('.rf-magicfolder-check:checked').forEach(cb => {
+      checkedPaths.add(cb.dataset.folderPath);
+    });
+
+    // v3.20.29: Filter groups — hanya folder yang di-check (recursive).
+    function filterChecked(fs, parentPath) {
+      const result = [];
+      fs.forEach((f, i) => {
+        const path = parentPath ? `${parentPath}.${i}` : `${i}`;
+        if (!checkedPaths.has(path)) return;
+        const filtered = { ...f };
+        if (f.children && f.children.length > 0) {
+          filtered.children = filterChecked(f.children, path);
+        } else {
+          delete filtered.children;
+        }
+        result.push(filtered);
+      });
+      return result;
+    }
+    const selectedGroups = filterChecked(groups, null);
+
+    if (selectedGroups.length === 0) {
+      toast('⚠ Pilih minimal 1 folder untuk dibuat', false);
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Buat Folder Terpilih'; }
+      if (cancelBtn) cancelBtn.disabled = false;
+      return;
+    }
+
+    const applyResult = await applyMagicFolderGroups(selectedGroups);
     if (applyResult.ok) {
       closeMagicFolderModal();
       toast(`✓ ${applyResult.groupsCreated} folder dibuat, ${applyResult.itemsMoved} item dipindahkan`);
       // Step 3: DOM sync — refresh vault + chips + list
-      // Ini bekerja di popup, sidebar native, DAN popout sidebar (iframe)
-      // karena popup.js berjalan di semua context tersebut.
       await refreshVault();
       renderChips();
       renderList();
     } else {
       toast('⚠ Gagal menerapkan: ' + (applyResult.error || 'unknown'), false);
-      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Terapkan Struktur'; }
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Buat Folder Terpilih'; }
       if (cancelBtn) cancelBtn.disabled = false;
     }
   });
 }
 
-// v3.20.28: Apply groups ke vault — dengan strict rollback guardrail
+// v3.20.29: Apply groups ke vault — support nested subfolder + strict rollback guardrail.
+// Hanya folder yang sudah di-filter (di-check) yang masuk ke sini.
+// Parent folder dibuat dulu, dapat ID, lalu subfolder dibuat dengan parentId = parent ID.
 async function applyMagicFolderGroups(groups) {
   if (!Array.isArray(groups) || groups.length === 0) {
     return { ok: false, error: 'Groups tidak valid' };
@@ -2039,22 +2155,43 @@ async function applyMagicFolderGroups(groups) {
     const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
     const expandedIds = [];
 
-    for (const g of groups) {
-      const group = createGroup(g.name, groupType);
+    // v3.20.29: Recursive apply — parent dulu, lalu children dengan parentId.
+    async function applyFolder(folder, parentFolderId) {
+      const group = createGroup(folder.name, groupType);
+      if (parentFolderId) {
+        setParentId(group, parentFolderId);
+      }
+      if (folder.reasoning) {
+        if (!group.source) group.source = {};
+        group.source.magicFolderReasoning = folder.reasoning;
+        group.source.magicFolder = true;
+      }
       await addItem(group);
       expandedIds.push(group.id);
       groupsCreated++;
 
-      for (const itemId of g.itemIds) {
+      // Pindahkan item langsung ke folder ini
+      for (const itemId of folder.itemIds) {
         const item = vaultBefore.items.find(i => i.id === itemId);
         if (item) {
-          // Update item: set parentId ke folder baru
           const updates = {};
           setParentId(updates, group.id);
           await updateItem(itemId, updates);
           itemsMoved++;
         }
       }
+
+      // v3.20.29: Recursive — apply subfolder dengan parentId = group.id
+      if (folder.children && folder.children.length > 0) {
+        for (const child of folder.children) {
+          await applyFolder(child, group.id);
+        }
+      }
+    }
+
+    // Apply semua top-level folder (parentFolderId = null)
+    for (const g of groups) {
+      await applyFolder(g, null);
     }
 
     // Expand folder-folder baru supaya user langsung lihat isinya
