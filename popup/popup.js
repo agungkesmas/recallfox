@@ -1183,26 +1183,48 @@ async function handleDocFileUpload(fileList) {
         continue;
       }
       // addItem sudah di-import di top-level popup.js
-      await addItem({
-        type: 'file',
-        title: file.name,
-        body: text,
-        tags: ['file', info.kind],
-        source: {
-          kind: info.kind,
-          mime: info.mime,
-          fileName: file.name,
-          size: file.size,
-          uploadedFrom: 'addon-upload',
-          capturedAt: new Date().toISOString()
+      // v3.20.36-dev: addItem() otomatis trigger directUpsertVaultItem ke Supabase.
+      // Kalau Supabase error (auth/RLS/network), error di-catch di sini + toast jelas.
+      try {
+        await addItem({
+          type: 'file',
+          title: file.name,
+          body: text,
+          tags: ['file', info.kind],
+          source: {
+            kind: info.kind,
+            mime: info.mime,
+            fileName: file.name,
+            size: file.size,
+            uploadedFrom: 'addon-upload',
+            capturedAt: new Date().toISOString()
+          }
+        });
+      } catch (addItemErr) {
+        // addItem gagal — kemungkinan storage.local penuh atau sync error
+        console.error('[RecallFox] File upload: addItem gagal:', file.name, addItemErr);
+        toast('⚠ ' + file.name + ': gagal simpan — ' + (addItemErr.message || 'unknown error'), false);
+        fail++;
+        continue;
+      }
+      // Cek apakah Supabase sync error tercatat di storage.local
+      try {
+        const errData = await browser.storage.local.get('recallfox_last_sync_error');
+        if (errData['recallfox_last_sync_error']) {
+          const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
+          // Hanya tampilkan kalau error ini terkait item yang baru di-upload
+          if (syncErr.itemId === file.name || syncErr.ts > Date.now() - 5000) {
+            console.warn('[RecallFox] File upload: Supabase sync error untuk', file.name, ':', syncErr.error);
+            // Tidak fail upload — item lokal tetap tersimpan. Cloud sync akan retry.
+          }
         }
-      });
+      } catch (_) {}
       ok++;
       toast('📤 ' + file.name + ' terupload' + progress);
       if (i < files.length - 1) await new Promise(r => setTimeout(r, 300));
     } catch (e) {
       console.error('[RecallFox] File upload error:', file.name, e);
-      toast('⚠ ' + file.name + ': gagal upload' + progress, false);
+      toast('⚠ ' + file.name + ': gagal upload — ' + (e.message || 'unknown error'), false);
       fail++;
     }
   }
@@ -4579,8 +4601,14 @@ function itemSheet(id) {
   openSheet(esc(it.title), T.label + (vars ? ' · ' + vars + ' variabel' : ''), b => {
     const isAi = !!currentAiDomain;
     // v3.12.0 (Fase 7): Tambah label utama untuk dokumen.
-    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard'))));
-    const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (isAi ? ICONS.zap : ICONS.copy));
+    // v3.20.36-dev: Label spesifik untuk file — "Kopi isi file" (bukan generic "Salin ke clipboard")
+    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru'
+      : (it.type === 'bundle' ? 'Salin bundle ke clipboard'
+      : (it.type === 'screenshot' ? 'Lihat screenshot'
+      : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)'
+      : (it.type === 'file' ? '📋 Kopi isi file ke clipboard'
+      : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')))));
+    const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (it.type === 'file' ? ICONS.copy : (isAi ? ICONS.zap : ICONS.copy)));
     b.innerHTML =
       '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
       + (it.type === 'prompt' || it.type === 'context' ? '<button class="act" data-a="attach">' + ICONS.clipA + '<div>Sisipkan dengan lampiran<div class="ad">Prompt + link referensi sekaligus</div></div></button>' : '')
@@ -4641,7 +4669,12 @@ function itemSheet(id) {
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', async () => {
       const k = a.dataset.a;
-      if (k === 'primary') { closeSheet(); primaryAction(it.id); }
+      if (k === 'primary') {
+        closeSheet();
+        // v3.20.36-dev: Untuk type='file', primary action = kopi isi file (bukan buka itemSheet lagi)
+        if (it.type === 'file') { copyFileContentToClipboard(it.id); return; }
+        primaryAction(it.id);
+      }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
       // v3.16.5: Ringkas snapshot dengan AI
@@ -6181,11 +6214,20 @@ function addItemMenu() {
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
+      // v3.20.36-dev: Upload file teks (.md/.txt/.json/.html/.csv/.yaml) — dipindah dari
+      // tombol header ke menu "+ Baru" supaya header tidak penuh.
+      ['📄 Upload File teks', () => {
+        const docFileInput = $('#docFileInput');
+        if (docFileInput) {
+          docFileInput.value = '';
+          docFileInput.click();
+        }
+      }],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => { closeSheet(); setTimeout(opts[a.dataset.i][1], 80); }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
   });
 }
 
@@ -9963,17 +10005,9 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
-  // v3.20.35-dev: File upload button + hidden file input
-  const _uploadFileBtn = $('#uploadFileBtn');
+  // v3.20.36-dev: File upload via menu "+ Baru" — tombol header dihapus, input hidden tetap.
+  // docFileInput di-trigger dari addItemMenu() opsi "📄 Upload File teks".
   const _docFileInput = $('#docFileInput');
-  if (_uploadFileBtn) {
-    _uploadFileBtn.addEventListener('click', () => {
-      if (_docFileInput) {
-        _docFileInput.value = '';
-        _docFileInput.click();
-      }
-    });
-  }
   if (_docFileInput) {
     _docFileInput.addEventListener('change', async (e) => {
       if (e.target.files && e.target.files.length > 0) {
