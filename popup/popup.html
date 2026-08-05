@@ -87,6 +87,8 @@
       <button class="addbtn" id="aiGroupBtn" title="Auto Group AI">🪄<span class="btn-text"> Auto</span></button>
       <!-- v3.20.32: Magic Command — ketik perintah natural language -->
       <button class="addbtn" id="magicCommandBtn" title="Ketik perintah — mis. 'pindahkan link MDN ke folder Referensi'">💬<span class="btn-text"> Perintah</span></button>
+      <!-- v3.20.35-dev: Upload file teks (.md/.txt/.json/.html/.csv/.yaml) -->
+      <button class="addbtn" id="uploadFileBtn" title="Upload file teks — maks 2MB per file">📤<span class="btn-text"> File</span></button>
       <button class="addbtn" id="addGroupBtn" title="Buat Folder/Grup Baru">📁+<span class="btn-text"> Grup</span></button>
       <select id="vaultSortSelect" title="Urutkan" style="font-size:11px;padding:4px 8px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;outline:none">
         <option value="recent">Terbaru</option>
@@ -301,6 +303,7 @@
 </div>
 
 <input type="file" id="screenshotFileInput" accept="image/*" style="display:none" />
+<input type="file" id="docFileInput" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" multiple style="display:none" />
 
 <script type="module" src="popup.js"></script>
 </body>
