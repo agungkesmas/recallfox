@@ -1247,14 +1247,48 @@ async function copyFileContentToClipboard(id) {
   }
 }
 
+// v3.20.37-dev: Copy URL dengan retry mechanism.
+// Root cause "belum punya URL cloud": upload Storage adalah async — butuh beberapa detik
+// setelah addItem() sampai _uploadFileDocument selesai + update gdriveFileUrl di vault.
+// Fix: refresh vault dari storage.local + retry 2x dengan jeda 1.5 detik.
+// getVault sudah di-import di top-level popup.js (bukan dynamic import).
 async function copyFileUrlToClipboard(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
-  const url = resolveImageUrl(item);
+
+  // Cek URL dari currentVault (fast path)
+  let url = resolveImageUrl(item);
+
+  // Kalau belum ada, refresh vault dari storage.local (mungkin _uploadFileDocument sudah update)
   if (!url) {
-    toast('File ini belum punya URL cloud (upload masih berjalan atau gagal). Coba lagi nanti atau gunakan Download.', false);
+    try {
+      const freshVault = await getVault();
+      const freshItem = freshVault.items.find(i => i.id === id);
+      if (freshItem) url = resolveImageUrl(freshItem);
+    } catch (_) {}
+  }
+
+  // Kalau masih belum ada, retry dengan delay (upload mungkin masih berjalan)
+  if (!url) {
+    toast('⏳ URL cloud belum siap — menunggu upload selesai...');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const freshVault = await getVault();
+        const freshItem = freshVault.items.find(i => i.id === id);
+        if (freshItem) {
+          url = resolveImageUrl(freshItem);
+          if (url) break;
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (!url) {
+    toast('⚠ URL cloud belum tersedia. Gunakan "Kopi File" untuk salin isi teks, atau "Download" untuk unduh file.', false);
     return;
   }
+
   const ok = await _copyTextWithFallback(url);
   if (ok) toast('✓ URL file tersalin — paste ke AI chat');
   else toast('Gagal salin URL file (clipboard diblokir)', false);
@@ -1779,7 +1813,9 @@ function renderItemHtml(it, indent, connector) {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
   } else if (it.type === 'file') {
-    ctaHtml = '<span class="cta-pill" data-file-action="sheet">' + ICONS.copy + 'Aksi \u21B5</span>'
+    // v3.20.37-dev: Tombol "Salin ↵" langsung kopi isi file (bukan buka sheet).
+    // User feedback: "Aksi ↵" terlalu banyak langkah — langsung kopi lebih cepat.
+    ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
       + '<button class="link-mini-btn" data-file-action="download" title="Download file">' + ICONS.download + '</button>';
   } else {
     const cta = currentAiDomain ? ICONS.zap + 'Sisipkan \u21B5' : ICONS.copy + 'Salin \u21B5';
@@ -2992,13 +3028,17 @@ function bindItemClicks() {
         return;
       }
       // v3.20.35-dev: Tombol aksi File (data-file-action)
+      // v3.20.37-dev: 'copy' langsung kopi isi file (bukan buka sheet)
       const fileBtn = e.target.closest('[data-file-action]');
       if (fileBtn) {
         e.stopPropagation();
         const action = fileBtn.dataset.fileAction;
         const it = findItem(el.dataset.id);
         if (!it) return;
-        if (action === 'sheet') {
+        if (action === 'copy') {
+          // Direct copy isi file ke clipboard — tidak buka item sheet
+          copyFileContentToClipboard(it.id);
+        } else if (action === 'sheet') {
           itemSheet(it.id);
         } else if (action === 'download') {
           downloadFileItem(it.id);
