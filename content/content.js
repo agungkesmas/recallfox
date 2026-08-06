@@ -52,13 +52,8 @@
     return null;
   }
 
-  // v3.20.46-dev: Universal editor selectors — fallback kalau domain config tidak ada
-  // atau selector outdated. Urutan prioritas:
-  //   1. ProseMirror/TipTap (ChatGPT, Claude, banyak AI modern pakai ini)
-  //   2. contenteditable dengan role textbox (Claude, Gemini)
-  //   3. contenteditable generic (fallback)
-  //   4. textarea (AI sederhana, custom sites)
-  //   5. input[type=text] (last resort)
+  // v3.20.46: Universal editor selectors — fallback kalau domain config tidak ada
+  // atau selector outdated. Cover ProseMirror/TipTap, contenteditable, textarea.
   const UNIVERSAL_EDITOR_SELECTORS = [
     '.ProseMirror[contenteditable="true"]',
     'div[contenteditable="true"][role="textbox"]',
@@ -70,25 +65,23 @@
   ];
 
   function getEditor() {
-    // v3.20.46-dev: Strategy 1 — pakai domain config selector (existing behavior)
+    // Strategy 1: domain config selector
     if (window.__RecallFoxDomainConfig__) {
       const editor = resolveFirst(window.__RecallFoxDomainConfig__.selectors.textarea);
       if (editor) return editor;
     }
-    // v3.20.46-dev: Strategy 2 — universal fallback selectors
-    // Kalau domain config tidak ada ATAU selector outdated (AI site ganti DOM),
-    // cek selector universal yang cover ProseMirror/TipTap/contenteditable/textarea.
+    // Strategy 2: universal fallback selectors
     console.log('[RecallFox] getEditor: domain config tidak match, coba universal selectors');
     for (const sel of UNIVERSAL_EDITOR_SELECTORS) {
       try {
         const el = document.querySelector(sel);
         if (el) {
-          console.log('[RecallFox] getEditor: found editor via universal selector:', sel);
+          console.log('[RecallFox] getEditor: found via universal:', sel);
           return el;
         }
       } catch (_) {}
     }
-    console.warn('[RecallFox] getEditor: no editor found (universal fallback juga gagal)');
+    console.warn('[RecallFox] getEditor: no editor found');
     return null;
   }
 
@@ -98,38 +91,31 @@
   }
 
   // ===== Inject text =====
-  // v3.20.46-dev: Improved with retry + ProseMirror/TipTap support
   // Tries multiple strategies:
-  //   1. textarea: set value + dispatch input event (React-compatible)
-  //   2. contenteditable: focus + execCommand('insertText') (ProseMirror/TipTap)
-  //   3. retry with delay (editor mungkin belum render — lazy load)
-  //   4. fallback: clipboard
+  //   1. textarea: set value + dispatch input event
+  //   2. contenteditable: execCommand('insertText') via InputEvent
+  //   3. fallback: clipboard
   async function injectText(text, mode = 'append') {
     let editor = getEditor();
 
-    // v3.20.46-dev: Retry 3x dengan jeda 300ms kalau editor belum ketemu.
-    // AI sites (ChatGPT, Claude) sering lazy-load editor — perlu tunggu render.
+    // v3.20.46: Retry 3x dengan jeda 300ms kalau editor belum ketemu (lazy-load)
     if (!editor) {
       console.log('[RecallFox] injectText: editor belum ada, retry 3x...');
       for (let i = 0; i < 3; i++) {
         await new Promise(r => setTimeout(r, 300));
         editor = getEditor();
-        if (editor) {
-          console.log('[RecallFox] injectText: editor found on retry', i + 1);
-          break;
-        }
+        if (editor) break;
       }
     }
 
     if (!editor) {
-      console.warn('[RecallFox] injectText: no editor after retry, fallback to clipboard');
+      console.warn('[RecallFox] injectText: no editor, fallback to clipboard');
       await copyToClipboard(text);
       showToast('toastInjectFailed');
       return { ok: false, fallback: 'clipboard' };
     }
 
     const isTextarea = editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT';
-    console.log('[RecallFox] injectText: editor found:', editor.tagName, editor.className.slice(0, 50), '| mode:', mode, '| text length:', text.length);
 
     try {
       if (isTextarea) {
@@ -152,13 +138,11 @@
         editor.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
         // contenteditable (ProseMirror/TipTap/React)
-        // v3.20.46-dev: Focus DULU sebelum apapun — ProseMirror butuh focus
-        // supaya execCommand('insertText') jalan.
+        // v3.20.46: Focus DULU + small delay supaya ProseMirror siap
         editor.focus();
-        // Small delay supaya focus effect
         await new Promise(r => setTimeout(r, 50));
-
         if (mode === 'replace') {
+          // select all then replace
           const sel = window.getSelection();
           const range = document.createRange();
           range.selectNodeContents(editor);
@@ -166,13 +150,14 @@
           sel.addRange(range);
           document.execCommand('delete');
         } else {
+          // move cursor to end (append) or beginning (prepend)
           const sel = window.getSelection();
           const range = document.createRange();
           range.selectNodeContents(editor);
           if (mode === 'prepend') {
-            range.collapse(true);
+            range.collapse(true); // start
           } else {
-            range.collapse(false);
+            range.collapse(false); // end
           }
           sel.removeAllRanges();
           sel.addRange(range);
@@ -180,23 +165,12 @@
             document.execCommand('insertText', false, '\n\n---\n\n');
           }
         }
-        // insert text via execCommand (works with React/ProseMirror/TipTap)
+        // insert text via execCommand (works with React/ProseMirror)
         document.execCommand('insertText', false, text);
         if (mode === 'prepend') {
           document.execCommand('insertText', false, '\n\n---\n\n');
         }
-
-        // v3.20.46-dev: Dispatch InputEvent supaya React/TipTap detect change.
-        // execCommand('insertText') sudah trigger input event di browser modern,
-        // tapi beberapa framework butuh InputEvent explicit.
-        editor.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          inputType: 'insertText',
-          data: text
-        }));
       }
-      console.log('[RecallFox] injectText: SUCCESS');
       showToast('toastInjected');
       return { ok: true };
     } catch (e) {
