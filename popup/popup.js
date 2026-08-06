@@ -705,7 +705,20 @@ function getVaultItems() {
     id: b.id, type: 'bundle', title: b.name || 'Bundle', tags: ['bundle'],
     uses: b.useCount || 0, _bundle: b
   }));
-  return [...items, ...bundles];
+  // v3.20.39: Dedup by ID — defense-in-depth supaya list view tidak tampilkan
+  //   duplikat meskipun storage layer masih punya (e.g. data lama sebelum fix).
+  //   Kalau ada ID sama, keep yang pertama (sudah di-sort by recency di caller).
+  const seen = new Set();
+  const merged = [...items, ...bundles];
+  const deduped = merged.filter(it => {
+    if (!it.id || seen.has(it.id)) {
+      console.warn('[RecallFox/popup] getVaultItems: skipped duplicate ID:', it.id, it.title);
+      return false;
+    }
+    seen.add(it.id);
+    return true;
+  });
+  return deduped;
 }
 
 // v3.7.2 (Issue 1): tambah chip "Arsip" untuk lihat item yang diarsipkan.
@@ -1287,6 +1300,35 @@ async function copyFileUrlToClipboard(id) {
           if (url) break;
         }
       } catch (_) {}
+    }
+  }
+
+  // v3.20.39: Kalau masih belum ada URL, trigger push sync ke background.
+  //   Sebelumnya: kalau upload belum jalan (e.g. pushToSupabase belum ke-trigger
+  //   untuk file type), URL tidak akan pernah ada. Sekarang: kirim SUPABASE_PUSH
+  //   supaya background jalankan pushToSupabase (yang sekarang upload file ke
+  //   Storage + PATCH gdrive_file_url). Setelah push, retry baca URL.
+  if (!url) {
+    try {
+      console.log('[RecallFox] copyFileUrl: URL not found, triggering SUPABASE_PUSH...');
+      await browser.runtime.sendMessage({ type: 'SUPABASE_PUSH' });
+      // Tunggu push selesai (max 5 detik), lalu retry baca URL
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const freshVault = await getVault();
+          const freshItem = freshVault.items.find(i => i.id === id);
+          if (freshItem) {
+            url = resolveImageUrl(freshItem);
+            if (url) {
+              console.log('[RecallFox] copyFileUrl: URL found after push, attempt', attempt + 1);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (pushErr) {
+      console.warn('[RecallFox] copyFileUrl: SUPABASE_PUSH failed:', pushErr.message);
     }
   }
 
