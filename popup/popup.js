@@ -1207,20 +1207,26 @@ async function handleDocFileUpload(fileList) {
         fail++;
         continue;
       }
-      // Cek apakah Supabase sync error tercatat di storage.local
+      // v3.20.38-dev: Cek apakah cloud upload error tercatat di storage.local.
+      // Kalau ada error, tampilkan toast yang JELAS ke user dengan hint.
+      let cloudOk = true;
       try {
         const errData = await browser.storage.local.get('recallfox_last_sync_error');
         if (errData['recallfox_last_sync_error']) {
           const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
-          // Hanya tampilkan kalau error ini terkait item yang baru di-upload
-          if (syncErr.itemId === file.name || syncErr.ts > Date.now() - 5000) {
-            console.warn('[RecallFox] File upload: Supabase sync error untuk', file.name, ':', syncErr.error);
-            // Tidak fail upload — item lokal tetap tersimpan. Cloud sync akan retry.
+          // Cek apakah error ini untuk upload file yang baru saja (dalam 5 detik)
+          if (syncErr.source === '_uploadFileDocument' && Date.now() - new Date(syncErr.ts).getTime() < 5000) {
+            cloudOk = false;
+            const hint = syncErr.hint || syncErr.error || 'unknown error';
+            console.warn('[RecallFox] File upload: cloud GAGAL untuk', file.name, ':', syncErr.error);
+            toast('📤 ' + file.name + ' tersimpan lokal — URL cloud gagal: ' + hint, false);
           }
         }
       } catch (_) {}
+      if (cloudOk) {
+        toast('📤 ' + file.name + ' terupload — URL cloud siap' + progress);
+      }
       ok++;
-      toast('📤 ' + file.name + ' terupload' + progress);
       if (i < files.length - 1) await new Promise(r => setTimeout(r, 300));
     } catch (e) {
       console.error('[RecallFox] File upload error:', file.name, e);
