@@ -6314,7 +6314,30 @@ function addItemMenu() {
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
-    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => { closeSheet(); setTimeout(opts[a.dataset.i][1], 80); }));
+    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
+      const opt = opts[a.dataset.i];
+      const label = opt[0];
+      // v3.20.41: Fix tombol upload tidak bereaksi — 2 root cause (port dari Chrome v3.20.39):
+      //
+      // BUG 1: "Upload gambar (manual)" → doShot('upload') → saveScreenshotManualSheet()
+      // → openSheet() membuka sheet upload. Tapi lalu closeSheet() langsung menutupnya!
+      // Fix: JANGAN closeSheet() — saveScreenshotManualSheet() sudah replace sheet.
+      //
+      // BUG 2: "Upload File teks" → docFileInput.click() pada element display:none.
+      // Beberapa browser menolak buka file picker untuk display:none input.
+      // Fix: tutup menu dulu (sync CSS), lalu trigger .click() — gesture tetap valid.
+      if (label.includes('Upload gambar')) {
+        console.log('[RecallFox/addItemMenu] Upload gambar clicked → opening manual upload sheet');
+        opt[1](); // synchronous — saveScreenshotManualSheet() replaces menu sheet
+      } else if (label.includes('Upload File')) {
+        console.log('[RecallFox/addItemMenu] Upload File teks clicked → triggering file picker');
+        closeSheet();
+        opt[1](); // synchronous — docFileInput.click()
+      } else {
+        closeSheet();
+        setTimeout(opt[1], 80);
+      }
+    }));
     b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
   });
 }
@@ -10095,9 +10118,12 @@ function bindEvents() {
   $('#noteAddBtn').addEventListener('click', newNote);
   // v3.20.36-dev: File upload via menu "+ Baru" — tombol header dihapus, input hidden tetap.
   // docFileInput di-trigger dari addItemMenu() opsi "📄 Upload File teks".
+  // v3.20.41: Tambah console.log untuk debugging.
   const _docFileInput = $('#docFileInput');
   if (_docFileInput) {
+    console.log('[RecallFox] docFileInput found, wiring change handler. Element:', _docFileInput);
     _docFileInput.addEventListener('change', async (e) => {
+      console.log('[RecallFox] docFileInput change event fired. Files:', e.target.files?.length);
       if (e.target.files && e.target.files.length > 0) {
         await handleDocFileUpload(e.target.files);
       }
