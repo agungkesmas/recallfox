@@ -2030,19 +2030,7 @@ function renderItemHtml(it, indent, connector) {
       + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
   } else if (it.type === 'bundle') {
     const memberCount = (it._bundle?.itemIds || []).length;
-<<<<<<< Updated upstream
-    // v3.20.46: Dua tombol terpisah — Sisip (insert mode) + Salin (copy mode).
-    //   Sebelumnya: tombol "Salin ⤴" panggil injectBundle (mode insert) → user
-    //   bingung karena label "Salin" tapi behavior "Sisip".
-    //   v3.20.45: saya ubah ke copyBundle → user complain "Sisip hilang".
-    //   Sekarang: DUA tombol eksplisit supaya user bisa pilih.
-    //     - Sisip ⤴ (cta-pill, primary): injectBundle → prompt→teks, file/link→URL
-    //     - 📋 (mini btn): copyBundle → prompt/file→teks, link→URL
-    ctaHtml = '<span class="cta-pill" data-bundle-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
-      + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle (prompt/file→teks, link→URL)">' + ICONS.copy + '</button>'
-      + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
-=======
-    // v3.20.45-dev: Fix ikon ketukar + fungsi sisip salah.
+// v3.20.45-dev: Fix ikon ketukar + fungsi sisip salah.
     // Saat di halaman AI: tombol besar = "Sisipkan ↵" (zap icon, inject ke AI)
     // Saat non-AI: tombol besar = "Salin ↵" (copy icon, copy to clipboard)
     // Tombol kecil "Salin" (copy icon) muncul saat di AI page supaya user tetap bisa copy.
@@ -2053,7 +2041,6 @@ function renderItemHtml(it, indent, connector) {
       ctaHtml = '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin \u21B5</span>';
     }
     ctaHtml += (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
->>>>>>> Stashed changes
   } else if (it.type === 'screenshot') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
@@ -3283,16 +3270,7 @@ function bindItemClicks() {
           return;
         }
         else if (action === 'inject') {
-<<<<<<< Updated upstream
-          // v3.20.46: Sisip bundle — pakai injectBundle (mode insert).
-          //   Sebelumnya: logic lama yang filter(i => i.type !== 'link') →
-          //   link TIDAK di-sisip. User complain: "Sisip hanya membaca prompt
-          //   dan isi file, link TIDAK terbaca".
-          //   Sekarang: panggil injectBundle yang pakai getBundleContent(insert)
-          //   → prompt→teks, file/link/media→URL. Semua anggota disisipkan.
-          injectBundle(it.id);
-=======
-          // v3.20.45-dev: Fix sisip bundle — samakan logic dengan injectBundle() (copy).
+// v3.20.45-dev: Fix sisip bundle — samakan logic dengan injectBundle() (copy).
           // Sebelumnya: link di-FILTER KELUAR (i.type !== 'link') → sisip tidak baca link.
           // Sekarang: include SEMUA item type (link, prompt, context, snapshot, file).
           // Logic sama persis dengan injectBundle() line 3686-3696.
@@ -3334,7 +3312,6 @@ function bindItemClicks() {
               doInject(text, it.id);
             } else { toast('Bundle kosong', false); }
           }
->>>>>>> Stashed changes
           return;
         }
       }
