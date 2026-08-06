@@ -4746,11 +4746,11 @@ function itemSheet(id) {
       // v3.14.9: Salin URL gambar (public Supabase Storage URL) — untuk AI sites
       // yang tidak support paste gambar langsung. User paste URL ke AI chat,
       // AI fetch gambar dari URL.
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin URL Gambar<div class="ad">URL public — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
-      // v3.20.35-dev: Tombol untuk type='file' — Kopi File (isi), Kopi Link (URL), Download
-      + (it.type === 'file' ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Kopi File<div class="ad">Salin ISI file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
-      + (it.type === 'file' ? '<button class="act" data-a="copy-file-url">' + ICONS.copy + '<div>🔗 Kopi Link<div class="ad">URL public file — paste ke AI chat, AI bisa fetch isi dari URL</div></div></button>' : '')
-      + (it.type === 'file' ? '<button class="act" data-a="download-file">' + ICONS.download + '<div>⬇️ Download File<div class="ad">Download file ke komputer</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public gambar — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
+      // v3.20.42: Tombol untuk type='file' — standarisasi label (sama seperti tipe lain)
+      + (it.type === 'file' ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Salin Konten<div class="ad">Salin isi file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
+      + (it.type === 'file' ? '<button class="act" data-a="copy-file-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public file — paste ke AI chat, AI bisa fetch isi dari URL</div></div></button>' : '')
+      + (it.type === 'file' ? '<button class="act" data-a="download-file">' + ICONS.download + '<div>⬇️ Unduh<div class="ad">Download file ke komputer</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
       // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
@@ -6302,43 +6302,105 @@ function addItemMenu() {
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
-      // v3.20.36-dev: Upload file teks (.md/.txt/.json/.html/.csv/.yaml) — dipindah dari
-      // tombol header ke menu "+ Baru" supaya header tidak penuh.
-      ['📄 Upload File teks', () => {
-        const docFileInput = $('#docFileInput');
-        if (docFileInput) {
-          docFileInput.value = '';
-          docFileInput.click();
-        }
-      }],
+      // v3.20.42: Upload file teks pakai modal standar (sama seperti screenshot manual)
+      ['📄 Upload File teks', saveFileUploadSheet],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
       const opt = opts[a.dataset.i];
       const label = opt[0];
-      // v3.20.41: Fix tombol upload tidak bereaksi — 2 root cause (port dari Chrome v3.20.39):
-      //
-      // BUG 1: "Upload gambar (manual)" → doShot('upload') → saveScreenshotManualSheet()
-      // → openSheet() membuka sheet upload. Tapi lalu closeSheet() langsung menutupnya!
-      // Fix: JANGAN closeSheet() — saveScreenshotManualSheet() sudah replace sheet.
-      //
-      // BUG 2: "Upload File teks" → docFileInput.click() pada element display:none.
-      // Beberapa browser menolak buka file picker untuk display:none input.
-      // Fix: tutup menu dulu (sync CSS), lalu trigger .click() — gesture tetap valid.
-      if (label.includes('Upload gambar')) {
-        console.log('[RecallFox/addItemMenu] Upload gambar clicked → opening manual upload sheet');
-        opt[1](); // synchronous — saveScreenshotManualSheet() replaces menu sheet
-      } else if (label.includes('Upload File')) {
-        console.log('[RecallFox/addItemMenu] Upload File teks clicked → triggering file picker');
-        closeSheet();
-        opt[1](); // synchronous — docFileInput.click()
+      // v3.20.42: Upload gambar + Upload File teks buka sheet sendiri — JANGAN closeSheet()
+      if (label.includes('Upload gambar') || label.includes('Upload File')) {
+        opt[1]();
       } else {
         closeSheet();
         setTimeout(opt[1], 80);
       }
     }));
     b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
+  });
+}
+
+// v3.20.42: Upload File Teks — modal standar (mirror saveScreenshotManualSheet)
+// Punya: Judul (opsional), Tag (opsional), area upload (klik/drag&drop), Batal, Simpan
+// Format: .md/.txt/.json/.html/.csv/.yaml (max 2MB)
+function saveFileUploadSheet() {
+  openSheet('📄 Upload File Teks', 'Pilih file teks, atau drag & drop', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
+      +   '<input class="f" id="docT" placeholder="mis. Catatan rapet..."></div>'
+      + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
+      +   '<input class="f" id="docTag" placeholder="catatan, rapat"></div>'
+      + '<div id="docDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
+      +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
+      +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
+      +   '<div style="font-size:11px;margin-top:4px">atau drag & drop</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Format: .md, .txt, .json, .html, .csv, .yaml (max 2MB)</div>'
+      + '</div>'
+      + '<input type="file" id="docFileInputSheet" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" style="display:none">'
+      + '<div id="docPreview" style="display:none;margin:8px 0">'
+      +   '<div style="font-size:11px;color:#666;margin-top:4px" id="docPreviewMeta"></div>'
+      +   '<div id="docPreviewText" style="font-size:11px;background:var(--surface-2);padding:8px;border-radius:6px;margin-top:4px;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-family:monospace"></div>'
+      + '</div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="docCancel">Batal</button>'
+      +   '<button class="btn btn-p" id="docSave" disabled>' + ICONS.check + 'Simpan File</button></div></div>';
+
+    let _fileContent = null, _fileName = '', _fileKind = null, _fileMime = 'text/plain';
+    const dropzone = b.querySelector('#docDropzone');
+    const fileInput = b.querySelector('#docFileInputSheet');
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async (e) => { if (e.target.files[0]) await _handleFile(e.target.files[0]); });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.borderColor = '#FF7139'; dropzone.style.background = '#FFF4E6'; });
+    dropzone.addEventListener('dragleave', (e) => { e.preventDefault(); dropzone.style.borderColor = '#c0c0c0'; dropzone.style.background = ''; });
+    dropzone.addEventListener('drop', async (e) => { e.preventDefault(); dropzone.style.borderColor = '#c0c0c0'; dropzone.style.background = ''; if (e.dataTransfer.files[0]) await _handleFile(e.dataTransfer.files[0]); });
+
+    async function _handleFile(file) {
+      const info = detectFileKind(file);
+      if (!info) { toast('⚠ Format tidak didukung: ' + file.name, false); return; }
+      if (file.size > MAX_FILE_UPLOAD_BYTES) { toast('⚠ File terlalu besar (max 2MB)', false); return; }
+      const text = await file.text();
+      if (!text || text.length === 0) { toast('⚠ File kosong', false); return; }
+      _fileContent = text; _fileName = file.name; _fileKind = info.kind; _fileMime = info.mime;
+      const previewMeta = b.querySelector('#docPreviewMeta');
+      const previewText = b.querySelector('#docPreviewText');
+      const previewBox = b.querySelector('#docPreview');
+      const sizeKb = (file.size / 1024).toFixed(1);
+      previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeKb + ' KB · ' + info.kind;
+      previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
+      previewBox.style.display = '';
+      b.querySelector('#docSave').disabled = false;
+      const titleEl = b.querySelector('#docT');
+      if (!titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
+      toast('📋 File dimuat — klik Simpan untuk menyimpan');
+    }
+
+    b.querySelector('#docCancel').addEventListener('click', closeSheet);
+    b.querySelector('#docSave').addEventListener('click', async () => {
+      if (!_fileContent) { toast('Pilih file dulu', false); return; }
+      const title = (b.querySelector('#docT').value || '').trim() || _fileName;
+      const tags = (b.querySelector('#docTag').value || '').trim();
+      const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['file', _fileKind];
+      const btn = b.querySelector('#docSave');
+      btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
+      try {
+        await addItem({ type: 'file', title, body: _fileContent, tags: tagList, source: { kind: _fileKind, mime: _fileMime, fileName: _fileName, size: _fileContent.length, uploadedFrom: 'addon-upload', capturedAt: new Date().toISOString() } });
+        let cloudOk = true;
+        try {
+          const errData = await browser.storage.local.get('recallfox_last_sync_error');
+          if (errData['recallfox_last_sync_error']) {
+            const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
+            if (syncErr.source === '_uploadFileDocument' && Date.now() - new Date(syncErr.ts).getTime() < 5000) {
+              cloudOk = false;
+              toast('📤 ' + _fileName + ' tersimpan lokal — URL cloud gagal: ' + (syncErr.hint || syncErr.error), false);
+            }
+          }
+        } catch (_) {}
+        if (cloudOk) toast('📤 ' + _fileName + ' terupload — URL cloud siap');
+        closeSheet();
+        await refreshVault();
+      } catch (e) { toast('⚠ Gagal simpan: ' + e.message, false); btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false; }
+    });
   });
 }
 
