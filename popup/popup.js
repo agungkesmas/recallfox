@@ -10003,7 +10003,7 @@ async function renderKontrolSitusPage(B) {
       +       '<div style="font-size:14px;font-weight:700">Pelindung Konten</div>'
       +       '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">'
       +         (cgMasterOn ? ('Aktif — ' + esc(cgActiveName) + (cgActiveTopicsPreview ? ' · topik: ' + esc(cgActiveTopicsPreview) : ''))
-      +                    : 'Nonaktif — nyalakan master untuk memfilter')
+                           : 'Nonaktif — nyalakan master untuk memfilter')
       +       '</div>'
       +     '</div>'
       +     '<button class="ks-toggle' + (cgMasterOn ? ' on' : '') + '" id="ksCgMasterToggle" aria-label="Toggle Pelindung Konten" style="flex:none"><i></i></button>'
