@@ -46,7 +46,14 @@ import {
   DEFAULT_BLOCKED_SEARCH_QUERIES,
   DEFAULT_CHINA_YOUTUBE_SEARCHES,
   DEFAULT_CHINA_X_ACCOUNTS,
-  DEFAULT_CHINA_X_SEARCHES
+  DEFAULT_CHINA_X_SEARCHES,
+  // v3.21.0: Mode Fokus (Allowlist) — Pelindung Konten baru
+  DEFAULT_TOPIC_PROFILES,
+  generateProfileId,
+  seedDefaultTopicProfiles,
+  getActiveProfile,
+  matchesProfileSearchQuery,
+  isProfileFiltering
 } from './lib/contentguard.js';
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
@@ -2091,25 +2098,48 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true, enabled: newEnabled }); return;
   }
 
-  // v3.7.2 (Issue 6): Toggle Mode Anak — 1 klik aktif/nonaktifkan YouTube Kids Only + Block Shorts.
-  // v3.10.0 (Issue 2): Mode Anak — bukan redirect ke youtubekids, tapi tetap di youtube.com
-  // dengan filter konten ramah anak via content script. Saat aktif:
-  //   - contentGuardKidModeFilter: ON  → content script hide non-kid content di youtube.com
-  //   - contentGuardBlockShorts: ON    → Shorts tetap di-hide (umumnya tidak ramah anak)
-  //   - contentGuardYoutubeKidsOnly: OFF (legacy, tidak dipakai default — user bisa aktifkan manual)
+  // v3.21.0: TOGGLE_KID_MODE — OBSOLETE. Sekarang hanya thin-shim: aktifkan profil
+  // Anak (strictWatch=true) sebagai profil aktif. Popup lama yang masih panggil pesan ini
+  // tetap berfungsi ( Profil Anak ON, profil lain OFF ). Mode Fokus (radio) menggantikan
+  // toggle ini di UI baru — lihat popup renderKontrolSitusPage & settings.js.
   if (msg.type === 'TOGGLE_KID_MODE') {
     const s = await getSettings();
     const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardKidModeFilter === true);
-    await saveSettings({
+    const topicProfiles = s.contentGuardTopicProfiles || seedDefaultTopicProfiles(null);
+    // Cari profil dengan strictWatch=true (Profil Anak bawaan) — fallback ke profil kedua.
+    const kidProfile = topicProfiles.profiles.find(p => p.strictWatch === true)
+                   || topicProfiles.profiles[1]
+                   || topicProfiles.profiles[0]
+                   || null;
+    const patch = {
+      // Pertahankan kunci lama (migrasi) — value-nya now meaningless untuk filter.
       contentGuardKidModeFilter: newOn,
       contentGuardBlockShorts: newOn,
-      contentGuardKidModeArmUntil: 0
-    });
-    console.log('[RecallFox] Kid Mode (filter) toggled:', newOn);
-    // Notify all youtube tabs to re-apply filter
+      contentGuardKidModeArmUntil: 0,
+      contentGuardEnabled: newOn ? true : (s.contentGuardEnabled !== false)
+    };
+    if (newOn && kidProfile) {
+      patch.contentGuardTopicProfiles = {
+        profiles: topicProfiles.profiles,
+        activeProfileId: kidProfile.id
+      };
+    } else if (!newOn) {
+      // OFF → set profil aktif ke null (semua profil OFF) jika profil aktif saat ini
+      // adalah profil anak; biarkan kalau user sedang memakai profil lain.
+      const currentActiveId = topicProfiles.activeProfileId;
+      if (currentActiveId && kidProfile && currentActiveId === kidProfile.id) {
+        patch.contentGuardTopicProfiles = {
+          profiles: topicProfiles.profiles,
+          activeProfileId: null
+        };
+      }
+    }
+    await saveSettings(patch);
+    console.log('[RecallFox] TOGGLE_KID_MODE (legacy shim) → activeProfileId:', newOn ? (kidProfile?.id || null) : 'unchanged');
+    // Broadcast ke semua tab YouTube/X supaya re-scan
     browser.tabs.query({}).then(tabs => {
       for (const t of tabs) {
-        if (t.url && /youtube\.com|youtu\.be/.test(t.url)) {
+        if (t.url && /youtube\.com|youtu\.be|x\.com|twitter\.com/.test(t.url)) {
           browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
         }
       }
@@ -3958,33 +3988,28 @@ async function initContentGuardDefaults() {
   if (!s.contentGuardChinaXSearches) {
     patch.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
   }
+  // v3.21.0: Mode Fokus (Allowlist) — seed 2 profil bawaan jika belum ada.
+  // Skema: { profiles: [{id, emoji, name, topics[], channels[], strictWatch}], activeProfileId }
+  // Lihat lib/contentguard.js DEFAULT_TOPIC_PROFILES & seedDefaultTopicProfiles.
+  if (!s.contentGuardTopicProfiles || !Array.isArray(s.contentGuardTopicProfiles.profiles)) {
+    patch.contentGuardTopicProfiles = seedDefaultTopicProfiles(s.contentGuardTopicProfiles || null);
+  }
   if (!Array.isArray(s.contentGuardUserBlocklist)) {
     patch.contentGuardUserBlocklist = [];
   }
-  // v0.8.28: Force-enable master switch & filter feeds — ini SETTING KRITIS
-  // yang kalau off, content script tidak akan scan apapun (status panel MATI).
-  // Karena user sering tidak sengaja turn off, kita force ON kalau belum pernah
-  // diset explicit (undefined). Kalau user explicit set false, hargai.
+  // v0.8.28: Master switch default ON. Mode Fokus sendiri dikendalikan oleh
+  // contentGuardTopicProfiles.activeProfileId (null = semua profil OFF = YouTube normal).
   if (s.contentGuardEnabled === undefined) {
     patch.contentGuardEnabled = true;
   }
-  if (s.contentGuardFilterFeeds === undefined) {
-    patch.contentGuardFilterFeeds = true;
-  }
-  if (s.contentGuardNuclearMode === undefined) {
-    patch.contentGuardNuclearMode = true;
-  }
+  // v3.21.0: Toggle FilterFeeds/ScanDescription/NuclearMode/BlockSearchQueries TIDAK lagi
+  // di-seed default — fitur-fitur tersebut sudah dibongkar. Kunci settings lama tetap
+  // dibaca untuk migrasi (lihat §5.6 instruksi), tapi tidak dipakai kode baru.
   if (s.contentGuardBlockYtChannels === undefined) {
     patch.contentGuardBlockYtChannels = true;
   }
   if (s.contentGuardBlockXAccounts === undefined) {
     patch.contentGuardBlockXAccounts = true;
-  }
-  if (s.contentGuardScanDescription === undefined) {
-    patch.contentGuardScanDescription = true;
-  }
-  if (s.contentGuardBlockSearchQueries === undefined) {
-    patch.contentGuardBlockSearchQueries = true;
   }
   if (Object.keys(patch).length > 0) {
     await saveSettings(patch);
@@ -4001,57 +4026,39 @@ async function initElementBlockerDefaults() {
   }
 }
 
-// Cek apakah URL harus di-redirect ke takeover/blocked
-// v0.8.35: Anti-loop guard KUAT — max 1 redirect per tab per 1 JAM (bukan 10 detik)
-const lastRedirectMap = new Map();  // tabId → timestamp
-const redirectCountMap = new Map(); // tabId → count (kalau > 3 → disable redirect permanen)
+// v3.21.0: checkContentGuard — Pelindung Konten (Mode Fokus Allowlist)
+// ====================================================================
+// Prilaku (lihat instruksi §4):
+//   - Master OFF (contentGuardEnabled === false) → tidak ada redirect apapun.
+//   - Block Shorts: navigasi ke /shorts/<id> → redirect ke home (tetap dipertahankan).
+//   - Search Lock: bila Mode Fokus AKTIF (master ON + activeProfileId valid + profil
+//     punya ≥1 topik), navigasi ke halaman search YouTube/X yang query-nya TIDAK
+//     mengandung topik profil → redirect ke contentguard/searchlock.html
+//     (guard max 1×/menit/tab).
+//   - Watch strict: profil aktif strictWatch=true → request redirect watch→home
+//     datang dari content script (lihat handler CG_WATCH_STRICT_REDIRECT),
+//     di-guard max 1×/5menit/tab di sini.
+// DIBONGKAR v3.21.0: redirect home→takeover, blokir search query Tiongkok,
+//   blokir domain berita Indonesia, redirect youtubekids.com (Mode Anak lama).
+// ====================================================================
+const lastRedirectMap = new Map();        // tabId → timestamp (guard umum, dipakai redirectWithNotify)
+const redirectCountMap = new Map();       // tabId → count (anti-loop permanen, lama)
+const lastSearchLockMap = new Map();      // tabId → timestamp (Search Lock: max 1×/menit/tab)
+const lastWatchStrictMap = new Map();     // tabId → timestamp (watch strict: max 1×/5menit/tab)
+const SEARCH_LOCK_COOLDOWN_MS = 60 * 1000;        // 1 menit
+const WATCH_STRICT_COOLDOWN_MS = 5 * 60 * 1000;   // 5 menit
+
 async function checkContentGuard(tabId, url, tab) {
   if (!url || !/^https?:\/\//.test(url)) return;
-  // Jangan proses URL extension sendiri
+  // Jangan proses URL extension sendiri (takeover/blocked/searchlock).
+  // Loop-safe: Search Lock redirect target = searchlock.html (extension URL) → di-skip di sini.
   if (url.startsWith(browser.runtime.getURL(''))) return;
 
   const s = await getSettings();
   if (s.contentGuardEnabled === false) return;
 
-  // ===== v3.7.2 (Issue 6): Mode Anak — YouTube Kids Only =====
-  // DIPASANG SEBELUM anti-loop guard karena loop-safe:
-  // target redirect (youtubekids.com) dicek via isAlreadyKids, tidak akan redirect ulang.
-  if (s.contentGuardYoutubeKidsOnly === true) {
-    try {
-      const u = new URL(url);
-      const host = u.hostname.toLowerCase();
-      const isYoutubeMain = host === 'youtube.com' ||
-                            host === 'www.youtube.com' ||
-                            host === 'm.youtube.com' ||
-                            host.endsWith('.youtube.com') ||
-                            host === 'youtube-nocookie.com' ||
-                            host.endsWith('.youtube-nocookie.com');
-      const isAlreadyKids = host === 'youtubekids.com' || host.endsWith('.youtubekids.com');
-      if (isYoutubeMain && !isAlreadyKids) {
-        const kidsUrl = 'https://www.youtubekids.com';
-        console.log('[RecallFox/CG] Kid Mode: redirect youtube.com → youtubekids.com');
-        // Tidak pakai redirectWithNotify anti-loop counter — pakai direct update + optional notif
-        try { await browser.tabs.update(tabId, { url: kidsUrl }); }
-        catch (e) { console.warn('[RecallFox/CG] Kid Mode tab update failed:', e.message); return; }
-        if (s.contentGuardNotifyOnBlock !== false) {
-          try {
-            await browser.notifications.create({
-              type: 'basic',
-              title: '👶 Mode Anak Aktif',
-              message: 'Navigasi YouTube dialihkan ke YouTube Kids.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
-              priority: 1
-            });
-          } catch (e) {}
-        }
-        return;
-      }
-    } catch (e) { /* URL parse error — skip */ }
-  }
-
-  // ===== v3.7.2 (Issue 6): Block YouTube Shorts navigation =====
-  // Loop-safe: target redirect adalah youtube.com/ (home), dan isYouTubeHome() di Case 1
-  // hanya aktif saat contentGuardForceRedirect !== false (default false → tidak akan re-redirect).
+  // ===== Block YouTube Shorts navigation (dipertahankan dari versi lama) =====
+  // Loop-safe: target = youtube.com/ (home), home tidak di-redirect lagi.
   if (s.contentGuardBlockShorts === true) {
     try {
       const u = new URL(url);
@@ -4082,88 +4089,74 @@ async function checkContentGuard(tabId, url, tab) {
     } catch (e) { /* URL parse error — skip */ }
   }
 
-  // v0.8.35: ANTI-LOOP KUAT
-  // - Max 1 redirect per tab per 1 JAM (3600000 ms)
-  // - Kalau sudah redirect 3x dalam 1 jam → disable redirect permanen untuk tab itu
-  const now = Date.now();
-  const lastRedirect = lastRedirectMap.get(tabId) || 0;
-  const redirectCount = redirectCountMap.get(tabId) || 0;
+  // ===== Mode Fokus (Allowlist) — cek profil aktif =====
+  const topicProfiles = s.contentGuardTopicProfiles;
+  const activeProfile = getActiveProfile(topicProfiles);
+  // Mode Fokus AKTIF hanya jika: master ON + ada activeProfileId + profil valid + profil punya topik/channel.
+  // Profil kosong (tidak punya topik maupun channel) → tidak filter + Search Lock nonaktif (§4.2).
+  const focusModeActive = !!(activeProfile && isProfileFiltering(activeProfile));
 
-  // Kalau sudah redirect 3x+ → tab ini bermasalah, disable redirect permanen
-  if (redirectCount >= 3) {
-    return;
-  }
-  // Kalau redirect < 1 jam yang lalu → skip
-  if (now - lastRedirect < 3600000) {
-    return;
-  }
+  // ===== Search Lock (§4.6) — berlaku untuk SEMUA profil dengan ≥1 topik =====
+  // Hanya jalan saat Mode Fokus AKTIF. Query search yang TIDAK mengandung topik profil
+  // → redirect ke searchlock.html (guard max 1×/menit/tab, loop-safe via extension URL skip).
+  if (focusModeActive) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      const isYoutubeHost = host === 'youtube.com' || host === 'www.youtube.com' ||
+                            host === 'm.youtube.com' || host.endsWith('.youtube.com') ||
+                            host.endsWith('.youtube-nocookie.com');
+      const isXHost = host === 'x.com' || host === 'www.x.com' ||
+                      host === 'twitter.com' || host === 'www.twitter.com' ||
+                      host.endsWith('.x.com') || host.endsWith('.twitter.com');
 
-  // Cek bypass (user sudah klik "Lewati" dalam 60 detik terakhir)
-  if (await isBypassed(url)) return;
-
-  // ===== Case 1: YouTube / X home → redirect ke takeover =====
-  if (s.contentGuardForceRedirect !== false) {
-    if (isYouTubeHome(url)) {
-      const takeoverUrl = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=youtube&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] YouTube home → takeover');
-      await redirectWithNotify(tabId, takeoverUrl, s,
-        'YouTube → Konten Positif Tiongkok',
-        'Feed YouTube diganti dengan kurasi konten positif Tiongkok.');
-      return;
-    }
-    if (isXHome(url)) {
-      const takeoverUrl = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=x&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] X home → takeover');
-      await redirectWithNotify(tabId, takeoverUrl, s,
-        'X (Twitter) → Konten Positif Tiongkok',
-        'Timeline X diganti dengan kurasi konten positif Tiongkok.');
-      return;
-    }
-  }
-
-  // ===== v0.8.24 Case 1.5: Search query politik → redirect ke search Tiongkok =====
-  if (s.contentGuardBlockSearchQueries !== false) {
-    const searchInfo = detectSearchQuery(url);
-    if (searchInfo && searchInfo.isSearch) {
-      const blockedQueries = s.contentGuardBlockedSearchQueries || DEFAULT_BLOCKED_SEARCH_QUERIES;
-      const matched = matchesBlockedSearchQuery(searchInfo.query, blockedQueries);
-      if (matched) {
-        console.log('[RecallFox/CG] Search query blocked:', searchInfo.query, '→ matched:', matched);
-        // Redirect ke search positif Tiongkok
-        const newSearch = searchInfo.platform === 'youtube'
-          ? 'kehidupan di tiongkok vlog'
-          : 'china technology';
-        const newUrl = searchInfo.platform === 'youtube'
-          ? `https://www.youtube.com/results?search_query=${encodeURIComponent(newSearch)}`
-          : `https://x.com/search?q=${encodeURIComponent(newSearch)}&src=typed_query&f=top`;
-        await redirectWithNotify(tabId, newUrl, s,
-          'Pencarian Diblokir',
-          `Pencarian "${searchInfo.query.slice(0, 40)}" diarahkan ke konten positif Tiongkok.`);
-        return;
+      let searchQuery = '';
+      let platform = '';
+      if (isYoutubeHost && u.pathname === '/results') {
+        searchQuery = u.searchParams.get('search_query') || '';
+        platform = 'youtube';
+      } else if (isXHost && u.pathname === '/search') {
+        searchQuery = u.searchParams.get('q') || '';
+        platform = 'x';
       }
-    }
+
+      if (searchQuery && platform) {
+        const matches = matchesProfileSearchQuery(searchQuery, activeProfile);
+        if (!matches) {
+          // Guard anti-loop: max 1 Search Lock redirect per menit per tab.
+          const now = Date.now();
+          const last = lastSearchLockMap.get(tabId) || 0;
+          if (now - last < SEARCH_LOCK_COOLDOWN_MS) {
+            console.log('[RecallFox/CG] Search Lock cooldown — skip (tab', tabId, ')');
+            return;
+          }
+          lastSearchLockMap.set(tabId, now);
+          const lockUrl = browser.runtime.getURL('contentguard/searchlock.html')
+            + '?platform=' + encodeURIComponent(platform)
+            + '&profileId=' + encodeURIComponent(activeProfile.id);
+          console.log('[RecallFox/CG] Search Lock redirect:', platform, 'query=', searchQuery.slice(0, 60));
+          try { await browser.tabs.update(tabId, { url: lockUrl }); }
+          catch (e) { console.warn('[RecallFox/CG] Search Lock tab update failed:', e.message); return; }
+          if (s.contentGuardNotifyOnBlock !== false) {
+            try {
+              await browser.notifications.create({
+                type: 'basic',
+                title: '🔒 Pencarian Dikunci',
+                message: 'Pencarian di luar topik aktif diblokir. Pilih topik dari halaman Kunci Pencarian.',
+                iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                priority: 1
+              });
+            } catch (e) {}
+          }
+          return;
+        }
+      }
+    } catch (e) { /* URL parse error — skip */ }
   }
 
-  // ===== Case 2: Domain berita Indonesia → redirect ke blocked =====
-  if (s.contentGuardBlockIdNews !== false) {
-    const matchedDomain = matchesIdNewsDomain(url, s.contentGuardIdNewsDomains);
-    if (matchedDomain) {
-      const blockedUrl = browser.runtime.getURL('contentguard/blocked.html')
-        + '?domain=' + encodeURIComponent(matchedDomain)
-        + '&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] ID news domain blocked:', matchedDomain);
-      await redirectWithNotify(tabId, blockedUrl, s,
-        'Berita Negatif Diblokir',
-        `Situs ${matchedDomain} diblokir. Arahkan ke konten positif Tiongkok?`);
-      return;
-    }
-  }
-
-  // v0.8.36: HAPUS Case 3 (watch intercept) — kirim CG_RESCAN_NOW setiap watch page
-  // bikin loop di content script (scan → modify DOM → MutationObserver → scan → ...)
-  // Content script sudah punya interval scan sendiri, tidak perlu paksa dari background.
+  // v0.8.36: Watch intercept TIDAK dilakukan di background — content script
+  // yang baca judul video dari DOM & kirim CG_WATCH_STRICT_REDIRECT bila perlu.
+  // Lihat handler di bawah.
 }
 
 // Helper: redirect tab + notifikasi (jika diaktifkan)
@@ -4228,6 +4221,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!s.contentGuardChinaXAccounts) s.contentGuardChinaXAccounts = DEFAULT_CHINA_X_ACCOUNTS;
       if (!s.contentGuardChinaXSearches) s.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
       if (!Array.isArray(s.contentGuardUserBlocklist)) s.contentGuardUserBlocklist = [];
+      // v3.21.0: Seed topic profiles kalau belum ada (Mode Fokus).
+      if (!s.contentGuardTopicProfiles || !Array.isArray(s.contentGuardTopicProfiles.profiles)) {
+        s.contentGuardTopicProfiles = seedDefaultTopicProfiles(s.contentGuardTopicProfiles || null);
+      }
       sendResponse({ settings: s });
     });
     return true;  // async
@@ -4257,6 +4254,156 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'CG_GET_BLOCKLIST') {
     getUserBlocklist().then(list => sendResponse({ ok: true, list })).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  // ===== v3.21.0: Mode Fokus (Allowlist) — profil & topik =====
+  // Skema: contentGuardTopicProfiles = { profiles: [...], activeProfileId: string|null }
+
+  // CG_GET_TOPIC_PROFILES — kembalikan skema lengkap (seed default bila belum ada).
+  if (msg.type === 'CG_GET_TOPIC_PROFILES') {
+    getSettings().then(s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      sendResponse({ ok: true, topicProfiles: tp });
+    }).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  // CG_SET_ACTIVE_PROFILE — set profil aktif (radio: null = semua OFF).
+  // Payload: { profileId: string|null }
+  // Broadcast CG_SETTINGS_UPDATED supaya content script re-scan.
+  if (msg.type === 'CG_SET_ACTIVE_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const newId = msg.profileId || null;
+      // Validasi: pastikan ID ada di daftar profil (atau null)
+      if (newId && !tp.profiles.some(p => p.id === newId)) {
+        sendResponse({ ok: false, error: 'Profil tidak ditemukan' });
+        return;
+      }
+      tp.activeProfileId = newId;
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        // Broadcast ke semua tab YouTube/X
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) {
+          browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        }
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_ADD_TOPIC_PROFILE — tambah profil baru (nama default "Profil Baru N").
+  // Payload: { profile: { name?, emoji?, topics?, channels?, strictWatch? } } (opsional)
+  if (msg.type === 'CG_ADD_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const n = tp.profiles.length + 1;
+      const newProfile = {
+        id: generateProfileId(),
+        emoji: (msg.profile && msg.profile.emoji) || '👤',
+        name: (msg.profile && msg.profile.name) || ('Profil Baru ' + n),
+        topics: Array.isArray(msg.profile?.topics) ? msg.profile.topics : [],
+        channels: Array.isArray(msg.profile?.channels) ? msg.profile.channels : [],
+        strictWatch: !!(msg.profile && msg.profile.strictWatch === true)
+      };
+      tp.profiles.push(newProfile);
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp, newProfileId: newProfile.id });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_SAVE_TOPIC_PROFILE — simpan perubahan profil (nama/emoji/topik/channel/strictWatch).
+  // Payload: { profileId: string, profile: { name, emoji, topics, channels, strictWatch } }
+  if (msg.type === 'CG_SAVE_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const idx = tp.profiles.findIndex(p => p.id === msg.profileId);
+      if (idx < 0) { sendResponse({ ok: false, error: 'Profil tidak ditemukan' }); return; }
+      const incoming = msg.profile || {};
+      tp.profiles[idx] = {
+        id: tp.profiles[idx].id,
+        emoji: typeof incoming.emoji === 'string' ? incoming.emoji : (tp.profiles[idx].emoji || '👤'),
+        name: typeof incoming.name === 'string' && incoming.name.trim() ? incoming.name.trim() : (tp.profiles[idx].name || 'Profil'),
+        topics: Array.isArray(incoming.topics) ? incoming.topics.map(t => String(t).trim()).filter(Boolean) : (tp.profiles[idx].topics || []),
+        channels: Array.isArray(incoming.channels) ? incoming.channels.map(c => String(c).trim()).filter(Boolean) : (tp.profiles[idx].channels || []),
+        strictWatch: !!incoming.strictWatch
+      };
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_DELETE_TOPIC_PROFILE — hapus profil. Aturan: minimal 1 profil tersisa;
+  // profil aktif tidak bisa dihapus tanpa pindah dulu.
+  // Payload: { profileId: string }
+  if (msg.type === 'CG_DELETE_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      if (tp.profiles.length <= 1) {
+        sendResponse({ ok: false, error: 'Minimal 1 profil harus tersisa' });
+        return;
+      }
+      if (tp.activeProfileId === msg.profileId) {
+        sendResponse({ ok: false, error: 'Profil sedang aktif — pindah ke profil lain dulu' });
+        return;
+      }
+      tp.profiles = tp.profiles.filter(p => p.id !== msg.profileId);
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_WATCH_STRICT_REDIRECT — dipanggil content script (lihat contentguard-cs.js)
+  // ketika watch page video TIDAK cocok profil aktif + strictWatch=true.
+  // Background menerapkan guard max 1×/5menit/tab, lalu redirect ke home.
+  // Loop-safe: home tidak di-redirect lagi (Case 1 sudah dihapus).
+  if (msg.type === 'CG_WATCH_STRICT_REDIRECT') {
+    const tabId = sender.tab && sender.tab.id;
+    if (typeof tabId !== 'number') { sendResponse({ ok: false, redirected: false }); return false; }
+    const now = Date.now();
+    const last = lastWatchStrictMap.get(tabId) || 0;
+    if (now - last < WATCH_STRICT_COOLDOWN_MS) {
+      sendResponse({ ok: true, redirected: false, reason: 'cooldown' });
+      return false;
+    }
+    lastWatchStrictMap.set(tabId, now);
+    const homeUrl = 'https://www.youtube.com/';
+    browser.tabs.update(tabId, { url: homeUrl }).then(() => {
+      sendResponse({ ok: true, redirected: true });
+    }).catch(e => {
+      sendResponse({ ok: false, redirected: false, error: e.message });
+    });
     return true;
   }
 
