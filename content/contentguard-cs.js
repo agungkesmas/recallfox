@@ -310,6 +310,10 @@
   // ===== YouTube selectors (sudah didedup, performa) =====
   // v3.21.0: buang duplikat (ytd-rich-item-renderer muncul 2x, ytd-video-renderer 2x, dll.)
   // Tetap multi-fallback karena YouTube sering ganti DOM.
+  // v3.21.3 Fix 4: HAPUS 'ytd-rich-shelf-renderer' dari sini — shelf harus
+  // mengikuti nasib anak-anaknya (hideEmptyShelves), bukan di-match sebagai
+  // kartu. Sebelumnya: kalau video pertama di shelf kebetulan cocok topik,
+  // seluruh shelf (termasuk video non-topik) tampil → kebocoran.
   const YT_VIDEO_SELECTORS = [
     'ytd-rich-item-renderer',                              // feed home
     'ytd-video-renderer',                                  // search results
@@ -317,12 +321,17 @@
     'ytd-grid-video-renderer',                             // channel pages
     'ytd-reel-item-renderer',                              // shorts
     'ytd-playlist-panel-video-renderer',                   // playlist
-    'ytd-rich-shelf-renderer',                             // shelf (untuk hideEmptyShelves)
     'ytd-rich-section-renderer ytd-rich-item-renderer',    // section feed
     'ytd-video-preview-renderer',                          // new layout 2026
     'ytd-compact-station-renderer',                        // music station
     'ytd-grid-movie-renderer', 'ytd-movie-renderer'        // premium/movie
   ];
+
+  // v3.21.3 Fix 5: Safety net layout-agnostic — enumerasi dari JUDUL (elemen
+  // paling stabil antar layout), lalu naik ke container kartu. Daftar 12
+  // selector di atas jadi hanya optimalisasi, bukan satu-satunya jalur.
+  // Dipakai setelah selector utama, untuk catch kartu yang tidak ter-cover.
+  const YT_CARD_ANCESTORS = 'ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-reel-item-renderer, ytd-playlist-panel-video-renderer';
 
   function getYouTubeTitle(el) {
     const candidates = [
@@ -379,11 +388,13 @@
   // di atas Mode Fokus (bisa hide video yang cocok profil tapi di-block user).
   // Shorts (contentGuardBlockShorts=true) disembunyikan via hideAllShorts.
   function hideYouTubeByFocus() {
-    // v3.21.2 FIX 4: Jika feed kosong (0 video cocok) dan masih dalam masa jeda → skip hide.
-    // Ini mencegah flicker: YouTube render ulang → observer trigger → hide lagi → loop.
-    if (focusModeActive() && Date.now() < emptyFeedUntil) {
-      return;
-    }
+    // v3.21.3 Fix 1: HAPUS early-return jeda emptyFeedUntil.
+    // Jeda 15 detik (v3.21.2 Fix 4) MELUMPUHKAN filter — untuk profil niche
+    // seperti Fokus Anak, home feed hampir selalu 0 video cocok per scan →
+    // jeda 15 detik → semua kartu baru (scroll) lolos 15 detik tanpa hide →
+    // feed terlihat tanpa filter. "0 match" adalah kondisi NORMAL untuk profil
+    // topik sempit, bukan error. Ganti dengan batch hide bertahap (anti-flicker
+    // tanpa menonaktifkan filter).
 
     if (settings?.contentGuardBlockShorts === true) {
       hideAllShorts();
@@ -392,7 +403,14 @@
     const focus = focusModeActive();
     let changed = false;
     let allowedThisScan = 0;
-    const MAX_NODES = 500;  // batas node per scan (§8 — jangan scan tanpa batas)
+    // v3.21.3 Fix 3: Naikkan MAX_NODES 500 → 2000 (500 terlalu kecil untuk
+    // home + shelf Shorts — kartu di bawah batas 500 tetap tampil).
+    const MAX_NODES = 2000;
+    // v3.21.3 Fix 1: Batch hide bertahap — batasi hide per scan supaya tidak
+    // ada reflow besar sekaligus (akar flicker v3.21.2). Sisanya di-scan
+    // berikutnya (250ms–1.5s).
+    const MAX_HIDE_PER_SCAN = 40;
+    let hiddenThisScan = 0;
 
     // Deduplikasi node via Set
     const allNodes = new Set();
@@ -406,6 +424,31 @@
       }
       if (allNodes.size >= MAX_NODES) break;
     }
+
+    // v3.21.3 Fix 5: Safety net layout-agnostic — enumerasi dari JUDUL
+    // (elemen paling stabil antar layout), lalu naik ke container kartu.
+    // Catch kartu dari layout baru yang tidak ada di YT_VIDEO_SELECTORS.
+    try {
+      const titleEls = document.querySelectorAll('#video-title, #video-title-link');
+      for (const titleEl of titleEls) {
+        if (allNodes.size >= MAX_NODES) break;
+        const card = titleEl.closest(YT_CARD_ANCESTORS);
+        if (card) {
+          allNodes.add(card);
+          continue;
+        }
+        // Layout tak dikenal: naik max 8 level, ambil leluhur pertama yang
+        // terlihat seperti kartu (punya judul + link video).
+        let p = titleEl;
+        for (let i = 0; i < 8 && p.parentElement; i++) {
+          p = p.parentElement;
+          if (p.querySelector('a[href*="/watch"], a[href*="/shorts"], a[href*="/@"]')) {
+            allNodes.add(p);
+            break;
+          }
+        }
+      }
+    } catch (e) { /* defensive */ }
 
     for (const node of allNodes) {
       // Skip ad slots
@@ -439,12 +482,16 @@
 
       if (userBlk || hideByFocus) {
         if (node.dataset.rfCgHidden === '1') continue;  // sudah di-hide, skip counter
+        // v3.21.3 Fix 1: Batasi hide per scan (batch bertahap, anti-flicker).
+        // Sisanya di-scan berikutnya (250ms–1.5s) — tidak ada reflow besar.
+        if (hiddenThisScan >= MAX_HIDE_PER_SCAN) continue;
         node.style.setProperty('display', 'none', 'important');
         node.dataset.rfCgHidden = '1';
         node.dataset.rfCgReason = userBlk?.entry?.value || 'focus_mode';
         node.dataset.rfCgTitle = (title || '').slice(0, 100);
         node.dataset.rfCgChannel = (channel || '').slice(0, 60);
         hiddenCount++;
+        hiddenThisScan++;
         changed = true;
         if (settings.contentGuardDebugMode) {
           console.log('[RecallFox/CG] YT hidden:', { title: title.slice(0, 80), channel, reason: node.dataset.rfCgReason });
@@ -462,21 +509,27 @@
     panelStats.allowed = allowedThisScan;
     panelStats.lastScanAt = Date.now();
 
-    // v3.21.2 FIX 4: Anti-flicker feed kosong.
-    // Jika Mode Fokus aktif, ada node yang di-scan, tapi 0 lolos filter
-    // (semua di-hide atau di-block) → jeda hide 15 detik + tampilkan banner.
-    // Ini mencegah YouTube render ulang → observer trigger → hide lagi → flicker.
+    // v3.21.3 Fix 1: Banner "feed kosong" cukup ditampilkan SEKALI per
+    // aktivasi profil (throttle 60 detik), bukan setiap 0 match. emptyFeedUntil
+    // dihapus seluruhnya — hide tetap jalan terus (batch bertahap).
     if (focus && allNodes.size > 0 && allowedThisScan === 0) {
-      emptyFeedUntil = Date.now() + 15000;  // 15 detik jeda
-      showEmptyFeedBanner();
+      showEmptyFeedBannerThrottled();
       if (settings.contentGuardDebugMode) {
-        console.log('[RecallFox/CG] Feed kosong: 0 video cocok — jeda hide 15s');
+        console.log('[RecallFox/CG] Feed kosong: 0 video cocok — hide bertahap tetap jalan');
       }
     } else if (focus && allowedThisScan > 0) {
-      // Ada video cocok → reset jeda + hapus banner
-      if (emptyFeedUntil > 0) emptyFeedUntil = 0;
       removeEmptyFeedBanner();
     }
+  }
+
+  // v3.21.3 Fix 1: Banner "feed kosong" throttled — tampil sekali per 60 detik
+  // (bukan setiap scan). Banner hanya info; hide tetap jalan terus.
+  let emptyBannerShownAt = 0;
+  function showEmptyFeedBannerThrottled() {
+    const now = Date.now();
+    if (now - emptyBannerShownAt < 60000) return;  // throttle 60 detik
+    emptyBannerShownAt = now;
+    showEmptyFeedBanner();
   }
 
   // v3.21.2 FIX 4: Banner "Tidak ada video yang cocok" — non-blocking, closeable.
@@ -868,10 +921,38 @@
   // Throttle interval ≥ 1500 ms (sebelumnya 500 ms).
   // Debounce MutationObserver ≥ 250 ms (sebelumnya 150 ms).
   // Skip seluruh scan saat document.hidden === true.
+  // v3.21.3 Fix 2: MutationObserver scan inkremental dari addedNodes —
+  // kalau ada kartu video baru (selector judul), langsung trigger scan
+  // supaya tidak menunggu interval 1.5s.
   let observer = null;
   function startObserver() {
     if (observer) return;
-    observer = new MutationObserver(() => { scheduleScan(); });
+    observer = new MutationObserver((muts) => {
+      // v3.21.3 Fix 2: Cek addedNodes — kalau ada kartu video baru, trigger scan
+      let hasNewCard = false;
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          // Cek apakah node baru (atau anaknya) mengandung judul video
+          if (n.querySelector && n.querySelector?.('#video-title, #video-title-link')) {
+            hasNewCard = true;
+            break;
+          }
+          // Atau node baru sendiri adalah kartu video
+          if (n.matches && n.matches?.(YT_CARD_ANCESTORS)) {
+            hasNewCard = true;
+            break;
+          }
+        }
+        if (hasNewCard) break;
+      }
+      if (hasNewCard) {
+        scheduleScan();
+      } else {
+        // Fallback: schedule scan biasa (debounce 250ms)
+        scheduleScan();
+      }
+    });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
@@ -913,16 +994,16 @@
     hoveredElement = card || null;
   }, true);
 
-  // v3.21.2 FIX 4: Reset anti-flicker jeda saat user scroll dalam (mungkin video baru muncul).
-  // Jeda 15 detik hanya untuk mencegah flicker; kalau user aktif scroll, biar filter jalan lagi.
+  // v3.21.3 Fix 1: Scroll handler disederhanakan — emptyFeedUntil sudah dihapus
+  // (hide tetap jalan terus via batch bertahap). Scroll tetap trigger scan
+  // supaya kartu baru dari infinite scroll cepat ter-filter.
   let lastScrollY = 0;
   window.addEventListener('scroll', () => {
     const delta = Math.abs(window.scrollY - lastScrollY);
-    if (delta > 500 && emptyFeedUntil > 0) {  // scroll signifikan (>500px) + sedang jeda
-      emptyFeedUntil = 0;
-      removeEmptyFeedBanner();
+    if (delta > 500) {  // scroll signifikan (>500px) → trigger scan
+      scheduleScan();
       if (settings?.contentGuardDebugMode) {
-        console.log('[RecallFox/CG] Scroll detected — reset empty feed jeda');
+        console.log('[RecallFox/CG] Scroll detected — schedule scan');
       }
     }
     lastScrollY = window.scrollY;
