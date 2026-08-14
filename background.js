@@ -4041,12 +4041,63 @@ async function initElementBlockerDefaults() {
 // DIBONGKAR v3.21.0: redirect home→takeover, blokir search query Tiongkok,
 //   blokir domain berita Indonesia, redirect youtubekids.com (Mode Anak lama).
 // ====================================================================
-const lastRedirectMap = new Map();        // tabId → timestamp (guard umum, dipakai redirectWithNotify)
-const redirectCountMap = new Map();       // tabId → count (anti-loop permanen, lama)
-const lastSearchLockMap = new Map();      // tabId → timestamp (Search Lock: max 1×/menit/tab)
-const lastWatchStrictMap = new Map();     // tabId → timestamp (watch strict: max 1×/5menit/tab)
+// v3.21.2 FIX: Cooldown anti-loop pindah ke browser.storage.session.
+// Sebelumnya: in-memory Map (lastSearchLockMap, lastWatchStrictMap) yang HILANG
+// saat Firefox MV3 event page di-suspend/restart → cooldown reset → redirect
+// loop terlihat seperti "reload terus".
+// Sekarang: timestamp disimpan di storage.session (volatile per-session, cocok
+// untuk cooldown). Fallback ke storage.local kalau storage.session tidak ada.
 const SEARCH_LOCK_COOLDOWN_MS = 60 * 1000;        // 1 menit
 const WATCH_STRICT_COOLDOWN_MS = 5 * 60 * 1000;   // 5 menit
+
+// Cache in-memory per event page lifetime (supaya tidak baca storage tiap pesan)
+const _cooldownCache = new Map();  // key → timestamp
+
+async function _getCooldown(key) {
+  // Cek cache dulu
+  if (_cooldownCache.has(key)) return _cooldownCache.get(key);
+  // Baca dari storage.session (fallback storage.local)
+  const storageArea = browser.storage.session || browser.storage.local;
+  try {
+    const data = await storageArea.get(key);
+    const ts = data[key] || 0;
+    _cooldownCache.set(key, ts);
+    return ts;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function _setCooldown(key, timestamp) {
+  _cooldownCache.set(key, timestamp);
+  const storageArea = browser.storage.session || browser.storage.local;
+  try {
+    await storageArea.set({ [key]: timestamp });
+  } catch (e) {}
+}
+
+// v3.21.2 FIX: Helper untuk normalisasi URL — bandingkan tanpa trailing slash.
+// Dipakai Fix 2 (guard URL sama = jangan redirect).
+function _normalizeYoutubeHomeUrl(url) {
+  if (!url) return '';
+  // Hilangkan trailing slash, normalize www
+  return url.replace(/\/+$/, '').replace('https://www.youtube.com', 'https://youtube.com').replace('https://youtube.com', 'https://www.youtube.com');
+}
+
+// v3.21.2 FIX: Cek apakah tab sudah berada di URL target.
+// Kalau sudah sama → jangan tabs.update (di Firefox, update URL sama = reload).
+async function _isAlreadyAtUrl(tabId, targetUrl) {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (!tab || !tab.url) return false;
+    // Normalisasi kedua URL: hilangkan trailing slash
+    const normCurrent = tab.url.replace(/\/+$/, '');
+    const normTarget = targetUrl.replace(/\/+$/, '');
+    return normCurrent === normTarget;
+  } catch (e) {
+    return false;
+  }
+}
 
 async function checkContentGuard(tabId, url, tab) {
   if (!url || !/^https?:\/\//.test(url)) return;
@@ -4070,6 +4121,11 @@ async function checkContentGuard(tabId, url, tab) {
                         host.endsWith('.youtube-nocookie.com');
       if (isYoutube && u.pathname.startsWith('/shorts/')) {
         const homeUrl = 'https://www.youtube.com/';
+        // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di home.
+        if (await _isAlreadyAtUrl(tabId, homeUrl)) {
+          console.log('[RecallFox/CG] BlockShorts: tab already at home — skip redirect');
+          return;
+        }
         console.log('[RecallFox/CG] BlockShorts: /shorts/ → home');
         try { await browser.tabs.update(tabId, { url: homeUrl }); }
         catch (e) { console.warn('[RecallFox/CG] BlockShorts tab update failed:', e.message); return; }
@@ -4123,17 +4179,24 @@ async function checkContentGuard(tabId, url, tab) {
       if (searchQuery && platform) {
         const matches = matchesProfileSearchQuery(searchQuery, activeProfile);
         if (!matches) {
-          // Guard anti-loop: max 1 Search Lock redirect per menit per tab.
+          // v3.21.2 FIX 1: Cooldown via storage.session (bukan in-memory Map).
+          // Event page Firefox bisa di-suspend → Map hilang → cooldown reset → loop.
           const now = Date.now();
-          const last = lastSearchLockMap.get(tabId) || 0;
+          const cooldownKey = 'cg_lock_search_' + tabId;
+          const last = await _getCooldown(cooldownKey);
           if (now - last < SEARCH_LOCK_COOLDOWN_MS) {
             console.log('[RecallFox/CG] Search Lock cooldown — skip (tab', tabId, ')');
             return;
           }
-          lastSearchLockMap.set(tabId, now);
+          // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di lockUrl.
           const lockUrl = browser.runtime.getURL('contentguard/searchlock.html')
             + '?platform=' + encodeURIComponent(platform)
             + '&profileId=' + encodeURIComponent(activeProfile.id);
+          if (await _isAlreadyAtUrl(tabId, lockUrl)) {
+            console.log('[RecallFox/CG] Search Lock: tab already at lockUrl — skip redirect');
+            return;
+          }
+          await _setCooldown(cooldownKey, now);
           console.log('[RecallFox/CG] Search Lock redirect:', platform, 'query=', searchQuery.slice(0, 60));
           try { await browser.tabs.update(tabId, { url: lockUrl }); }
           catch (e) { console.warn('[RecallFox/CG] Search Lock tab update failed:', e.message); return; }
@@ -4391,20 +4454,32 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'CG_WATCH_STRICT_REDIRECT') {
     const tabId = sender.tab && sender.tab.id;
     if (typeof tabId !== 'number') { sendResponse({ ok: false, redirected: false }); return false; }
-    const now = Date.now();
-    const last = lastWatchStrictMap.get(tabId) || 0;
-    if (now - last < WATCH_STRICT_COOLDOWN_MS) {
-      sendResponse({ ok: true, redirected: false, reason: 'cooldown' });
-      return false;
-    }
-    lastWatchStrictMap.set(tabId, now);
-    const homeUrl = 'https://www.youtube.com/';
-    browser.tabs.update(tabId, { url: homeUrl }).then(() => {
-      sendResponse({ ok: true, redirected: true });
-    }).catch(e => {
-      sendResponse({ ok: false, redirected: false, error: e.message });
-    });
-    return true;
+    // v3.21.2 FIX 1+2: Async IIFE karena listener synchronous, tapi butuh await untuk storage.session
+    (async () => {
+      const now = Date.now();
+      const cooldownKey = 'cg_lock_watch_' + tabId;
+      const last = await _getCooldown(cooldownKey);
+      if (now - last < WATCH_STRICT_COOLDOWN_MS) {
+        sendResponse({ ok: true, redirected: false, reason: 'cooldown' });
+        return;
+      }
+      const homeUrl = 'https://www.youtube.com/';
+      // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di home.
+      if (await _isAlreadyAtUrl(tabId, homeUrl)) {
+        console.log('[RecallFox/CG] Watch Strict: tab already at home — skip redirect (prevent loop)');
+        await _setCooldown(cooldownKey, now);
+        sendResponse({ ok: true, redirected: false, reason: 'already_at_home' });
+        return;
+      }
+      await _setCooldown(cooldownKey, now);
+      try {
+        await browser.tabs.update(tabId, { url: homeUrl });
+        sendResponse({ ok: true, redirected: true });
+      } catch (e) {
+        sendResponse({ ok: false, redirected: false, error: e.message });
+      }
+    })();
+    return true;  // keep channel open for async sendResponse
   }
 
   // v0.8.29: CG_SAVE_SETTING — sudah dipindahkan ke listener 1 (v0.9.7)

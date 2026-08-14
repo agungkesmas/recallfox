@@ -55,6 +55,12 @@
   let watchAllowUntil = 0;         // timestamp: "Tetap tonton" aktif sampai sini
   let lastWatchStrictRequest = 0;  // anti-spam: jangan spam background untuk watch strict
   let lastWatchTitle = '';         // judul watch terakhir yang di-evaluate (anti re-evaluate)
+  // v3.21.2 FIX 4: Anti-flicker feed kosong. Saat 0 video cocok dengan profil aktif,
+  // YouTube me-render ulang feed terus (infinite scroll / reflow) → observer trigger
+  // hide lagi → halaman tampak "memuat ulang terus". Solusi: jeda hide 15 detik +
+  // tampilkan banner sekali.
+  let emptyFeedUntil = 0;
+  let emptyBannerEl = null;        // banner element (dibuat saat dibutuhkan, dihapus saat ada video cocok)
 
   // ===== Stats internal (dipakai CG_PING untuk debug; tanpa DOM UI) =====
   const panelStats = { blocked: 0, allowed: 0, lastScanAt: null };
@@ -373,6 +379,12 @@
   // di atas Mode Fokus (bisa hide video yang cocok profil tapi di-block user).
   // Shorts (contentGuardBlockShorts=true) disembunyikan via hideAllShorts.
   function hideYouTubeByFocus() {
+    // v3.21.2 FIX 4: Jika feed kosong (0 video cocok) dan masih dalam masa jeda → skip hide.
+    // Ini mencegah flicker: YouTube render ulang → observer trigger → hide lagi → loop.
+    if (focusModeActive() && Date.now() < emptyFeedUntil) {
+      return;
+    }
+
     if (settings?.contentGuardBlockShorts === true) {
       hideAllShorts();
     }
@@ -449,6 +461,71 @@
     panelStats.blocked = hiddenCount;
     panelStats.allowed = allowedThisScan;
     panelStats.lastScanAt = Date.now();
+
+    // v3.21.2 FIX 4: Anti-flicker feed kosong.
+    // Jika Mode Fokus aktif, ada node yang di-scan, tapi 0 lolos filter
+    // (semua di-hide atau di-block) → jeda hide 15 detik + tampilkan banner.
+    // Ini mencegah YouTube render ulang → observer trigger → hide lagi → flicker.
+    if (focus && allNodes.size > 0 && allowedThisScan === 0) {
+      emptyFeedUntil = Date.now() + 15000;  // 15 detik jeda
+      showEmptyFeedBanner();
+      if (settings.contentGuardDebugMode) {
+        console.log('[RecallFox/CG] Feed kosong: 0 video cocok — jeda hide 15s');
+      }
+    } else if (focus && allowedThisScan > 0) {
+      // Ada video cocok → reset jeda + hapus banner
+      if (emptyFeedUntil > 0) emptyFeedUntil = 0;
+      removeEmptyFeedBanner();
+    }
+  }
+
+  // v3.21.2 FIX 4: Banner "Tidak ada video yang cocok" — non-blocking, closeable.
+  function showEmptyFeedBanner() {
+    if (emptyBannerEl && document.documentElement.contains(emptyBannerEl)) return;  // sudah tampil
+    try {
+      const banner = document.createElement('div');
+      banner.id = 'rf-cg-empty-banner';
+      banner.style.cssText = [
+        'position:fixed',
+        'bottom:20px',
+        'left:50%',
+        'transform:translateX(-50%)',
+        'z-index:2147483645',
+        'max-width:480px',
+        'width:calc(100% - 32px)',
+        'background:linear-gradient(135deg,#1e293b,#0f172a)',
+        'color:#f1f5f9',
+        'padding:12px 16px',
+        'border-radius:10px',
+        'box-shadow:0 4px 20px rgba(0,0,0,.3)',
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+        'font-size:13px',
+        'line-height:1.5',
+        'display:flex',
+        'align-items:center',
+        'gap:10px',
+        'pointer-events:auto'
+      ].join(';');
+      banner.innerHTML = `
+        <span style="flex:1">⚠️ Tidak ada video yang cocok dengan topik aktif — tambah topik/channel lain di Pengaturan atau ganti profil.</span>
+        <button id="rf-cg-empty-close" style="background:transparent;border:0;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px;flex-shrink:0" title="Tutup">✕</button>
+      `;
+      document.documentElement.appendChild(banner);
+      emptyBannerEl = banner;
+      banner.querySelector('#rf-cg-empty-close').addEventListener('click', () => {
+        removeEmptyFeedBanner();
+        // User tutup banner → tetap jeda hide sampai emptyFeedUntil expired
+      });
+    } catch (e) {
+      console.warn('[RecallFox/CG] showEmptyFeedBanner error:', e);
+    }
+  }
+
+  function removeEmptyFeedBanner() {
+    if (emptyBannerEl) {
+      try { emptyBannerEl.remove(); } catch (e) {}
+      emptyBannerEl = null;
+    }
   }
 
   // ===== hideEmptyShelves (dipertahankan dari versi lama) =====
@@ -657,19 +734,32 @@
       return;
     }
 
-    // Ambil judul video dari document.title (lebih reliable daripada ytd-watch-metadata).
+    // v3.21.2 FIX 3: Anti-premature watch detection.
+    // Sebelumnya: document.title yang bisa masih 'YouTube' atau placeholder
+    // → video yang sebenarnya cocok dinilai "tidak cocok" → redirect → loop.
+    // Sekarang: WAJIB ada elemen ytd-watch-metadata h1 dengan teks non-kosong
+    // DAN document.title bukan placeholder sebelum menilai.
     let title = '';
+    // Step 1: Cek elemen ytd-watch-metadata h1 dulu (lebih reliable)
     try {
-      title = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
-    } catch (e) { title = ''; }
+      const h1 = document.querySelector('ytd-watch-metadata h1 yt-formatted-string, h1.ytd-watch-metadata');
+      if (h1) {
+        const h1Text = (h1.textContent || '').trim();
+        if (h1Text) title = h1Text;
+      }
+    } catch (e) {}
+    // Step 2: Fallback ke document.title (strip ' - YouTube' suffix)
     if (!title) {
-      // Coba fallback via ytd-watch-metadata h1
       try {
-        const h1 = document.querySelector('ytd-watch-metadata h1 yt-formatted-string, h1.ytd-watch-metadata');
-        if (h1) title = (h1.textContent || '').trim();
-      } catch (e) {}
+        const rawTitle = document.title || '';
+        const stripped = rawTitle.replace(/\s*-\s*YouTube\s*$/i, '').trim();
+        if (stripped) title = stripped;
+      } catch (e) { title = ''; }
     }
-    if (!title) return;  // judul belum ada — tunggu scan berikutnya
+    // v3.21.2 FIX 3: Jika judul belum siap (placeholder/kosong) → return, jangan redirect
+    if (!title || title === 'YouTube' || title === '- YouTube') {
+      return;  // judul belum ada — tunggu scan berikutnya
+    }
 
     // Cocok profil?
     const matches = matchesActiveProfileLocal(title, '', profileCache);
@@ -823,6 +913,21 @@
     hoveredElement = card || null;
   }, true);
 
+  // v3.21.2 FIX 4: Reset anti-flicker jeda saat user scroll dalam (mungkin video baru muncul).
+  // Jeda 15 detik hanya untuk mencegah flicker; kalau user aktif scroll, biar filter jalan lagi.
+  let lastScrollY = 0;
+  window.addEventListener('scroll', () => {
+    const delta = Math.abs(window.scrollY - lastScrollY);
+    if (delta > 500 && emptyFeedUntil > 0) {  // scroll signifikan (>500px) + sedang jeda
+      emptyFeedUntil = 0;
+      removeEmptyFeedBanner();
+      if (settings?.contentGuardDebugMode) {
+        console.log('[RecallFox/CG] Scroll detected — reset empty feed jeda');
+      }
+    }
+    lastScrollY = window.scrollY;
+  }, { passive: true });
+
   // ===== Deteksi platform =====
   let isYouTube = false;
   let isX = false;
@@ -929,6 +1034,9 @@
 
     if (msg?.type === 'CG_SETTINGS_UPDATED') {
       loadSettings().then(() => {
+        // v3.21.2 FIX 4: Reset anti-flicker jeda saat settings berubah
+        emptyFeedUntil = 0;
+        removeEmptyFeedBanner();
         if (!shouldRun()) {
           stopObserver();
           resetHiddenFlags();
@@ -944,6 +1052,9 @@
     }
 
     if (msg?.type === 'CG_RESCAN_NOW') {
+      // v3.21.2 FIX 4: Reset anti-flicker jeda saat user trigger rescan
+      emptyFeedUntil = 0;
+      removeEmptyFeedBanner();
       resetHiddenFlags();
       if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
       if (isX) hideXNegative();
