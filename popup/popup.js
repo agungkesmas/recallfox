@@ -8771,10 +8771,11 @@ async function renderGDrivePage(B) {
 
     // Supabase Login Form / User Info
     + '<div class="card"><h3>🔐 Login Supabase</h3>'
-    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d">'
+    + '<details style="margin:0 0 10px"><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#14532d;padding:6px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px">💡 Petunjuk & Cara Pakai Supabase Sync (klik untuk buka)</summary>'
+    + '<div class="hintbox" style="margin:8px 0 0;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;padding:8px 10px;border-radius:6px">'
     + '<b>Kenapa Supabase?</b> Apps Script ribet (URL + Token + deploy). Supabase cukup <b>login email/password</b> sekali → semua data (vault, catatan, screenshot, settings) <b>otomatis sync</b> ke cloud. Screenshot full image disimpan di Supabase Storage (tidak ke-limit Apps Script 10MB).<br>'
     + '<b>Setup:</b> 1) Login email/password di bawah (atau klik "Buat akun baru" untuk signup). 2) Klik "Push ke Cloud" untuk upload state lokal. 3) Di PC lain: login sama → klik "Pull dari Cloud".'
-    + '</div>';
+    + '</div></details>';
 
   if (supabaseStatus.loggedIn) {
     // User sudah login — tampilkan info + tombol sync
@@ -8828,7 +8829,8 @@ async function renderGDrivePage(B) {
     // Fix: Pakai istilah yang familiar — "Hubungkan" (bukan "Konfigurasi"), "Kunci" (bukan "Lock"),
     // "Sandi" (bukan "Token"). Tambah penjelasan singkat di atas: Bukan login, ini jembatan.
     + '<div class="card"><h3>🔗 Hubungkan ke Google Drive</h3>'
-    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e">'
+    + '<details style="margin:0 0 10px"><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#0c4a6e;padding:6px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">💡 Panduan & Cara Hubungkan Google Drive (klik untuk buka)</summary>'
+    + '<div class="hintbox" style="margin:8px 0 0;font-size:11px;line-height:1.55;background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e;padding:8px 10px;border-radius:6px">'
     +   '<b>💡 Ini BUKAN login akun.</b> RecallFox tidak punya server, tidak punya akun. '
     +   'Anda hanya perlu menghubungkan addon ini ke <b>Apps Script milik Anda sendiri</b> '
     +   '(yang Anda buat dari Spreadsheet Anda). Seperti menghubungkan Bluetooth — perlu kode '
@@ -8841,7 +8843,7 @@ async function renderGDrivePage(B) {
     +   '4. Tempel <b>URL Web App</b> + <b>sandi</b> di bawah → klik <b>Simpan</b><br>'
     +   '5. Klik <b>Test Koneksi</b> → harus "✅ Terhubung!"<br>'
     +   '6. Untuk pakai di PC lain: copy URL+sandi, paste di PC lain (tidak perlu deploy ulang)'
-    + '</div>'
+    + '</div></details>'
     + '<div style="margin:8px 0">'
     +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
     +     '<label style="font-size:11px;color:var(--muted)"><b>Aktifkan sinkronisasi</b> (master switch)</label>'
