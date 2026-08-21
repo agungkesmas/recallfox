@@ -3538,6 +3538,18 @@ async function copyLinkToClipboard(it) {
 async function copyItemBody(id) {
   const it = findItem(id);
   if (!it) { toast('Item tidak ditemukan', false); return; }
+  // v3.21.11: Prioritaskan resumeContext kalau sudah di-generate AI.
+  // Untuk snapshot yang sudah punya resumeContext (Handover Brief), salin itu
+  // instead of raw body — user laporan terstruktur, bukan percakapan mentah.
+  if (it.resumeContext && it.resumeContext.length > 20) {
+    console.log('[RecallFox] copyItemBody: using resumeContext (Handover Brief),', it.resumeContext.length, 'chars');
+    const ok = await _copyTextWithFallback(it.resumeContext);
+    if (ok) {
+      await incrementUseCount(it.id);
+      toast('📋 Handover Brief tersalin (dari cache AI)');
+    }
+    return;
+  }
   // Build final body dengan toppings (sama seperti doInject)
   const finalBody = await buildFinalPrompt(it.body || '', it.toppings || []);
   if (!finalBody || finalBody.trim() === '') {
@@ -3637,6 +3649,18 @@ async function injectLinkToChat(it) {
 async function doInject(body, itemId) {
   const settings = currentVault?.settings || {};
   const mode = settings.injectMode || 'append';
+
+  // v3.21.11: Prioritaskan resumeContext kalau sudah di-generate AI.
+  // Untuk snapshot yang sudah punya resumeContext (Handover Brief), inject itu
+  // instead of raw body — user dapat laporan terstruktur di chat AI.
+  if (itemId) {
+    const item = currentVault.items.find(i => i.id === itemId);
+    if (item && item.type === 'snapshot' && item.resumeContext && item.resumeContext.length > 20) {
+      console.log('[RecallFox] doInject: using resumeContext (Handover Brief),', item.resumeContext.length, 'chars');
+      body = item.resumeContext;
+      // Skip framing — resumeContext sudah terstruktur
+    }
+  }
 
   // v3.16.0 K5: Auto-prepend konteks aktif saat inject prompt.
   // Hanya untuk item type 'prompt' (bukan context/snapshot/link/bundle).
@@ -5329,7 +5353,7 @@ function itemSheet(id) {
       // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
       // v3.21.10: Snapshot menu — 2 tombol baru (On-Demand OmniRouter + Raw Copy)
       // Hapus 4 tombol lama: summarize, continue-ai, copy-resume, gen-resume
-      + (it.type === 'snapshot' ? '<button class="act" data-a="copy-adhd">' + ICONS.copy + '<div>📋 Salin Saduran AI (ADHD)<div class="ad">Olah via OmniRouter on-demand → Handover Report ke clipboard</div></div></button>' : '')
+      + (it.type === 'snapshot' ? '<button class="act" data-a="copy-adhd">' + ICONS.copy + '<div>📋 Salin Handover Brief (AI)<div class="ad">Olah via OmniRouter on-demand → Handover Brief ke clipboard</div></div></button>' : '')
       + (it.type === 'snapshot' ? '<button class="act" data-a="copy-raw">' + ICONS.copy + '<div>📄 Salin Teks Percakapan (Asli)<div class="ad">Salin riwayat mentah tanpa diproses AI</div></div></button>' : '')
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
