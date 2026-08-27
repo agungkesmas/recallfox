@@ -604,7 +604,7 @@
     // v3.20.5: Hide RecallFox floating elements during screenshot capture
     // v3.20.14: Use display:none (bukan visibility:hidden) — visibility:hidden
     //   masih tercapture di Firefox captureVisibleTab. display:none remove dari render tree.
-    const HIDE_SELECTORS = ['#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
+    const HIDE_SELECTORS = ['#recallfox-notes-host', '#recallfox-tape-host', '#recallfox-ai-popup', '#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
     const hiddenEls = [];
     for (const sel of HIDE_SELECTORS) {
       document.querySelectorAll(sel).forEach(el => {
