@@ -28,6 +28,7 @@ import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGr
 // v3.20.32: Magic Command — natural language move items to folder + folder archive
 import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
+import * as Pomodoro from '../lib/pomodoro.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
 import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } from '../lib/storage.js';
@@ -7688,8 +7689,8 @@ const TILE_DEFS = [
   { id: 'keys',      label: 'Pintasan', icon: ICONS.kb,       type: 'tool', action: 'toolPage', arg: 'keys' }
 ];
 
-const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaKonteks', 'qaLink', 'qaBundle', 'qaSnap', 'qaShot'];
-const MAX_ACTIVE_TILES = 6;
+const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaLink'];
+const MAX_ACTIVE_TILES = 2;
 
 /**
  * Get active tile IDs from vault.settings, fallback to default.
@@ -10833,6 +10834,7 @@ async function init() {
   await renderNotes();
 
   bindEvents();
+  try{ await initPomodoro(); }catch(e){ console.warn('initPomodoro failed',e); }
   renderVault();
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
@@ -10856,6 +10858,95 @@ async function init() {
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
 }
+
+// ========== Pomodoro sticky (v3.21.14) — safe isolated ==========
+let pomodoroState = null;
+let pomodoroInterval = null;
+function playBell() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.3, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    o.start(); o.stop(ctx.currentTime + 0.5);
+  } catch (e) {}
+}
+function playAdzanTest() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [523,659,784].forEach((freq,i)=>{
+      const o=ctx.createOscillator(); const g=ctx.createGain();
+      o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.2, ctx.currentTime+i*0.2); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime+i*0.2+0.3);
+      o.start(ctx.currentTime+i*0.2); o.stop(ctx.currentTime+i*0.2+0.3);
+    });
+  } catch(e){}
+}
+async function initPomodoro() {
+  try {
+    const s = await Pomodoro.loadState();
+    if (s) pomodoroState = s;
+    else pomodoroState = Pomodoro.createInitialState('25/5');
+    renderPomodoro();
+    if (pomodoroState.running) startPomodoroTick();
+    // adzan toggle init
+    try {
+      const vault = await getVault();
+      const soundOn = vault.settings?.prayerSoundOn !== false;
+      const btn = document.getElementById('adzanSoundToggle');
+      if (btn) btn.textContent = soundOn ? 'On' : 'Off';
+    } catch(e){}
+  } catch(e){ console.warn('initPomodoro failed',e); }
+}
+function renderPomodoro() {
+  try {
+    if (!pomodoroState) return;
+    const timerEl = document.getElementById('pomodoroTimer');
+    const modeEl = document.getElementById('pomodoroMode');
+    const presetEl = document.getElementById('pomodoroPreset');
+    const cyclesEl = document.getElementById('pomodoroCycles');
+    const startBtn = document.getElementById('pomodoroStart');
+    const pauseBtn = document.getElementById('pomodoroPause');
+    const soundBtn = document.getElementById('pomodoroSound');
+    const soundToggle = document.getElementById('pomodoroSoundToggle');
+    if (timerEl) timerEl.textContent = '🍅 ' + Pomodoro.formatMMSS(pomodoroState.remaining);
+    if (modeEl) modeEl.textContent = pomodoroState.mode==='focus'?'Fokus':pomodoroState.mode==='break'?'Istirahat':'Long Break';
+    if (presetEl) presetEl.textContent = pomodoroState.preset==='custom'?`Custom ${pomodoroState.customWork}/${pomodoroState.customBreak}`:pomodoroState.preset;
+    if (cyclesEl) cyclesEl.textContent = (pomodoroState.cycles%4)+'/4';
+    if (startBtn) startBtn.style.display = pomodoroState.running?'none':'inline-block';
+    if (pauseBtn) pauseBtn.style.display = pomodoroState.running?'inline-block':'none';
+    if (soundBtn) soundBtn.textContent = pomodoroState.soundOn?'🔊':'🔇';
+    if (soundToggle) soundToggle.textContent = pomodoroState.soundOn?'On':'Off';
+    // chips active
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{ b.classList.toggle('on', b.dataset.preset===pomodoroState.preset); });
+    // custom inputs
+    const customBox = document.getElementById('pomodoroCustom');
+    if (customBox) customBox.style.display = pomodoroState.preset==='custom'?'flex':'none';
+  } catch(e){}
+}
+function startPomodoroTick() {
+  if (pomodoroInterval) clearInterval(pomodoroInterval);
+  pomodoroInterval = setInterval(async()=>{
+    if (!pomodoroState || !pomodoroState.running) return;
+    pomodoroState.remaining -= 1;
+    if (pomodoroState.remaining <= 0) {
+      // selesai
+      const wasFocus = pomodoroState.mode==='focus';
+      if (pomodoroState.soundOn) { try{ playBell(); }catch(e){} try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Waktunya istirahat':'Waktunya fokus lagi'});}catch(e){} }
+      else { try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Istirahat':'Fokus'});}catch(e){} }
+      pomodoroState = Pomodoro.nextState(pomodoroState);
+      pomodoroState.running = true; // auto lanjut
+      await Pomodoro.saveState(pomodoroState);
+      renderPomodoro();
+    } else {
+      renderPomodoro();
+      await Pomodoro.saveState(pomodoroState);
+    }
+  }, 1000);
+}
+async function startPomodoro(){ if(!pomodoroState) pomodoroState=Pomodoro.createInitialState('25/5'); pomodoroState.running=true; pomodoroState.updatedAt=Date.now(); await Pomodoro.saveState(pomodoroState); renderPomodoro(); startPomodoroTick(); }
+async function pausePomodoro(){ if(!pomodoroState) return; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
+async function resetPomodoro(){ if(!pomodoroState) return; const p=Pomodoro.getPreset(pomodoroState.preset, pomodoroState.customWork, pomodoroState.customBreak); pomodoroState.remaining = (pomodoroState.mode==='focus'?p.work:p.break)*60; if(pomodoroState.mode==='longBreak') pomodoroState.remaining=Pomodoro.LONG_BREAK_MIN*60; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
 
 function bindEvents() {
   // v3.20.7: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
@@ -11188,6 +11279,59 @@ function bindEvents() {
   $('#attachSearch').addEventListener('input', renderAttachList);
   $('#attachIntro').addEventListener('input', renderAttachPreview);
   $('#attachPosition').addEventListener('change', renderAttachPreview);
+
+  // Pomodoro sticky — safe isolated wiring
+  try {
+    const pBar = document.getElementById('pomodoroBar');
+    if (pBar) pBar.addEventListener('click', (e)=>{
+      if (e.target.closest('button')) return;
+      const strip = document.getElementById('pomodoroStrip');
+      if (strip) { strip.classList.toggle('open'); const det=document.getElementById('pomodoroDetail'); if(det) det.style.display = strip.classList.contains('open')?'block':'none'; }
+    });
+    const pStart=document.getElementById('pomodoroStart');
+    if(pStart) pStart.addEventListener('click', (e)=>{ e.stopPropagation(); startPomodoro(); });
+    const pPause=document.getElementById('pomodoroPause');
+    if(pPause) pPause.addEventListener('click', (e)=>{ e.stopPropagation(); pausePomodoro(); });
+    const pReset=document.getElementById('pomodoroReset');
+    if(pReset) pReset.addEventListener('click', (e)=>{ e.stopPropagation(); resetPomodoro(); });
+    const pSound=document.getElementById('pomodoroSound');
+    if(pSound) pSound.addEventListener('click', async(e)=>{ e.stopPropagation(); if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pSoundToggle=document.getElementById('pomodoroSoundToggle');
+    if(pSoundToggle) pSoundToggle.addEventListener('click', async()=>{ if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pTest=document.getElementById('pomodoroTestBell');
+    if(pTest) pTest.addEventListener('click', ()=>{ playBell(); });
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{
+      b.addEventListener('click', async()=>{
+        const preset=b.dataset.preset;
+        if(preset==='custom'){ const box=document.getElementById('pomodoroCustom'); if(box) box.style.display='flex'; return; }
+        pomodoroState = Pomodoro.createInitialState(preset);
+        pomodoroState.soundOn = (await Pomodoro.loadState())?.soundOn ?? true;
+        await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+      });
+    });
+    const pCustomApply=document.getElementById('pomodoroCustomApply');
+    if(pCustomApply) pCustomApply.addEventListener('click', async()=>{
+      const w=document.getElementById('pomodoroCustomWork')?.value||25;
+      const br=document.getElementById('pomodoroCustomBreak')?.value||5;
+      pomodoroState = Pomodoro.createInitialState('custom', w, br);
+      await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+    });
+  } catch(e){ console.warn('pomodoro bind failed',e); }
+  // Adzan sound toggle — pisah dari pomodoro
+  try {
+    const adzanToggle=document.getElementById('adzanSoundToggle');
+    if(adzanToggle){
+      const updateAdzanBtn=async()=>{
+        try{ const v=await getVault(); const on=v.settings?.prayerSoundOn!==false; adzanToggle.textContent=on?'On':'Off'; }catch(e){}
+      };
+      updateAdzanBtn();
+      adzanToggle.addEventListener('click', async()=>{
+        try{ const v=await getVault(); if(!v.settings) v.settings={}; v.settings.prayerSoundOn = !(v.settings.prayerSoundOn!==false); await saveVault(v); currentVault=v; adzanToggle.textContent=v.settings.prayerSoundOn?'On':'Off'; toast(v.settings.prayerSoundOn?'🔊 Adzan On':'🔇 Adzan Off'); }catch(e){}
+      });
+    }
+    const adzanTest=document.getElementById('adzanTestBtn');
+    if(adzanTest) adzanTest.addEventListener('click', ()=>{ playAdzanTest(); toast('🔊 Test adzan'); });
+  } catch(e){}
 }
 
 // Listen for storage changes (sync) — guard for non-extension contexts
