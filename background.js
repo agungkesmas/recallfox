@@ -4623,6 +4623,27 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // v3.21.15: UPDATE_VAULT_NOTE — autosave dari floating note (vaultNoteId)
+  if (msg.type === 'UPDATE_VAULT_NOTE') {
+    (async () => {
+      try {
+        const { noteId, text } = msg;
+        if (!noteId || typeof text !== 'string') { sendResponse({ ok: false, error: 'invalid' }); return; }
+        const { getVault, saveVault } = await import('./lib/storage.js');
+        const vault = await getVault();
+        const note = (vault.notes || []).find(n => n.id === noteId);
+        if (!note) { sendResponse({ ok: false, error: 'not_found' }); return; }
+        note.body = text;
+        note.updatedAt = Date.now();
+        await saveVault(vault);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error('[RecallFox] UPDATE_VAULT_NOTE failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
 
   // v3.20.34-dev: RF_ASSISTANT_FETCH — relay fetch API call dari iframe popout sidebar.
   // Root cause "NetworkError when attempting to fetch resource" di popout sidebar
