@@ -619,10 +619,13 @@
   }
 
   // ===== Message listener (from background + from iframe via postMessage) =====
-  browser.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'OPEN_SIDEBAR_IN_PAGE') show();
-    else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE') hide();
-    else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') toggle();
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // v3.22.4 FIX BUG-3 (Firefox): listener wajib membalas pesan yang di-await
+    // background (TOGGLE_SIDEBAR_IN_PAGE dsb.) agar channel tidak ditutup
+    // dengan rejection "Message channel closed without a response".
+    if (msg.type === 'OPEN_SIDEBAR_IN_PAGE') { show(); if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } }
+    else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE') { hide(); if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } }
+    else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') { toggle(); if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } }
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE') {
       // v3.20.12: Background broadcasts this before captureVisibleTab
       if (host) host.style.display = 'none';

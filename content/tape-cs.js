@@ -38,15 +38,30 @@
   if (window.__recallfoxTapeLoaded) return;
   window.__recallfoxTapeLoaded = true;
 
-  let tape;
+  // v3.22.4 FIX BUG-2 (Firefox): dynamic import() dinonaktifkan untuk content
+  // script Firefox -> fallback ke global classic dari manifest preload.
+  let tape = null;
   try {
     tape = await import(browser.runtime.getURL('lib/tape.js'));
   } catch (e) {
-    console.warn('[RecallFox/Tape] Failed to load lib/tape.js:', e);
-    return;
+    console.warn('[RecallFox/Tape] dynamic import tidak tersedia (normal di Firefox), pakai global classic');
   }
+  if (!tape) tape = (typeof globalThis !== 'undefined' && globalThis.__RF_LIB_TAPE__) || (typeof window !== 'undefined' && window.__RF_LIB_TAPE__) || null;
+  // v3.22.5-firefox FIX-3c: alias eksplisit — identifier telanjang lintas bundle
+  // tidak aman di shared world (nama sama dideklarasikan bundle lain).
+  const RFT_EVALUATE = tape && tape.evaluate;
+  const RFT_LOAD_SESSION = tape && tape.loadSession;
+  const RFT_SAVE_SESSION = tape && tape.saveSession;
+  const RFT_SAVE_PIN = tape && tape.savePinState;
+  const RFT_FMT_NUM = tape && tape.formatNumber;
+  const RFT_FMT_CUR = tape && tape.formatCurrency;
+  const RFT_PARSE_LINE = tape && tape.parseLine;
+  const RFT_PARSE_AMT = tape && tape.parseAmount;
+  if (!tape) { console.warn('[RecallFox/Tape] lib tape tidak tersedia — skip'); return; }
   const { evaluate, formatNumber, toPlainText, toMarkdown, loadSession, saveSession, savePinState } = tape;
-  let floatSync=null; try{ floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); }catch(e){}
+  let floatSync = null;
+  try { floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); } catch (e) {}
+  if (!floatSync) floatSync = (typeof globalThis !== 'undefined' && globalThis.__RF_LIB_FLOATSYNC__) || (typeof window !== 'undefined' && window.__RF_LIB_FLOATSYNC__) || null;
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
   let pinBtn = null, isVisible = false, pinned = true;
@@ -91,8 +106,8 @@
     popover.classList.add('rft-show');
     isVisible = true;
     // default nempel: pinned true
-    pinned = true; if(pinBtn) pinBtn.classList.add('rft-active'); try{ await savePinState(true); }catch(e){}
-    const s = await loadSession();
+    pinned = true; if(pinBtn) pinBtn.classList.add('rft-active'); try{ await RFT_SAVE_PIN(true); }catch(e){}
+    const s = await RFT_LOAD_SESSION();
     if (s.text) textarea.value = s.text;
     if (s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rft-active'); }
     // awal transparan (hover-only)
@@ -115,7 +130,7 @@
   //
   // Format baris hasil: "→  1.250,00  📋"
   //   - "→" prefix = marker "ini baris hasil, skip saat re-eval"
-  //   - formatNumber(running) untuk konsistensi
+  //   - RFT_FMT_NUM(running) untuk konsistensi
   //   - 📋 icon untuk copy (click untuk copy nilai)
   //
   // Format baris separator: "─────" (5 em-dash)
@@ -198,7 +213,7 @@
 
   // Format baris hasil (subtotal) — right-aligned juga supaya sejajar dengan baris op
   function formatResultLine(running) {
-    const formatted = formatNumber(running);
+    const formatted = RFT_FMT_NUM(running);
     const amtPadded = formatted.padStart(AMT_WIDTH, ' ');
     return '→' + OP_GAP + amtPadded + NOTE_GAP + '📋';
   }
@@ -350,7 +365,7 @@
     }
 
     // Evaluasi untuk dapat running total
-    const result = evaluate(opLinesForEval);
+    const result = RFT_EVALUATE(opLinesForEval);
     const running = result.grandTotal;
 
     // v3.14.14: Sisipkan separator + baris hasil (right-aligned) + baris baru kosong
@@ -389,13 +404,13 @@
       if (/^[→»•]/.test(trimmed)) continue;
       opLines.push(ln);
     }
-    const result = evaluate(opLines);
+    const result = RFT_EVALUATE(opLines);
     if (statusAutosave) {
       if (result.error) {
         statusAutosave.textContent = '⚠ ' + result.error;
         statusAutosave.style.color = '#FB7185';
       } else {
-        statusAutosave.textContent = '✓ Tersimpan otomatis · Total: ' + formatNumber(result.grandTotal);
+        statusAutosave.textContent = '✓ Tersimpan otomatis · Total: ' + RFT_FMT_NUM(result.grandTotal);
         statusAutosave.style.color = '';
       }
     }
@@ -408,7 +423,7 @@
       statusAutosave.style.color = '#F0B64A';
     }
     saveTimer = setTimeout(async () => {
-      try { await saveSession(textarea.value); } catch (e) {}
+      try { await RFT_SAVE_SESSION(textarea.value); } catch (e) {}
       try{ if(floatSync && isVisible) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
       updateStatus();
     }, 400);
@@ -458,7 +473,7 @@
       if (/^[→»•]/.test(trimmed)) continue;
       opLines.push(ln);
     }
-    const result = evaluate(opLines);
+    const result = RFT_EVALUATE(opLines);
     // Build plain text: op lines + separator + hasil
     const plain = buildPlainTextForCopy(opLines, result);
     try {
@@ -486,7 +501,7 @@
       out.push(trimmed);
     }
     out.push('─────');
-    out.push('→  ' + formatNumber(result.grandTotal) + '  📋');
+    out.push('→  ' + RFT_FMT_NUM(result.grandTotal) + '  📋');
     return out.join('\n');
   }
 
@@ -593,7 +608,7 @@
         if (/^[→»•]/.test(trimmed)) continue;
         opLines.push(ln);
       }
-      const result = evaluate(opLines);
+      const result = RFT_EVALUATE(opLines);
       const md = buildPlainTextForCopy(opLines, result);
       await browser.runtime.sendMessage({
         type: 'SAVE_TAPE_TO_VAULT',
@@ -711,7 +726,7 @@
       try{
         pinned = !pinned;
         pinBtn.classList.toggle('rft-active', pinned);
-        await savePinState(pinned);
+        await RFT_SAVE_PIN(pinned);
       }catch(e){ console.error('[RecallFox/Tape] pin failed:', e); }
     });
     shadow.querySelector('.rft-print').addEventListener('click', doPrint);
@@ -743,7 +758,7 @@
   // v3.20.3: OPEN_TAPE sekarang selalu show() (sebelumnya toggle() — bisa menyebabkan
   //   tape "hilang" kalau user klik tombol 2x cepat atau message terkirim 2x). Untuk
   //   hide, gunakan HIDE_TAPE atau klik outside / Esc.
-  browser.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'OPEN_TAPE') show();
     else if (msg.type === 'ADD_TO_TAPE') {
       show();
@@ -755,9 +770,13 @@
     else if (msg.type === 'HIDE_TAPE') hide();
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} }
     else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} }
+    // v3.22.4 FIX BUG-3 (Firefox): wajib balas agar background tidak salah putusan.
+    if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} }
   });
+  // v3.22.4 FIX BUG-5: fallback CustomEvent 'rf-open-tape' dari sidebar-cs.js
+  try { window.addEventListener('rf-open-tape', () => { show(); }); } catch (e) {}
 
-  loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  RFT_LOAD_SESSION().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
   try{
     if(floatSync) floatSync.loadFloatState('tape').then(st=>{
       if(st && st.isOpen){

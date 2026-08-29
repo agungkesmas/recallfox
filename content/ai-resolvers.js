@@ -315,7 +315,11 @@
   // buildAiSitesFromLegacy: migration dari AI_TOOLS + customizations
   async function buildAiSitesFromLegacy(settings) {
     try {
-      const mod = await import(browser.runtime.getURL('lib/ai-detect.js'));
+      // v3.22.4 FIX BUG-2 (Firefox): fallback ke global classic
+      let mod = null;
+      try { mod = await import(browser.runtime.getURL('lib/ai-detect.js')); } catch (e) {}
+      if (!mod) mod = (typeof globalThis !== 'undefined' && globalThis.__RF_LIB_AIDETECT__) || (typeof window !== 'undefined' && window.__RF_LIB_AIDETECT__) || null;
+      if (!mod) return [];
       return await mod.migrateFromAiTools(settings);
     } catch (e) {
       console.error('[AI DETECT] Migration failed:', e);

@@ -948,6 +948,12 @@
     if (msg.type === 'TRIGGER_CAPTURE_FROM_POPUP') {
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
+      // v3.22.4 FIX BUG-3 (Firefox): WAJIB balas. Firefox me-reject
+      // tabs.sendMessage dengan "Message channel closed without a response"
+      // bila listener tidak merespons -> background masuk jalur error
+      // (re-inject + retry) dan modal dikirim dobel / gagal.
+      if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} }
+      return true;
     }
     // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
     // Audio tidak bisa di-play dari background service worker (MV3 restriction).

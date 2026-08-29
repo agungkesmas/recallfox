@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.22.3",
+  "version": "3.22.5",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -79,9 +79,14 @@
   },
   "background": {
     "scripts": [
+      "lib/classic/storage.classic.js",
+      "lib/classic/crypto.classic.js",
+      "lib/classic/assistant.classic.js",
+      "lib/classic/contentguard.classic.js",
+      "lib/classic/elementblocker.classic.js",
+      "lib/classic/gdrive-sync.classic.js",
       "background.js"
-    ],
-    "type": "module"
+    ]
   },
   "content_scripts": [
     {
@@ -90,6 +95,7 @@
         "https://*/*"
       ],
       "js": [
+        "lib/classic/ai-detect.classic.js",
         "content/ai-resolvers.js",
         "content/content.js"
       ],
@@ -173,6 +179,8 @@
         "file:///*"
       ],
       "js": [
+        "lib/classic/float-sync.classic.js",
+        "lib/classic/tape.classic.js",
         "content/tape-cs.js"
       ],
       "run_at": "document_idle",
@@ -185,6 +193,7 @@
         "file:///*"
       ],
       "js": [
+        "lib/classic/notes.classic.js",
         "content/notes-cs.js"
       ],
       "run_at": "document_idle",
@@ -242,7 +251,6 @@
         "settings/settings.html",
         "settings/settings.css",
         "settings/settings.js",
-        "lib/browser-polyfill.min.js",
         "icons/icon-16.png",
         "icons/icon-32.png",
         "icons/icon-48.png",

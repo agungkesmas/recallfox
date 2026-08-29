@@ -1,3 +1,11 @@
+// v3.22.4-firefox — FIX BUG-1:
+//   Firefox TIDAK mendukung background "type":"module" (Bugzilla 1806731).
+//   Static ESM import membuat seluruh background gagal dimuat (SyntaxError)
+//   sehingga SEMUA tombol floating (screenshot/note/tape) mati.
+//   Solusi: 6 dependensi statis dibundel sebagai classic scripts oleh build
+//   (lihat manifest background.scripts) dan static import dihapus.
+//   Dynamic import() untuk modul lain TETAP valid (classic script page context).
+
 // background.js — Service worker / background script
 // RecallFox v0.2.0
 // Tanggung jawab:
@@ -12,52 +20,27 @@ function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-import {
-  pushToSync,
-  mergeSyncIntoLocal,
-  onSyncChange,
-  getSettings,
-  saveSettings,
-  addItem,
-  updateItem,
-  getVault,
-  markBypass,
-  isBypassed,
-  getUserBlocklist,
-  addUserBlocklistEntry,
-  removeUserBlocklistEntry,
-  clearUserBlocklist,
-  exportAllScreenshotBlobs
-} from './lib/storage.js';
 // v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async, lokal saja)
-import { chatWithFallback, isAssistantConfigured } from './lib/assistant.js';
 // v3.7: Import untuk backup handlers
-import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js';
-import {
-  matchesIdNewsDomain,
-  isYouTubeHome,
-  isXHome,
-  detectSearchQuery,
-  matchesBlockedSearchQuery,
-  DEFAULT_NEGATIVE_KEYWORDS,
-  DEFAULT_ID_NEWS_DOMAINS,
-  DEFAULT_BLOCKED_YT_CHANNELS,
-  DEFAULT_BLOCKED_X_ACCOUNTS,
-  DEFAULT_BLOCKED_SEARCH_QUERIES,
-  DEFAULT_CHINA_YOUTUBE_SEARCHES,
-  DEFAULT_CHINA_X_ACCOUNTS,
-  DEFAULT_CHINA_X_SEARCHES,
-  // v3.21.0: Mode Fokus (Allowlist) — Pelindung Konten baru
-  DEFAULT_TOPIC_PROFILES,
-  generateProfileId,
-  seedDefaultTopicProfiles,
-  getActiveProfile,
-  matchesProfileSearchQuery,
-  isProfileFiltering
-} from './lib/contentguard.js';
-import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
-import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
+
+// v3.22.5-firefox FIX-1: alias menu aman lintas browser.
+// Firefox: permission "menus" HANYA menjamin browser.menus. browser.contextMenus
+// adalah alias yang tidak selalu ada — akses langsung di top-level melempar
+// TypeError dan MEMATIKAN SELURUH background (semua tombol floating ikut mati
+// dengan error "Could not establish connection. Receiving end does not exist").
+const RF_MENUS = (typeof browser.menus !== 'undefined' && browser.menus)
+  ? browser.menus
+  : (typeof browser.contextMenus !== 'undefined' && browser.contextMenus)
+    ? browser.contextMenus : null;
+
+// v3.22.5-firefox FIX-4: guard registrasi listener top-level.
+// Satu error registrasi TIDAK BOLEH mencegah listener lain (terutama
+// runtime.onMessage) terdaftar — kalau tidak, seluruh UI ekstensi mati.
+function rfSafeListen(label, register) {
+  try { register(); }
+  catch (e) { console.warn('[RecallFox] listener gagal dipasang (' + label + '):', e && e.message); }
+}
 
 // ===== Setup context menu on install =====
 
@@ -133,7 +116,7 @@ browser.runtime.onInstalled.addListener(async () => {
   // Migration: parse [Tujuan: ...] dari body → set contextPurpose → bersihkan body.
   // Juga backfill snapshotDomain dari source.url untuk existing snapshots.
   try {
-    const { getVault, saveVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
     const vault = await getVault();
     let migrated = 0;
     for (const item of (vault.items || [])) {
@@ -251,34 +234,34 @@ function _escapeHtml(s) {
 }
 
 async function setupContextMenu() {
-  await browser.contextMenus.removeAll().catch(() => {});
+  await RF_MENUS.removeAll().catch(() => {});
 
   // Selection-based: save as Prompt / Context
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-save-prompt',
     title: browser.i18n.getMessage('ctxMenuSaveAsPrompt'),
     contexts: ['selection']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-save-context',
     title: browser.i18n.getMessage('ctxMenuSaveAsContext'),
     contexts: ['selection']
   });
 
   // Page-based: save current page as Link
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-1',
     type: 'separator',
     contexts: ['page', 'frame', 'selection']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-save-page',
     title: browser.i18n.getMessage('ctxMenuSavePage'),
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
   // Link-based: save specific link as Link
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-save-link',
     title: browser.i18n.getMessage('ctxMenuSaveLink'),
     contexts: ['link'],
@@ -286,12 +269,12 @@ async function setupContextMenu() {
   });
 
   // Snapshot (AI domains only)
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-2',
     type: 'separator',
     contexts: ['page']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-snapshot',
     title: browser.i18n.getMessage('ctxMenuSnapshot'),
     contexts: ['page']
@@ -300,19 +283,19 @@ async function setupContextMenu() {
   });
 
   // Screenshot single entry (FireShot-style — opens modal with PDF/JPG/PNG/Copy/Vault options)
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-3',
     type: 'separator',
     contexts: ['page']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-screenshot',
     title: browser.i18n.getMessage('ctxMenuCaptureScreenshot') || 'Capture Screenshot',
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
   // v3.20.4: Popout sidebar — context menu untuk toggle sidebar di halaman
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-sidebar-in-page',
     title: 'Tampilkan RecallFox di halaman ini (popout)',
     contexts: ['page'],
@@ -320,24 +303,24 @@ async function setupContextMenu() {
   });
 
   // Clear Cache (clearcache-style) — works on all http(s) pages
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-4',
     type: 'separator',
     contexts: ['page']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-clear-cache',
     title: browser.i18n.getMessage('ctxMenuClearCache') || 'Clear Cache',
     contexts: ['page']
   });
 
   // "Tanya AI" context menu — sends selected text to AI assistant
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-5',
     type: 'separator',
     contexts: ['selection']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-ask-ai',
     title: '🤖 Tanya Si Pandai',
     contexts: ['selection']
@@ -345,12 +328,12 @@ async function setupContextMenu() {
 
   // v3.14.0: RecallTape — "Add to RecallFox Tape" (klik kanan teks/angka terseleksi)
   // Memunculkan popover RecallTape di tab aktif + menambahkan teks terseleksi sebagai baris baru.
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-tape',
     type: 'separator',
     contexts: ['selection']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-add-to-tape',
     title: browser.i18n.getMessage('ctxMenuAddToTape') || '🧾 Tambah ke RecallTape',
     contexts: ['selection']
@@ -359,7 +342,7 @@ async function setupContextMenu() {
   // ===== Content Guardian: "Blokir Konten Ini" (v0.8.21) =====
   // Hanya muncul di YouTube & X — klik kanan untuk blokir konten yang
   // sedang di-hover (video card / tweet).
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-6',
     type: 'separator',
     contexts: ['page', 'link', 'video'],
@@ -371,7 +354,7 @@ async function setupContextMenu() {
     ]
   });
   // Sub-menu: pilih cara blokir
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-root',
     title: '🚫 Blokir Konten Ini',
     contexts: ['page', 'link', 'video'],
@@ -382,32 +365,32 @@ async function setupContextMenu() {
       'https://*.twitter.com/*'
     ]
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul ini (title)',
     contexts: ['page', 'link', 'video']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-exact-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul PERSIS ini (exact)',
     contexts: ['page', 'link', 'video']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-channel',
     parentId: 'rf-cg-block-root',
     title: 'Blokir channel/akun ini',
     contexts: ['page', 'link', 'video']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-keyword',
     parentId: 'rf-cg-block-root',
     title: 'Blokir kata kunci dari teks terseleksi…',
     contexts: ['selection']
   });
   // Blokir berdasarkan teks terseleksi (selection) — paling fleksibel
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-selection',
     parentId: 'rf-cg-block-root',
     title: 'Blokir teks terseleksi: "%s"',
@@ -417,7 +400,7 @@ async function setupContextMenu() {
   // v3.4: Blokir URL post X — muncul hanya di x.com/twitter.com
   // Saat user klik kanan pada link tweet atau di halaman tweet, simpan URL-nya.
   // Semua post dengan URL yang sama (atau path yang sama) akan di-hide di timeline X.
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-cg-block-x-post-url',
     parentId: 'rf-cg-block-root',
     title: '🔗 Blokir URL post X ini',
@@ -429,13 +412,13 @@ async function setupContextMenu() {
   });
 
   // v0.9.0: Element Blocker — "Block Element Ini" (klik kanan di elemen mana saja)
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-separator-7',
     type: 'separator',
     contexts: ['page', 'link', 'image', 'video'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
-  browser.contextMenus.create({
+  RF_MENUS.create({
     id: 'rf-eb-block-element',
     title: '🚫 Block Element Ini (Element Blocker)',
     contexts: ['page', 'link', 'image', 'video'],
@@ -445,7 +428,7 @@ async function setupContextMenu() {
 
 // ===== Handle context menu clicks =====
 
-browser.contextMenus.onClicked.addListener(async (info, tab) => {
+rfSafeListen('menus.onClicked', () => RF_MENUS.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'rf-save-prompt' || info.menuItemId === 'rf-save-context') {
     const text = (info.selectionText || '').trim();
     if (!text) return;
@@ -798,7 +781,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     await notifyBlockResult(res, labelMap[type] || 'item', payload.value);
     await broadcastCgUpdate(tab?.id);
   }
-});
+}));
 
 // Helper: notifikasi hasil blokir
 async function notifyBlockResult(res, label, value) {
@@ -848,24 +831,24 @@ async function broadcastCgUpdate(tabId) {
 // ===== Context menu visibility toggle (hanya tampilkan opsi yang relevan) =====
 // Saat user klik kanan: jika ada selection → tampilkan opsi "Blokir teks terseleksi"
 // dan ubah %s ke teks yang terseleksi. Jika tidak ada selection → sembunyikan opsi itu.
-if (browser.contextMenus.onShown) {
-  browser.contextMenus.onShown.addListener((info, tab) => {
+if (RF_MENUS && RF_MENUS.onShown) {
+  RF_MENUS.onShown.addListener((info, tab) => {
     const hasSelection = !!(info.selectionText && info.selectionText.trim().length > 0);
     const selPreview = hasSelection
       ? info.selectionText.trim().slice(0, 40) + (info.selectionText.trim().length > 40 ? '…' : '')
       : '';
     // Update title dan visibility untuk opsi "Blokir teks terseleksi"
     try {
-      browser.contextMenus.update('rf-cg-block-selection', {
+      RF_MENUS.update('rf-cg-block-selection', {
         visible: hasSelection,
         title: hasSelection ? `Blokir teks terseleksi: "${selPreview}"` : 'Blokir teks terseleksi'
       }).catch(() => {});
       // Update opsi "Blokir kata kunci dari teks terseleksi" juga
-      browser.contextMenus.update('rf-cg-block-keyword', {
+      RF_MENUS.update('rf-cg-block-keyword', {
         visible: hasSelection,
         title: hasSelection ? `Blokir sebagai kata kunci: "${selPreview}"` : 'Blokir kata kunci dari teks terseleksi…'
       }).catch(() => {});
-      browser.contextMenus.refresh().catch(() => {});
+      RF_MENUS.refresh().catch(() => {});
     } catch (e) { /* ignore */ }
   });
 }
@@ -2295,7 +2278,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
       // Fallback ke cara lama (local-only) kalau supabase-sync gagal import
       try {
-        const { getScreenshotBlob } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
         const dataUrl = await getScreenshotBlob(msg.id);
         sendResponse({ ok: true, dataUrl }); return;
       } catch (e2) {
@@ -2307,7 +2290,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Dipakai oleh popup/viewer.js untuk multi-page viewer.
   if (msg.type === 'GET_DOCUMENT_PAGES') {
     try {
-      const { getVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
       const vault = await getVault();
       const item = (vault.items || []).find(i => i.id === msg.id);
       if (!item) {
@@ -2427,7 +2410,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       // v3.11.35: Pakai lazy download — kalau blob lokal null, fetch dari cloud.
       const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
-      const { getVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
       const blobRes = await getOrDownloadScreenshotBlob(msg.id);
       const dataUrl = blobRes.dataUrl;
       if (!dataUrl) { sendResponse({ ok: false, error: blobRes.error || 'no_blob' }); return; }
@@ -2718,7 +2701,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
       const vault = await getVault();
       const screenshots = [];
       for (const id of ids) {
@@ -2886,7 +2869,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      const { deleteItem, deleteBundle, getVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
       // Ambil vault sekali untuk cek apakah id adalah item atau bundle
       const vault = await getVault();
       const itemIdSet = new Set((vault.items || []).map(i => i.id));
@@ -2912,7 +2895,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       // Trigger sync sekali setelah semua hapus (lebih efisien daripada sync per item)
       try {
-        const { pushToSync } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
         await pushToSync();
       } catch (e) { /* silent — sync opsional */ }
       sendResponse({
@@ -3252,7 +3235,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ===== Listen to sync changes (from other devices) =====
 
-onSyncChange(async () => {
+rfSafeListen('onSyncChange', () => {
+  onSyncChange(async () => {
   console.log('[RecallFox] Sync change detected, merging...');
   try {
     await mergeSyncIntoLocal();
@@ -3261,14 +3245,15 @@ onSyncChange(async () => {
   } catch (e) {
     console.warn('[RecallFox] Merge failed:', e);
   }
+  });
 });
 
 // Also listen to local changes (so popup & sidebar stay in sync)
-browser.storage.onChanged.addListener((changes, area) => {
+rfSafeListen('storage.onChanged', () => browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.recallfox_vault) {
     browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
   }
-});
+}));
 
 console.log('[RecallFox] background script loaded');
 
@@ -3844,7 +3829,8 @@ browser.alarms.onAlarm.addListener((alarm) => {
 
 // v0.9.2: PANGGIL DI TOP LEVEL — supaya jalan setiap kali background script load,
 // bukan hanya saat onInstalled/onStartup fire
-startAutoDiscardChecker();
+// v3.22.5-firefox FIX-4: di-guard agar error init tidak mematikan background
+rfSafeListen('startAutoDiscardChecker', () => startAutoDiscardChecker());
 
 // v3.20.27: Proactive Supabase token refresh — keep session alive indefinitely.
 // Industry standard: refresh access_token BEFORE it expires (1 hour lifetime),
@@ -3862,7 +3848,7 @@ function startProactiveTokenRefresh() {
     console.warn('[RecallFox/Supabase] Failed to create refresh alarm:', e.message);
   }
 }
-startProactiveTokenRefresh();
+rfSafeListen('startProactiveTokenRefresh', () => startProactiveTokenRefresh());
 
 // ===== Ngaji / Quran reminder =====
 
@@ -4220,7 +4206,7 @@ async function redirectWithNotify(tabId, newUrl, settings, title, message) {
 // v0.8.36: HANYA jalankan checkContentGuard. JANGAN forceInject di sini —
 // itu bikin infinite loop (inject → init → hideYouTubeNegative → DOM change →
 // MutationObserver → scan → modify DOM → ... → tabs.onUpdated → inject lagi)
-browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+rfSafeListen('tabs.onUpdated/cg', () => browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // Hanya proses saat URL berubah (bukan loading progress)
   if (!changeInfo.url) return;
   // Skip kalau URL extension sendiri (takeover/blocked)
@@ -4230,7 +4216,8 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     console.warn('[RecallFox/CG] checkContentGuard error:', e);
   });
   // v0.8.36: HAPUS forceInjectContentScript dari sini — bikin loop
-});
+}));
+// (tutup rfSafeListen tabs.onUpdated/cg)
 
 
 
@@ -4572,11 +4559,30 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // v3.14.3: SAVE_TAPE_TO_VAULT — simpan tape calculation ke vault sebagai note
+  // v3.22.4 FIX AUDIT: SAVE_NOTE_TO_VAULT dikirim notes-cs.js (doSave) sejak
+  // v3.x tetapi tidak pernah punya handler -> tombol "Simpan ke Catatan" di
+  // RecallNote selalu gagal ('Gagal simpan'). Implementasi miror SAVE_TAPE_TO_VAULT.
+  if (msg.type === 'SAVE_NOTE_TO_VAULT') {
+    (async () => {
+      try {
+        const { text, markdown } = msg;
+        const note = await addNote(markdown || text, {
+          title: '📝 RecallNote — ' + new Date().toLocaleString('id-ID'),
+          group: 'RecallNote'
+        });
+        sendResponse({ ok: true, noteId: note.id });
+      } catch (e) {
+        console.error('[RecallFox] SAVE_NOTE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
   if (msg.type === 'SAVE_TAPE_TO_VAULT') {
     (async () => {
       try {
         const { markdown, text, grandTotal } = msg;
-        const { addNote } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
         const note = await addNote(markdown || text, {
           title: '🧮 RecallTape — Total: ' + (grandTotal || 0).toLocaleString('id-ID'),
           group: 'RecallTape'
@@ -4595,7 +4601,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const { noteId, text } = msg;
         if (!noteId || typeof text !== 'string') { sendResponse({ ok: false, error: 'invalid' }); return; }
-        const { getVault, saveVault } = await import('./lib/storage.js');
+/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
         const vault = await getVault();
         const note = (vault.notes || []).find(n => n.id === noteId);
         if (!note) { sendResponse({ ok: false, error: 'not_found' }); return; }

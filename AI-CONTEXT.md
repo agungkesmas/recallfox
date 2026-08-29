@@ -1,77 +1,61 @@
-# AI-CONTEXT.md — RecallFox (Firefox) — WAJIB BACA SEBELUM KERJA
+# AI-CONTEXT.md — RecallFox Chrome — WAJIB BACA SEBELUM KERJA
 
-> **Aturan #1 Arena:** Di new chat, clone dulu `github.com/agungkesmas/recallfox` lalu baca file ini. Tanpa ini konteks putus (workspace tidak kebawa).
+> **Aturan #1 Arena:** Di new chat, clone dulu `github.com/agungkesmas/recallfox-chrome` lalu baca file ini. Tanpa ini konteks putus.
 
 ## 0. Ritual Sesi (Wajib)
 
 ```
-Awal sesi: git pull origin <branch> + baca AI-CONTEXT.md + baca docs/ai-memory/RINGKASAN-*.md terbaru
-Akhir sesi: update RINGKASAN + commit + push (atau bundle jika di Arena tanpa kredensial push)
+Awal sesi: git pull origin <branch> + baca AI-CONTEXT.md + baca docs/ai-memory/RINGKASAN-*.md (di repo Firefox, master)
+Akhir sesi: update RINGKASAN + commit + push (atau bundle jika di Arena)
 ```
 
-Arena tidak punya kredensial push GitHub — kerja via `git bundle` (`~/Downloads/recallfox-*.bundle`) lalu user yang `git fetch + push` di mesin lokal. OpenCode di mesin lokal bisa push langsung.
+Arena tidak punya kredensial push — kerja via bundle. OpenCode lokal bisa push langsung.
 
 ## 1. Git Adalah Otak Pusat
 
-Filosofi dari `template-project` Mas Agung: **git sebagai single source of truth**. Memori AI tidak di workspace/container, tapi di repo:
-- `AI-CONTEXT.md` (file ini) — pintu masuk
-- `docs/ai-memory/CARA-KERJA.md` — master cara kerja lengkap
-- `docs/ai-memory/RINGKASAN-v*.md` — ringkasan per versi/chat
-- `changelogs/CHANGELOG-v*.md` — changelog user-facing
+Sama dengan repo Firefox: memori di git, bukan workspace. Master memori ada di **repo Firefox** (`docs/ai-memory/`), Chrome mirror `AI-CONTEXT.md` ini untuk parity.
 
-Repo **public** → AI di Arena bisa `clone/read` tanpa token. Push tetap butuh token user (keamanan).
+Repo public → clone/read tanpa token, push butuh token.
 
-## 2. Branch & Tag
+## 2. Branch & Tag (Chrome)
 
-- `main` — stabil (saat ini `v3.21.11` di origin, lokal `feat/upload-all-files` = `v3.22.0`)
-- `feat/*` — fitur (contoh: `feat/upload-all-files`, `feat/v3.21.19-p1`)
-- Tag: `v3.22.0-firefox` (Firefox), `v3.22.0-stable` (stable gabungan), `v3.22.0-chrome` di repo chrome
-- Jangan `cp` mentah Firefox→Chrome (lihat Aturan RecallFox di bawah)
+- `main` — stabil (`500bb2e` v3.21.26-chrome di origin, lokal `feat/upload-all-files` = `v3.22.0`)
+- Tag: `v3.22.0-chrome` + `v3.22.0-stable` (di-push 29 Aug 2026 ke `9f89572`)
+- `feat/upload-all-files` Chrome = `9f89572` (rebase di atas `500bb2e`, bukan `b6e64bc` lagi)
 
-## 3. Arsitektur v3.22.0 (Upload File Binary)
+## 3. Arsitektur v3.22.0 Chrome (Port dari Firefox)
 
-**Fitur baru:** Upload file binary (PDF/Office/gambar 10MB) + whitelist teks programming (~60 ekstensi).
+Port Fase 2 dari Firefox `7541df1`:
+- `lib/file-kinds.js`, `lib/storage.js` (`rf_file_{id}` blob), `lib/supabase-sync.js` (`_resolveFileBlob`), `popup/*`, `sidebar.html`, `docs/fix-documents-rls.sql` — **identik logika**, beda `manifest.json` + `background.js`
+- `manifest.json` Chrome: `version 3.22.0`, `service_worker: background.js type:module`, `permissions: contextMenus+sidePanel`, `icons png` (bukan svg)
+- `background.js` Chrome: `import './lib/browser-polyfill.min.js'` + `import {openSidebar} from './lib/sidebar-compat.js'` (baseline bagus `6c90b3c`/`b421ed9`). Jangan overwrite dengan Firefox (`browser.sidebarAction` native).
 
-- `lib/file-kinds.js` (258 baris) — deteksi MIME/ekstensi, allowlist `isTextKind()` vs `isBinaryKind()`, test di `test/file-kinds.test.mjs`
-- `lib/storage.js` — `addItem({fileBlob, fileName, mimeType})` → simpan blob di `rf_file_{id}` (pola `rf_shot_`), `getFileDataUrl(id)`, `deleteFileBlob(id)`. Vault JSON tetap ringan, blob terpisah.
-- `lib/supabase-sync.js` — `_resolveFileBlob()` + ekstensi cloud dari `fileName` asli, upload `fileBlob` ke Supabase Storage
-- `popup/popup.js + popup/popup.html + sidebar/sidebar.html` — UI upload 2 jalur (drag/file picker), preview PDF/gambar inline, inject URL+metadata ke AI
-- `docs/fix-documents-rls.sql` — RLS: policy BACA PUBLIK untuk `documents` (AI fetch URL tanpa login), idempotent, RLS per-user ketat (sudah verifikasi Postgres 17 lokal)
-- `manifest.json` — `version 3.22.0`, permissions `menus` (Firefox) vs `contextMenus+sidePanel` (Chrome)
-- `test/storage-binary.test.mjs` — test blob round-trip
+**Fitur v3.21.26 Chrome (jangan hilang saat rebase):**
+`RF_OPEN_REAL_SIDEBAR` — single click rfBtn floater → `chrome.sidePanel.open({tabId})` via `sidebar-compat.js`, double click → `toggle()` popout DOM, timer 250ms, fallback ke popout jika `sidePanel` gagal. `content/sidebar-cs.js` byte-identik Firefox (MD5 `7b9de276`).
 
-**File yang sering disentuh:**
-`popup/popup.js` (UI utama, 967 baris di v3.22.0), `lib/todoist-parse.js` (P1-P4), `content/notes-cs.js`, `content/sidebar-cs.js`, `lib/pomodoro.js`, `background.js` (343 baris diff v3.22.0)
+## 4. Aturan Chrome Kritis
 
-## 4. Aturan RecallFox Kritis (Jangan Copy Mentah)
+- Jangan `cp recallfox/* recallfox-chrome/*` mentah
+- Chrome butuh adaptasi: manifest (`service_worker`), background polyfill, semua `content_scripts` yang pakai `browser.*` harus sertakan `lib/browser-polyfill.min.js`, icons SVG→PNG
+- Sebelum push Chrome cek: `manifest.json` ada `service_worker`, `background.js` import polyfill, semua content_scripts ada polyfill, pill 3 tombol hidup di Chrome
 
-- `manifest.json` Firefox = `scripts: ["background.js"]` + `sidebar_action` + `menus` + `icons svg` ; Chrome = `service_worker + type:module` + `side_panel` + `contextMenus` + `icons png`
-- `background.js` Firefox pakai `browser.*` native; Chrome butuh `import './lib/browser-polyfill.min.js'` + `import {openSidebar} from './lib/sidebar-compat.js'`
-- Chrome baseline bagus di `6c90b3c` / `b421ed9` — jangan overwrite dengan versi Firefox
-- Build Chrome butuh adaptasi: manifest, background polyfill, content_scripts polyfill, icons SVG→PNG
-- Sebelum push Chrome cek: `service_worker` ada, background import polyfill, semua content_scripts ada polyfill
+## 5. Batasan Sandbox & Push
 
-## 5. Batasan Sandbox Arena
-
-- Tidak bisa push GitHub langsung, tidak bisa akses `~/.local/share/opencode` user
-- Bisa baca repo lokal di `recallfox-work/recallfox` + `recallfox-chrome`
-- Untuk push: buat bundle (`git bundle create`) → user `git fetch ~/Downloads/*.bundle feat/upload-all-files && git push origin ...`
+Sama dengan Firefox: Arena via bundle (`~/Downloads/recallfox-chrome-*.bundle`), user `git fetch ~/Downloads/recallfox-chrome-v3.22.0.bundle feat/upload-all-files && git push origin feat/upload-all-files v3.22.0-chrome v3.22.0-stable` (sekarang sudah include rebase `500bb2e`, jadi fast-forward).
 
 ## 6. Status Terkini (29 Aug 2026)
 
-- Lokal `feat/upload-all-files` Firefox `8b120cd` (2 commit di atas `7541df1` v3.22.0) — sudah push ke `origin/feat/upload-all-files` + tag `v3.22.0-firefox` + `v3.22.0-stable`
-- Chrome `9f89572` (rebase di atas `500bb2e` v3.21.26 Floater 1x/2x) — sudah push `feat/upload-all-files` + tag `v3.22.0-chrome` + `v3.22.0-stable`
-- v3.21.26 Chrome: `RF_OPEN_REAL_SIDEBAR` (single click → `chrome.sidePanel.open`, double click → popout DOM, timer 250ms)
+- Lokal `feat/upload-all-files` = `9f89572` (2 commit `a5ef6b7` + `9f89572` di atas `500bb2e`), sudah push
+- `v3.21.25` `b6e64bc` → `v3.21.26` `500bb2e` Floater fix → `v3.22.0` `a5ef6b7/9f89572`
+- Firefox master di `8b120cd`, Chrome port byte-identik untuk file-kinds/storage
 
 ## 7. Cara Lanjut di New Chat
 
 ```bash
-git clone https://github.com/agungkesmas/recallfox.git
+git clone https://github.com/agungkesmas/recallfox-chrome.git
 cat AI-CONTEXT.md
-cat docs/ai-memory/RINGKASAN-v3.22.0.md
+# Untuk memori lengkap, clone juga recallfox dan baca docs/ai-memory/
 ```
 
-Jika butuh Chrome: clone `recallfox-chrome` juga, baca `AI-CONTEXT.md` di sana (isi mirip, beda manifest/background).
-
 ---
-*Last update: 29 Aug 2026 — v3.22.0 upload binary, bundle push + rebase Chrome. Maintainer: Mas Agung.*
+*Last update: 29 Aug 2026 — v3.22.0 chrome rebase 500bb2e. Mirror dari Firefox AI-CONTEXT.*

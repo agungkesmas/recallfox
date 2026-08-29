@@ -2,11 +2,22 @@
 (async function () {
   if (window.__recallfoxNotesLoaded) return;
   window.__recallfoxNotesLoaded = true;
-  let notesLib;
-  try { notesLib = await import(browser.runtime.getURL('lib/notes.js')); } catch (e) { console.warn('[RecallFox/Notes] Failed', e); return; }
+  // v3.22.4 FIX BUG-2 (Firefox): dynamic import() DINONAKTIFKAN untuk content
+  // script Firefox (Bugzilla 1536094) — script abort sebelum listener OPEN_NOTE
+  // terdaftar -> tombol RecallNote mati. Jalur Chrome (dynamic import) dicoba
+  // dulu, lalu fallback ke global dari lib/classic/*.classic.js (preload manifest).
+  let notesLib = null;
+  try { notesLib = await import(browser.runtime.getURL('lib/notes.js')); } catch (e) { console.warn('[RecallFox/Notes] dynamic import tidak tersedia (normal di Firefox), pakai global classic'); }
+  if (!notesLib) notesLib = (typeof globalThis !== 'undefined' && globalThis.__RF_LIB_NOTES__) || (typeof window !== 'undefined' && window.__RF_LIB_NOTES__) || null;
+  // v3.22.5-firefox FIX-3c: alias eksplisit dari bundle classic.
+  const RFN_LOAD_SESSION = notesLib && notesLib.loadSession;
+  const RFN_SAVE_SESSION = notesLib && notesLib.saveSession;
+  const RFN_SAVE_PIN = notesLib && notesLib.savePinState;
+  if (!notesLib) { console.warn('[RecallFox/Notes] lib notes tidak tersedia — skip'); return; }
   const { loadSession, saveSession, savePinState } = notesLib;
-  let floatSync=null;
-  try{ floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); }catch(e){}
+  let floatSync = null;
+  try { floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); } catch (e) {}
+  if (!floatSync) floatSync = (typeof globalThis !== 'undefined' && globalThis.__RF_LIB_FLOATSYNC__) || (typeof window !== 'undefined' && window.__RF_LIB_FLOATSYNC__) || null;
   let host=null,shadow=null,popover=null,textarea=null,statusAutosave=null,pinBtn=null,isVisible=false,pinned=true,saveTimer=null,idleTimer=null,vaultNoteId=null;
   async function loadTheme(){ try{ const r=await browser.storage.local.get(['settings']); let s=r.settings||{}; let t=s.theme||'auto'; if(t==='auto') t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; return t;}catch(e){return 'dark';}}
   function mount(){ if(host) return; host=document.createElement('div'); host.id='recallfox-notes-host'; host.style.cssText='all:initial;position:fixed;top:0;right:0;width:0;height:0;z-index:2147483647;pointer-events:none;'; document.documentElement.appendChild(host); shadow=host.attachShadow({mode:'open'}); shadow.innerHTML=TEMPLATE; popover=shadow.querySelector('.rfn-popover'); textarea=shadow.querySelector('.rfn-editor'); statusAutosave=shadow.querySelector('.rfn-autosave'); pinBtn=shadow.querySelector('.rfn-pin'); wireEvents(); }
@@ -16,10 +27,10 @@
   function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
   async function show(){ mount(); const theme=await loadTheme(); shadow.host.setAttribute('data-theme', theme); popover.classList.add('rfn-show'); isVisible=true;
     // default nempel: pinned true, pinBtn active
-    pinned = true; if(pinBtn) pinBtn.classList.add('rfn-active'); try{ await savePinState(true); }catch(e){}
+    pinned = true; if(pinBtn) pinBtn.classList.add('rfn-active'); try{ await RFN_SAVE_PIN(true); }catch(e){}
     // load: jika vaultNoteId ada, sudah diisi via message; else load session
     if(!vaultNoteId){
-      const s=await loadSession(); if(s.text) textarea.value=s.text;
+      const s=await RFN_LOAD_SESSION(); if(s.text) textarea.value=s.text;
       // respect stored pinned if any, but default tetap nempel
       if(s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rfn-active'); }
     }
@@ -37,7 +48,7 @@
       if(vaultNoteId){
         await browser.runtime.sendMessage({type:'UPDATE_VAULT_NOTE', noteId: vaultNoteId, text: textarea.value});
       } else {
-        await saveSession(textarea.value);
+        await RFN_SAVE_SESSION(textarea.value);
       }
       // cross-tab sync: keep float state text updated
       try{ if(floatSync && isVisible) await floatSync.saveFloatState('note', {isOpen:true, text: textarea.value, vaultNoteId}); }catch(e){}
@@ -58,7 +69,7 @@
     try { textarea.addEventListener('focus',()=>{ try{ setActive(); }catch(ee){} }); } catch(e){}
     try { popover.addEventListener('mouseenter',()=>{ try{ setActive(); }catch(ee){} }); } catch(e){}
     try { popover.addEventListener('mouseleave',()=>{ try{ scheduleIdle(); }catch(ee){} }); } catch(e){}
-    try { pinBtn.addEventListener('click',async()=>{ pinned=!pinned; pinBtn.classList.toggle('rfn-active',pinned); await savePinState(pinned); }); } catch(e){}
+    try { pinBtn.addEventListener('click',async()=>{ pinned=!pinned; pinBtn.classList.toggle('rfn-active',pinned); await RFN_SAVE_PIN(pinned); }); } catch(e){}
     try { shadow.querySelector('.rfn-print').addEventListener('click',doPrint); } catch(e){}
     try { shadow.querySelector('.rfn-copy').addEventListener('click',doCopy); } catch(e){}
     try { shadow.querySelector('.rfn-clear').addEventListener('click',doClear); } catch(e){}
@@ -66,7 +77,7 @@
     try { browser.runtime.onMessage.addListener(msg=>{if(msg.type==='THEME_CHANGED'&&shadow) shadow.host.setAttribute('data-theme',msg.theme);}); } catch(e){}
     try { makeDraggable(); } catch(e){}
   }
-  browser.runtime.onMessage.addListener(msg=>{
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
     if(msg.type==='OPEN_NOTE_VAULT'){
       vaultNoteId = msg.noteId || null;
       show().then(()=>{ if(typeof msg.text==='string') textarea.value = msg.text; updateStatus(); });
@@ -76,8 +87,14 @@
     else if(msg.type==='HIDE_NOTE') hide();
     else if(msg.type==='RF_HIDE_FOR_CAPTURE'){ if(host) host.style.display='none'; }
     else if(msg.type==='RF_RESTORE_AFTER_CAPTURE'){ if(host) host.style.display=''; if(isVisible && popover) popover.classList.add('rfn-show'); }
+    // v3.22.4 FIX BUG-3 (Firefox): wajib balas — Firefox me-reject sendMessage
+    // "Message channel closed without a response" jika listener tidak merespons,
+    // sehingga retry/inject di background salah mengira content script absen.
+    if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} }
   });
-  loadSession().then(s=>{ if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  // v3.22.4 FIX BUG-5: fallback CustomEvent 'rf-open-note' dari sidebar-cs.js
+  try { window.addEventListener('rf-open-note', () => { vaultNoteId = null; show(); }); } catch (e) {}
+  RFN_LOAD_SESSION().then(s=>{ if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
   // cross-tab auto-show if was open in other tab
   try{
     if(floatSync) floatSync.loadFloatState('note').then(st=>{
