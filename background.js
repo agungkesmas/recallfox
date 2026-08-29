@@ -251,34 +251,34 @@ function _escapeHtml(s) {
 }
 
 async function setupContextMenu() {
-  await browser.menus.removeAll().catch(() => {});
+  await browser.contextMenus.removeAll().catch(() => {});
 
   // Selection-based: save as Prompt / Context
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-prompt',
     title: browser.i18n.getMessage('ctxMenuSaveAsPrompt'),
     contexts: ['selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-context',
     title: browser.i18n.getMessage('ctxMenuSaveAsContext'),
     contexts: ['selection']
   });
 
   // Page-based: save current page as Link
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-1',
     type: 'separator',
     contexts: ['page', 'frame', 'selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-page',
     title: browser.i18n.getMessage('ctxMenuSavePage'),
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
   // Link-based: save specific link as Link
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-link',
     title: browser.i18n.getMessage('ctxMenuSaveLink'),
     contexts: ['link'],
@@ -286,12 +286,12 @@ async function setupContextMenu() {
   });
 
   // Snapshot (AI domains only)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-2',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-snapshot',
     title: browser.i18n.getMessage('ctxMenuSnapshot'),
     contexts: ['page']
@@ -300,19 +300,19 @@ async function setupContextMenu() {
   });
 
   // Screenshot single entry (FireShot-style — opens modal with PDF/JPG/PNG/Copy/Vault options)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-3',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-screenshot',
     title: browser.i18n.getMessage('ctxMenuCaptureScreenshot') || 'Capture Screenshot',
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
   // v3.20.4: Popout sidebar — context menu untuk toggle sidebar di halaman
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-sidebar-in-page',
     title: 'Tampilkan RecallFox di halaman ini (popout)',
     contexts: ['page'],
@@ -320,24 +320,24 @@ async function setupContextMenu() {
   });
 
   // Clear Cache (clearcache-style) — works on all http(s) pages
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-4',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-clear-cache',
     title: browser.i18n.getMessage('ctxMenuClearCache') || 'Clear Cache',
     contexts: ['page']
   });
 
   // "Tanya AI" context menu — sends selected text to AI assistant
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-5',
     type: 'separator',
     contexts: ['selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-ask-ai',
     title: '🤖 Tanya Si Pandai',
     contexts: ['selection']
@@ -345,12 +345,12 @@ async function setupContextMenu() {
 
   // v3.14.0: RecallTape — "Add to RecallFox Tape" (klik kanan teks/angka terseleksi)
   // Memunculkan popover RecallTape di tab aktif + menambahkan teks terseleksi sebagai baris baru.
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-tape',
     type: 'separator',
     contexts: ['selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-add-to-tape',
     title: browser.i18n.getMessage('ctxMenuAddToTape') || '🧾 Tambah ke RecallTape',
     contexts: ['selection']
@@ -359,7 +359,7 @@ async function setupContextMenu() {
   // ===== Content Guardian: "Blokir Konten Ini" (v0.8.21) =====
   // Hanya muncul di YouTube & X — klik kanan untuk blokir konten yang
   // sedang di-hover (video card / tweet).
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-6',
     type: 'separator',
     contexts: ['page', 'link', 'video'],
@@ -371,7 +371,7 @@ async function setupContextMenu() {
     ]
   });
   // Sub-menu: pilih cara blokir
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-root',
     title: '🚫 Blokir Konten Ini',
     contexts: ['page', 'link', 'video'],
@@ -382,32 +382,32 @@ async function setupContextMenu() {
       'https://*.twitter.com/*'
     ]
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul ini (title)',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-exact-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul PERSIS ini (exact)',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-channel',
     parentId: 'rf-cg-block-root',
     title: 'Blokir channel/akun ini',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-keyword',
     parentId: 'rf-cg-block-root',
     title: 'Blokir kata kunci dari teks terseleksi…',
     contexts: ['selection']
   });
   // Blokir berdasarkan teks terseleksi (selection) — paling fleksibel
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-selection',
     parentId: 'rf-cg-block-root',
     title: 'Blokir teks terseleksi: "%s"',
@@ -417,7 +417,7 @@ async function setupContextMenu() {
   // v3.4: Blokir URL post X — muncul hanya di x.com/twitter.com
   // Saat user klik kanan pada link tweet atau di halaman tweet, simpan URL-nya.
   // Semua post dengan URL yang sama (atau path yang sama) akan di-hide di timeline X.
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-x-post-url',
     parentId: 'rf-cg-block-root',
     title: '🔗 Blokir URL post X ini',
@@ -429,13 +429,13 @@ async function setupContextMenu() {
   });
 
   // v0.9.0: Element Blocker — "Block Element Ini" (klik kanan di elemen mana saja)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-7',
     type: 'separator',
     contexts: ['page', 'link', 'image', 'video'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-eb-block-element',
     title: '🚫 Block Element Ini (Element Blocker)',
     contexts: ['page', 'link', 'image', 'video'],
@@ -445,7 +445,7 @@ async function setupContextMenu() {
 
 // ===== Handle context menu clicks =====
 
-browser.menus.onClicked.addListener(async (info, tab) => {
+browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'rf-save-prompt' || info.menuItemId === 'rf-save-context') {
     const text = (info.selectionText || '').trim();
     if (!text) return;
@@ -523,11 +523,35 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     }
   } else if (info.menuItemId === 'rf-screenshot') {
     // Single FireShot-style entry — opens capture modal in active tab
+    // v3.21.25: HAPUS fallback direct save. Sebelumnya kalau sendMessage gagal,
+    // langsung triggerScreenshot(tab, 'entire') → capture + save TANPA modal.
+    // User report: "klik area sembarang (cancel modal), tapi tetep capture
+    // otomatis + save ke vault." Root cause: fallback ini jalan saat content
+    // script belum loaded, bypass modal entirely.
+    // Fix: kalau sendMessage gagal, inject content script lalu retry. Kalau
+    // masih gagal (halaman internal chrome://, about:, PDF), return error —
+    // JANGAN auto-capture.
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
     } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
-      await triggerScreenshot(tab, 'entire');
+      console.warn('[RecallFox] overlay not reachable, trying inject+retry:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/overlay.js']
+        });
+        await new Promise(r => setTimeout(r, 300));
+        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
+      } catch (e2) {
+        console.warn('[RecallFox] overlay inject failed, cannot show modal:', e2.message);
+        // JANGAN fallback ke direct save — user tidak minta capture tanpa modal.
+        try {
+          await browser.tabs.sendMessage(tab.id, {
+            type: 'SHOW_TOAST',
+            message: 'Tidak bisa buka modal screenshot di halaman ini. Coba di halaman web biasa (http/https).'
+          });
+        } catch (_) {}
+      }
     }
   } else if (info.menuItemId === 'rf-sidebar-in-page') {
     // v3.20.4: Toggle popout sidebar di halaman aktif
@@ -613,7 +637,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '🚫 Element Diblokir!',
           message: `Selector "${elementInfo.selector}" ditambahkan untuk ${domain}. Elemen langsung di-hide.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
     } else {
@@ -622,7 +646,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak bisa block element',
           message: 'Arahkan kursor ke elemen yang mau di-block, lalu klik kanan → Block Element Ini. Refresh halaman kalau belum jalan.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
     }
@@ -656,7 +680,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
         try {
           browser.notifications.create({
             type: 'basic',
-            iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+            iconUrl: browser.runtime.getURL('icons/icon-96.png'),
             title: 'RecallTape',
             message: 'Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.'
           });
@@ -684,7 +708,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak ada URL',
           message: 'Klik kanan pada link tweet atau di halaman tweet untuk memblokir URL-nya.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
       return;
@@ -748,7 +772,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
             type: 'basic',
             title: '🚫 Tidak ada konten terdeteksi',
             message: 'Arahkan kursor ke video/tweet dulu, atau blok teks lalu klik kanan → Blokir teks terseleksi.',
-            iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+            iconUrl: browser.runtime.getURL('icons/icon-96.png')
           });
         } catch (e) {}
       }
@@ -784,21 +808,21 @@ async function notifyBlockResult(res, label, value) {
         type: 'basic',
         title: '🚫 Diblokir!',
         message: `${label.charAt(0).toUpperCase() + label.slice(1)} "${value.slice(0, 50)}${value.length > 50 ? '…' : ''}" ditambahkan ke blocklist. Konten serupa akan disembunyikan.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     } else if (res?.error === 'duplicate') {
       await browser.notifications.create({
         type: 'basic',
         title: 'ℹ️ Sudah diblokir',
         message: `${label} ini sudah ada di blocklist.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     } else {
       await browser.notifications.create({
         type: 'basic',
         title: '⚠️ Gagal blokir',
         message: `Error: ${res?.error || 'unknown'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     }
   } catch (e) { /* notif gagal bukan masalah */ }
@@ -824,24 +848,24 @@ async function broadcastCgUpdate(tabId) {
 // ===== Context menu visibility toggle (hanya tampilkan opsi yang relevan) =====
 // Saat user klik kanan: jika ada selection → tampilkan opsi "Blokir teks terseleksi"
 // dan ubah %s ke teks yang terseleksi. Jika tidak ada selection → sembunyikan opsi itu.
-if (browser.menus.onShown) {
-  browser.menus.onShown.addListener((info, tab) => {
+if (browser.contextMenus.onShown) {
+  browser.contextMenus.onShown.addListener((info, tab) => {
     const hasSelection = !!(info.selectionText && info.selectionText.trim().length > 0);
     const selPreview = hasSelection
       ? info.selectionText.trim().slice(0, 40) + (info.selectionText.trim().length > 40 ? '…' : '')
       : '';
     // Update title dan visibility untuk opsi "Blokir teks terseleksi"
     try {
-      browser.menus.update('rf-cg-block-selection', {
+      browser.contextMenus.update('rf-cg-block-selection', {
         visible: hasSelection,
         title: hasSelection ? `Blokir teks terseleksi: "${selPreview}"` : 'Blokir teks terseleksi'
       }).catch(() => {});
       // Update opsi "Blokir kata kunci dari teks terseleksi" juga
-      browser.menus.update('rf-cg-block-keyword', {
+      browser.contextMenus.update('rf-cg-block-keyword', {
         visible: hasSelection,
         title: hasSelection ? `Blokir sebagai kata kunci: "${selPreview}"` : 'Blokir kata kunci dari teks terseleksi…'
       }).catch(() => {});
-      browser.menus.refresh().catch(() => {});
+      browser.contextMenus.refresh().catch(() => {});
     } catch (e) { /* ignore */ }
   });
 }
@@ -2219,6 +2243,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // via overlay.js in the active tab. msg.mode can be 'entire' | 'visible' | 'selection'
     // or undefined (which shows the mode-picker dialog).
     // Guard: only forward string modes; ignore accidental event objects.
+    // v3.21.25: HAPUS fallback direct save. Sebelumnya kalau sendMessage ke tab
+    // gagal, langsung triggerScreenshot(tab, mode || 'entire') → capture + save
+    // TANPA modal. User report: "modal ilang, tapi tetep capture otomatis + save
+    // ke vault." Root cause: fallback ini jalan saat content script belum loaded.
+    // Fix: kalau sendMessage gagal, inject overlay.js lalu retry. Kalau masih
+    // gagal, return error — JANGAN auto-capture tanpa modal.
     const mode = (typeof msg.mode === 'string') ? msg.mode : undefined;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
@@ -2229,8 +2259,23 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
-      // Fallback to direct save (skips modal)
-      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
+      console.warn('[RecallFox] CAPTURE_SCREENSHOT: overlay not reachable, trying inject+retry:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/overlay.js']
+        });
+        await new Promise(r => setTimeout(r, 300));
+        await browser.tabs.sendMessage(tab.id, {
+          type: 'TRIGGER_CAPTURE_FROM_POPUP',
+          mode: mode
+        });
+        sendResponse({ ok: true, deferred: true }); return;
+      } catch (e2) {
+        console.warn('[RecallFox] CAPTURE_SCREENSHOT: overlay inject failed:', e2.message);
+        // JANGAN fallback ke triggerScreenshot() — user tidak minta capture tanpa modal.
+        sendResponse({ ok: false, error: 'cannot_show_modal', message: 'Tidak bisa buka modal screenshot di halaman ini. Coba di halaman web biasa (http/https).' }); return;
+      }
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
@@ -3301,7 +3346,7 @@ async function checkPrayerReminder() {
                   type: 'basic',
                   title: `${tomorrowFast.emoji} Besok Puasa ${tomorrowFast.name}`,
                   message: tomorrowFast.desc,
-                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  iconUrl: browser.runtime.getURL('icons/icon-96.png'),
                   priority: 2
                 });
                 console.log('[RecallFox] Fast reminder sent:', tomorrowFast.name);
@@ -3337,7 +3382,7 @@ async function checkPrayerReminder() {
         type: 'basic',
         title: `🕌 ${next.name} segera masuk`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
       console.log('[RecallFox] Prayer reminder sent:', message);
@@ -3403,7 +3448,7 @@ async function checkPrayerReminder() {
                   type: 'basic',
                   title: '🕌 ' + next.name + ' telah masuk',
                   message: 'Adzan tidak bisa diputar otomatis (popup tertutup & tab aktif tidak kompatibel). Buka RecallFox untuk test adzan manual.',
-                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  iconUrl: browser.runtime.getURL('icons/icon-96.png'),
                   priority: 2
                 });
               } catch (e) {}
@@ -3609,7 +3654,7 @@ async function checkExerciseReminder() {
           message: isOnAI
             ? `Sudah ${interval} menit. Sambil nunggu AI jawab, berdiri 5 menit + regangkan badan. Baik untuk punggung & mata.`
             : `Sudah ${interval} menit duduk. Berdiri 5 menit, regangkan badan, lihat jauh ke depan. Baik untuk punggung & mata.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+          iconUrl: browser.runtime.getURL('icons/icon-96.png'),
           priority
         });
         console.log('[RecallFox] Exercise reminder sent (smart mode, AI tab:', isOnAI, ')');
@@ -3855,7 +3900,7 @@ async function checkQuranReminder() {
         type: 'basic',
         title: `📖 Pengingat Ngaji Quran`,
         message: `Belum ngaji hari ini. Target: ${settings.quranTargetPages || 1} halaman. ${status.streak > 0 ? `Streak: ${status.streak} hari! Jangan putus! 🔥` : 'Mulai streak hari ini!'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
       console.log('[RecallFox] Quran reminder sent');
@@ -4056,7 +4101,7 @@ async function checkContentGuard(tabId, url, tab) {
               type: 'basic',
               title: '🚫 YouTube Shorts Diblokir',
               message: 'Navigasi ke Shorts dicegah. Kembali ke beranda YouTube.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
               priority: 1
             });
           } catch (e) {}
@@ -4127,7 +4172,7 @@ async function checkContentGuard(tabId, url, tab) {
                 type: 'basic',
                 title: '🔒 Pencarian Dikunci',
                 message: 'Pencarian di luar topik aktif diblokir. Pilih topik dari halaman Kunci Pencarian.',
-                iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                iconUrl: browser.runtime.getURL('icons/icon-96.png'),
                 priority: 1
               });
             } catch (e) {}
@@ -4164,7 +4209,7 @@ async function redirectWithNotify(tabId, newUrl, settings, title, message) {
         type: 'basic',
         title: `🛡️ ${title}`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 1
       });
     } catch (e) { /* notif gagal bukan masalah */ }
@@ -4751,7 +4796,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
         type: 'basic',
         title: '🛡️ Content Guardian v0.8.21 — Klik Kanan untuk Blokir',
         message: 'Sekarang Anda bisa klik kanan pada video/tweet di YouTube/X → "🚫 Blokir Konten Ini" untuk blokir permanen. Daftar kata kunci politik & korupsi juga diperluas.',
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
     }
