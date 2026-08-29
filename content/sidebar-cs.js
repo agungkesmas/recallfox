@@ -28,7 +28,7 @@
   let resizeHandle = null;
   let floaterPair = null;  // container untuk 4 tombol: rf + sc + note + tape
   let rfBtn = null;
-  let scBtn = null;
+  let scBtn = null;  // v3.22.2: orphan — scBtn dihapus dari floater, variabel di-keep untuk backward compat
   let noteBtn = null;
   let tapeBtn = null;
   let pinBtn = null;
@@ -131,8 +131,9 @@
   }
 
   // v3.21.24: applyOrientation — set flex-direction + adjust ukuran container.
-  // Horizontal: row, lebar 4*36+gap = ~170px, tinggi 36px.
-  // Vertical:   column, lebar 36px, tinggi 4*36+gap = ~170px.
+  // Horizontal: row, lebar 3*36+gap = ~124px, tinggi 36px.
+  // Vertical:   column, lebar 36px, tinggi 3*36+gap = ~124px.
+  // v3.22.2: 4 buttons → 3 buttons (scBtn dihapus).
   function applyOrientation(orient) {
     if (!floaterPair) return;
     const o = (orient === 'vertical') ? 'vertical' : 'horizontal';
@@ -254,21 +255,9 @@
       'transition:transform .1s ease, opacity .2s ease', 'user-select:none'
     ].join(';');
 
-    // "sc" button — trigger screenshot
-    scBtn = document.createElement('div');
-    scBtn.setAttribute('role', 'button');
-    scBtn.setAttribute('tabindex', '0');
-    scBtn.innerHTML = '📸';
-    scBtn.title = 'Ambil screenshot';
-    scBtn.style.cssText = [
-      'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
-      'background:#8a54ff', 'color:#fff', 'cursor:pointer',
-      'display:grid', 'place-items:center',
-      'font-size:16px', 'line-height:1',
-      'box-shadow:0 2px 8px rgba(138,84,255,.3)',
-      'transition:transform .1s ease', 'user-select:none'
-    ].join(';');
-
+    // v3.22.2: scBtn (screenshot) DIHAPUS dari floater Firefox. User request:
+    // "floating button sc itu dihapus ya". Screenshot masih bisa dipicu via
+    // popup sidebar (tombol Shot) atau keyboard shortcut Alt+Shift+5/6/7.
     // "note" button — buka catatan mengambang
     noteBtn = document.createElement('div');
     noteBtn.setAttribute('role', 'button');
@@ -300,11 +289,12 @@
     ].join(';');
 
     floaterPair.appendChild(rfBtn);
-    floaterPair.appendChild(scBtn);
+    // v3.22.2: scBtn tidak di-append (dihapus dari floater Firefox)
     floaterPair.appendChild(noteBtn);
     floaterPair.appendChild(tapeBtn);
 
-    // Restore position — 4 buttons need ~170px width (horizontal) / 170px height (vertical)
+    // Restore position — 3 buttons need ~124px width (horizontal) / 124px height (vertical)
+    // v3.22.2: 4 buttons → 3 buttons (scBtn dihapus).
     const savedPos = loadFloaterPos();
     if (savedPos) {
       // v3.21.24: Apply orient yang di-save dulu sebelum set posisi,
@@ -313,8 +303,8 @@
       applyOrientation(initialOrient);
       // Clamp posisi supaya tidak keluar viewport — pakai ukuran sesuai orient
       const isV = initialOrient === 'vertical';
-      const pw = isV ? 44 : 170;  // 36 + 8 padding
-      const ph = isV ? 170 : 44;
+      const pw = isV ? 44 : 124;  // 3*36 + 2*gap + padding
+      const ph = isV ? 124 : 44;
       floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - pw, savedPos.x)) + 'px';
       floaterPair.style.top  = Math.max(0, Math.min(window.innerHeight - ph, savedPos.y)) + 'px';
     } else {
@@ -354,7 +344,7 @@
       const dy = cy - dragState.startY;
       if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragState.moved = true;
       if (!dragState.moved) return;
-      let newX = Math.max(0, Math.min(window.innerWidth - 170, dragState.origX + dx));
+      let newX = Math.max(0, Math.min(window.innerWidth - 124, dragState.origX + dx));
       let newY = Math.max(0, Math.min(window.innerHeight - 36, dragState.origY + dy));
       floaterPair.style.left = newX + 'px';
       floaterPair.style.top = newY + 'px';
@@ -385,29 +375,38 @@
         floaterPair.style.top  = clampedTop + 'px';
         saveFloaterPos(clampedLeft, clampedTop, newOrient);
       } else {
-        // Click — determine which button was clicked (4 buttons)
+        // Click — determine which button was clicked (3 buttons: rf + note + tape)
+        // v3.22.2: scBtn dihapus dari floater Firefox.
         if (dragState.target === rfBtn || rfBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
           toggle();
-        } else if (dragState.target === scBtn || scBtn.contains(dragState.target)) {
-          e.preventDefault();
-          e.stopPropagation();
-          triggerScreenshot();
         } else if (dragState.target === noteBtn || noteBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          // Buka catatan mengambang di tab aktif (via background forward)
-          browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{});
-          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
-          // Fallback: coba langsung show di tab ini (jika notes-cs sudah loaded di tab yang sama)
-          try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+          // v3.22.2: Fix note tidak berfungsi — sebelumnya kirim 3 messages
+          // bareng (RF_OPEN_NOTE + RF_FORWARD_TO_ACTIVE_TAB + CustomEvent)
+          // yang bisa conflict. Background RF_OPEN_NOTE handler sudah handle
+          // inject+retry, jadi cukup kirim 1 message. Tambah feedback toast
+          // kalau gagal supaya user tidak bingung.
+          browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).then(res => {
+            if (!res?.ok) {
+              console.warn('[RecallFox] RF_OPEN_NOTE failed:', res?.error);
+            }
+          }).catch(err => {
+            console.warn('[RecallFox] RF_OPEN_NOTE error:', err.message);
+          });
         } else if (dragState.target === tapeBtn || tapeBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{});
-          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
-          try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
+          // v3.22.2: Fix tape tidak berfungsi — sama dengan note, cukup 1 message.
+          browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).then(res => {
+            if (!res?.ok) {
+              console.warn('[RecallFox] RF_OPEN_TAPE failed:', res?.error);
+            }
+          }).catch(err => {
+            console.warn('[RecallFox] RF_OPEN_TAPE error:', err.message);
+          });
         }
       }
     }
@@ -432,14 +431,12 @@
     rfBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
-    scBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerScreenshot(); }
-    });
+    // v3.22.2: scBtn keydown dihapus (button dihapus dari floater Firefox)
     noteBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{}); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{}); }
     });
     tapeBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{}); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{}); }
     });
 
     document.documentElement.appendChild(floaterPair);
