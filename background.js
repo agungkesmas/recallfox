@@ -4648,6 +4648,28 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }catch(e){ return {ok:false, error:e.message}; }
     })();
   }
+  // v3.23.1: RF_OPEN_POMODORO — tombol 🍅 pill → floater pomodoro-cs.js
+  if (msg.type === 'RF_OPEN_POMODORO') {
+    return (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_POMODORO'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/pomodoro-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_POMODORO'}); }
+          return {ok:true};
+        }
+        return {ok:false, error:'no_active_tab'};
+      }catch(e){ return {ok:false, error:e.message}; }
+    })();
+  }
+  // v3.23.1: POMODORO_NOTIFY — bell/selesai fokus pomodoro floater
+  if (msg.type === 'POMODORO_NOTIFY') {
+    try{
+      browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: String(msg.title || 'Pomodoro'), message: String(msg.message || '') });
+    }catch(e){}
+    return { ok: true };
+  }
   // v3.22.3: RF_FORWARD_TO_ACTIVE_TAB — SATU handler gabungan (sebelumnya dobel:
   // versi v3.21.16 dan versi v3.20.10 terdaftar dua-duanya; listener pertama
   // menang, kedua jadi dead code). Pola Firefox: balikin Promise. Fitur gabungan:
@@ -4667,7 +4689,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           try{ await browser.tabs.sendMessage(tab.id, payload); }
           catch(e){
             // v3.22.9 FIX-1: OPEN_NOTE_VAULT juga di-handle notes-cs.js
-            const file = (msg.msgType==='OPEN_NOTE'||msg.msgType==='OPEN_NOTE_VAULT')?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
+            const file = (msg.msgType==='OPEN_NOTE'||msg.msgType==='OPEN_NOTE_VAULT')?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js': msg.msgType==='OPEN_POMODORO'?'content/pomodoro-cs.js':'content/sidebar-cs.js';
             await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
             await browser.tabs.sendMessage(tab.id, payload);
           }

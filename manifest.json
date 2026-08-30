@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.23.0",
+  "version": "3.23.1",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox",
@@ -195,6 +195,18 @@
       "js": [
         "lib/classic/notes.classic.js",
         "content/notes-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/pomodoro-cs.js"
       ],
       "run_at": "document_idle",
       "all_frames": false
