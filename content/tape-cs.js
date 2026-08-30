@@ -65,6 +65,9 @@
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
   let pinBtn = null, isVisible = false, pinned = true;
+  // v3.22.7: guard SHOW_* basi (parity chrome) — broadcast terlambat pasca-hide
+  // tidak boleh membangkitkan tape yang baru ditutup user.
+  let userHiddenAt = 0;
   let saveTimer = null, idleTimer = null;
 
   // ===== Theme =====
@@ -100,6 +103,7 @@
   function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
   // ===== Show / Hide =====
   async function show() {
+    userHiddenAt = 0;
     mount();
     const theme = await loadTheme();
     shadow.host.setAttribute('data-theme', theme);
@@ -116,6 +120,7 @@
     try{ if(floatSync) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
   }
   function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false;
+    userHiddenAt = Date.now();
     try{ if(floatSync) floatSync.saveFloatState('tape', {isOpen:false}); }catch(e){} }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
@@ -766,7 +771,7 @@
       updateStatus();
       scheduleSave();
     }
-    else if (msg.type === 'SHOW_TAPE') show();
+    else if (msg.type === 'SHOW_TAPE'){ if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } if (Date.now() - userHiddenAt < 5000) return; show(); }
     else if (msg.type === 'HIDE_TAPE') hide();
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} }
     else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} }

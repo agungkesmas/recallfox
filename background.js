@@ -5007,7 +5007,11 @@ try {
     for (const key of ['floatNoteState','floatTapeState']) {
       if (changes[key]) {
         const float = changes[key].newValue;
-        if (float && float.isOpen) {
+        // v3.22.7 FIX RESURRECTION (parity chrome): broadcast HANYA pada transisi
+        // tertutup -> terbuka. show() menulis ulang float state; broadcast pada
+        // setiap penulisan membuat modal bisa bangkit kembali pasca-hide.
+        const __rfPrev = changes[key].oldValue;
+        if (float && float.isOpen && !(__rfPrev && __rfPrev.isOpen)) {
           browser.tabs.query({}).then(tabs=>{
             tabs.forEach(t=>{
               if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
