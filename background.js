@@ -4566,8 +4566,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const { text, markdown } = msg;
-        const note = await addNote(markdown || text, {
-          title: '📝 RecallNote — ' + new Date().toLocaleString('id-ID'),
+        // v3.24.4: judul cerdas — baris pertama catatan (maks 48 char),
+        // fallback format lama bila kosong. Baris '> '/'>x ' dibersihkan.
+        const raw = String(markdown || text || '');
+        const firstLine = raw.split('\n').map(s => String(s).replace(/^>x\s+/, '').replace(/^>\s+/, '').trim()).find(Boolean) || '';
+        const smartTitle = firstLine ? (firstLine.length > 48 ? firstLine.slice(0, 48) + '…' : firstLine) : ('📝 RecallNote — ' + new Date().toLocaleString('id-ID'));
+        const note = await addNote(raw, {
+          title: smartTitle,
           group: 'RecallNote'
         });
         sendResponse({ ok: true, noteId: note.id });
@@ -4601,13 +4606,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const { noteId, text } = msg;
         if (!noteId || typeof text !== 'string') { sendResponse({ ok: false, error: 'invalid' }); return; }
-/* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
-        const vault = await getVault();
-        const note = (vault.notes || []).find(n => n.id === noteId);
-        if (!note) { sendResponse({ ok: false, error: 'not_found' }); return; }
-        note.body = text;
-        note.updatedAt = Date.now();
-        await saveVault(vault);
+        // v3.24.4 FIX: dulu mencari note di store SALAH (vault.notes — store
+        // catatan sebenarnya = recallfox_notes) -> autosave linked note selalu
+        // 'not_found' senyap. Sekarang via updateNote() (store benar) yang
+        // sekaligus directUpsertNote ke Supabase SECARA LANGSUNG (immediate).
+        /* v3.22.4-firefox: storage.js sudah dibundel classic — simbol tersedia sebagai global */
+        const updated = await updateNote(noteId, { body: text });
+        if (!updated) { sendResponse({ ok: false, error: 'not_found' }); return; }
         sendResponse({ ok: true });
       } catch (e) {
         console.error('[RecallFox] UPDATE_VAULT_NOTE failed:', e);
