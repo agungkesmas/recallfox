@@ -20,6 +20,24 @@ function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// v3.24.27: resolver URL cloud media — paritas dgn resolveMediaCloudUrl di
+// lib/copy-format.js (versi Chrome pakai import; background Firefox classic
+// script sehingga helper disalin inline). Laporan user: hasil copy tidak ada
+// linknya — link cloud WAJIB ikut di semua output copy.
+// Prioritas: gdriveFileUrl → gdrive_file_url → linkUrl → pages[0].url →
+// tempUrl → source.url. '' kalau tidak ada (gambar lokal-only).
+function resolveMediaCloudUrlBg(item) {
+  if (!item) return '';
+  if (item.gdriveFileUrl) return item.gdriveFileUrl;
+  if (item.gdrive_file_url) return item.gdrive_file_url;
+  if (item.linkUrl) return item.linkUrl;
+  const src = item.source || {};
+  if (Array.isArray(src.pages) && src.pages[0] && src.pages[0].url) return src.pages[0].url;
+  if (src.tempUrl) return src.tempUrl;
+  if (src.url) return src.url;
+  return '';
+}
+
 // v3.24.26 FIX: Helper — tulis PNG ke clipboard via API background Firefox
 // (browser.clipboard.setImageData — HANYA ada di background Firefox; TIDAK ada
 // di content script/halaman — lihat catatan v3.11.22 — dan TIDAK ada di Chrome).
@@ -2397,6 +2415,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
         + (pageUrl ? 'Sumber: ' + pageUrl + '\n' : '')
+        + (resolveMediaCloudUrlBg(item) ? '🔗 Link gambar: ' + resolveMediaCloudUrlBg(item) + '\n' : '')
         + 'Waktu: ' + capturedDateStr + '\n'
         + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
         + (annotationNote ? '📝 Catatan: ' + annotationNote + '\n' : '')
@@ -2406,6 +2425,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         + '<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
         + '<p style="margin:8px 0 2px"><strong>📸 ' + _escapeHtml(pageTitle) + '</strong></p>'
         + (pageUrl ? '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + _escapeHtml(pageUrl) + '">' + _escapeHtml(pageUrl) + '</a></p>' : '')
+        + (resolveMediaCloudUrlBg(item) ? '<p style="margin:0 0 2px;color:#2563eb">🖼️ <a href="' + _escapeHtml(resolveMediaCloudUrlBg(item)) + '" style="color:#2563eb">Link gambar (cloud)</a></p>' : '')
         + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(capturedDateStr) + '</p>'
         + (annotationNote ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + _escapeHtml(annotationNote) + '</p>' : '')
         + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
@@ -2741,8 +2761,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         dataUrls.push(dataUrl);
 
         // v3.11.28: Markdown lengkap — sama format dengan preview modal
+        // v3.24.27: + 🔗 Link gambar (URL cloud) — laporan user: copy tanpa link
+        const _cloudUrl = resolveMediaCloudUrlBg(item);
         mdParts.push('## ' + num + '. 📸 ' + pageTitle);
         if (pageUrl) mdParts.push('Sumber: ' + pageUrl);
+        if (_cloudUrl) mdParts.push('🔗 Link gambar: ' + _cloudUrl);
         mdParts.push('Waktu: ' + capturedDate);
         mdParts.push('Mode: ' + modeLabel + ' · ' + dims);
         if (tags) mdParts.push('Tag: ' + tags);
@@ -2759,6 +2782,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         htmlParts.push('<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>');
         htmlParts.push('<p style="margin:8px 0 2px"><strong>📸 ' + num + '. ' + escHtml(pageTitle) + '</strong></p>');
         if (pageUrl) htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a></p>');
+        if (_cloudUrl) htmlParts.push('<p style="margin:0 0 2px;color:#2563eb">🖼️ <a href="' + escHtml(_cloudUrl) + '" style="color:#2563eb">Link gambar (cloud)</a></p>');
         htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🕒 ' + escHtml(capturedDate) + '</p>');
         if (annotationNote) htmlParts.push('<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escHtml(annotationNote) + '</p>');
         let footerLine = '🔧 ' + escHtml(modeLabel) + ' · ' + escHtml(dims);
